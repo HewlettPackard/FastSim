@@ -128,7 +128,7 @@ def power_usage_plot(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage.pdf")
+    fig.savefig("plots/powerusage.pdf")
     plt.show()
 
 
@@ -172,7 +172,7 @@ def power_usage_exitcodes(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_exitcodes.pdf")
+    fig.savefig("plots/powerusage_exitcodes.pdf")
     plt.show()
 
 
@@ -226,7 +226,7 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_cabs.pdf")
+    fig.savefig("plots/powerusage_cabs.pdf")
     plt.show()
 
     cabs_fine = {
@@ -304,7 +304,7 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_cabs_individual.pdf")
+    fig.savefig("plots/powerusage_cabs_individual.pdf")
     plt.show()
 
 
@@ -368,7 +368,7 @@ def power_usage_allocnodes(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_pernode_allocnodes.pdf")
+    fig.savefig("plots/powerusage_pernode_allocnodes.pdf")
     plt.show()
 
     print("AllocNodes bin - #Jobs - Mean total power usage")
@@ -403,7 +403,7 @@ def power_usage_allocnodes(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_total_allocnodes.pdf")
+    fig.savefig("plots/powerusage_total_allocnodes.pdf")
     plt.show()
 
 
@@ -455,7 +455,7 @@ def power_usage_user(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_user.pdf")
+    fig.savefig("plots/powerusage_user.pdf")
     plt.show()
 
     for i_user, (user, _) in enumerate(top_users):
@@ -474,7 +474,7 @@ def power_usage_user(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_user_toponly.pdf")
+    fig.savefig("plots/powerusage_user_toponly.pdf")
     plt.show()
 
     # Group Users
@@ -534,7 +534,7 @@ def power_usage_user(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_user_percentages.pdf")
+    fig.savefig("plots/powerusage_user_percentages.pdf")
     plt.show()
 
 
@@ -634,7 +634,7 @@ def power_usage_cpufreq(df, timesteps, cache, data_name):
     fig = plt.gcf()
     fig.set_size_inches(14, 8)
     fig.tight_layout()
-    fig.savefig("powerusage_cpufreq.pdf")
+    fig.savefig("plots/powerusage_cpufreq.pdf")
     plt.show()
 
 
