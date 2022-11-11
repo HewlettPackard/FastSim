@@ -185,10 +185,15 @@ def main(args):
             #     'reg_alpha' : [0.0, 0.1], 'reg_lambda' : [0.9, 1.0, 1.1], 'gamma' : [0.0, 0.5],
             #     'min_child_weight' : [0.5, 1.0, 1.5]
             # }
+            # params = {
+            #     'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
+            #     'reg_alpha' : [0.0, 0.05], 'reg_lambda' : [0.7, 0.8, 0.9],
+            #     'gamma' : [0.25, 0.5, 0.75], 'min_child_weight' : [0.25, 0.5, 0.75]
+            # }
             params = {
                 'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
-                'reg_alpha' : [0.0, 0.05], 'reg_lambda' : [0.7, 0.8, 0.9],
-                'gamma' : [0.25, 0.5, 0.75], 'min_child_weight' : [0.25, 0.5, 0.75]
+                'reg_alpha' : [0.0], 'reg_lambda' : [0.1, 0.4, 0.5, 0.6, 0.7],
+                'gamma' : [0.75, 0.85], 'min_child_weight' : [0.1, 0.25, 0.4]
             }
 
             best_params = hyperparam_search(data, target, encoder, params, save_prefix)
