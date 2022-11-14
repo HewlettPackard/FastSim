@@ -23,15 +23,17 @@ def step_ave_checks(df):
     df_2390128 = df.loc[(df.JobID.str.contains("2390128"))]
 
     cols = [
-    "ReqMem", "AveRSS", "AveVMSize", "AvePages", "NTasks", "MaxRSS", "MaxVMSize", "MaxPages"
+        "ReqMem", "AveRSS", "AveVMSize", "AvePages", "NTasks", "MaxRSS", "MaxVMSize", "MaxPages",
+        "AveDiskRead", "AveDiskWrite"
     ]
     df_2390128[cols] = df_2390128[cols].replace(
-            { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+        { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
     )
 
     print(df_2390128[[
-        "JobID", "AllocCPUS", "Elapsed", "ReqMem", "TotalCPU", "CPUTime", "NTasks", "AveCPU",
-        "AvePages", "AveVMSize", "AveRSS", "MaxRSS", "MaxVMSize", "MaxPages"
+        "JobID", "AllocCPUS", "AllocNodes", "Elapsed", "ReqMem", "TotalCPU", "CPUTime", "NTasks",
+        "AveCPU", "AvePages", "AveVMSize", "AveRSS", "MaxRSS", "MaxVMSize", "MaxPages",
+        "AveDiskWrite", "AveDiskRead"
     ]])
 
     df_2390128_steps = df_2390128.loc[(df_2390128.JobID.str.contains("\."))]
@@ -96,15 +98,17 @@ def step_ave_checks(df):
     df_2390372 = df.loc[(df.JobID.str.contains("2390372"))]
 
     cols = [
-    "ReqMem", "AveRSS", "AveVMSize", "AvePages", "NTasks", "MaxRSS", "MaxVMSize", "MaxPages"
+        "ReqMem", "AveRSS", "AveVMSize", "AvePages", "NTasks", "MaxRSS", "MaxVMSize", "MaxPages",
+        "AveDiskRead", "AveDiskWrite"
     ]
     df_2390372[cols] = df_2390372[cols].replace(
-            { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+        { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
     )
 
     print(df_2390372[[
-        "JobID", "AllocCPUS", "Elapsed", "ReqMem", "TotalCPU", "CPUTime", "NTasks", "AveCPU",
-        "AvePages", "AveVMSize", "AveRSS", "MaxRSS", "MaxVMSize", "MaxPages"
+        "JobID", "AllocCPUS", "AllocNodes", "Elapsed", "ReqMem", "TotalCPU", "CPUTime", "NTasks",
+        "AveCPU", "AvePages", "AveVMSize", "AveRSS", "MaxRSS", "MaxVMSize", "MaxPages",
+        "AveDiskWrite", "AveDiskRead"
     ]])
 
     df_2390372_steps = df_2390372.loc[(df_2390372.JobID.str.contains("\."))]

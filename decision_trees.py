@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import yaml
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
@@ -24,43 +25,127 @@ from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
 POWER_COLS = ["JobID", "Start", "End", "ConsumedEnergyRaw", "AllocNodes"]
 # Not going to try categorising JobName and SubmitLine
 SUBMIT_COLS = ["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "Timelimit", "Submit"]
-FINISH_COLS = [] # TODO
+FINISH_COLS = ["Elapsed", "ExitCode", "NTasks", "TotalCPU", "CPUTime", "MaxRSS", "MaxVMSize",
+               "AvePages", "AveDiskRead", "AveDiskWrite"]
 
 HPARAM_DIR = "/work/y02/y02/awilkins/archer2_jobdata/hparams"
 MODELS_DIR = "/work/y02/y02/awilkins/archer2_jobdata/models"
+CACHE_DIR = "/work/y02/y02/awilkins/pandas_cache"
 
 def clean_df(df, queue_only=False):
-    pd.options.mode.chained_assignment = None
+    cols_to_str = ["JobID", "ReqMem", "ReqCPUS", "ReqNodes", "AllocNodes"]
+    df[cols_to_str] = df[cols_to_str].astype(str)
 
-    df = df.loc[
-        (
-            (df.Group.notna()) & (df.ReqMem.notna()) & (~df.ReqMem.str.contains("\?")) &
-            (df.QOS.notna()) & (df.Timelimit.notna()) &
-            (df.Timelimit != "Partition_Limit") & (df.Timelimit != "UNLIMITED")
-            # & (df.SubmitLine.notna())
-        )
+    df_jobs = df.loc[(~df.JobID.str.contains("\."))]
+
+    # Remove nans first to prevent illegal operations in next slicing
+    df_jobs = df_jobs.loc[
+        ((df.Group.notna()) & (df.ReqMem.notna()) & (df.QOS.notna()) & (df.Timelimit.notna()))
     ]
 
+    df_jobs = df_jobs.loc[(
+        (~df.ReqMem.str.contains("\?")) & (df.Timelimit != "Partition_Limit") &
+        (df.Timelimit != "UNLIMITED")
+    )]
+
     cols = ["ReqCPUS", "ReqNodes", "ReqMem", "AllocNodes"]
-    df[cols] = df[cols].replace(
+    df_jobs[cols] = df_jobs[cols].replace(
         { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
     ).astype(float).astype(int)
 
-    df.Submit = pd.to_datetime(df.Submit, format="%Y-%m-%dT%H:%M:%S")
-    df.Submit = df.Submit.apply(lambda row: hour_to_timeofday(row.hour))
+    df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
+    df_jobs.Submit = df_jobs.Submit.apply(lambda row: hour_to_timeofday(row.hour))
 
-    df.Timelimit = df.Timelimit.apply(
+    df_jobs.Timelimit = df_jobs.Timelimit.apply(
         lambda row: round(timelimit_str_to_timedelta(row).total_seconds() / 60)
     )
 
-    df["PowerPerNode"] = df.apply(lambda row: float(row.Power) / float(row.AllocNodes), axis=1)
+    df_jobs["PowerPerNode"] = df_jobs.apply(lambda row: float(row.Power) / float(row.AllocNodes), axis=1)
 
-    if not queue_only:
-        pass # TODO loc + replace for new cols
+    if queue_only:
+        return df_jobs
 
-    pd.options.mode.chained_assignment = "warn"
+    cols_to_str = ["MaxRSS", "MaxVMSize", "AvePages", "NTasks", "AveDiskWrite", "AveDiskRead"]
+    df[cols_to_str] = df[cols_to_str].astype(str)
 
-    return df
+    df_jobs = df_jobs.loc[(df_jobs.TotalCPU.notna())]
+
+    df_jobs.Elapsed = df_jobs.Elapsed.apply(
+        lambda row: round(timelimit_str_to_timedelta(row).total_seconds())
+    )
+    df_jobs.TotalCPU = df_jobs.TotalCPU.apply(
+        lambda row: round(timelimit_str_to_timedelta(row).total_seconds())
+    )
+    df_jobs.CPUTime = df_jobs.CPUTime.apply(
+        lambda row: round(timelimit_str_to_timedelta(row).total_seconds())
+    )
+    df_jobs["CPUUtil"] = df_jobs.apply(lambda row: row.TotalCPU/row.CPUTime, axis=1)
+
+    df_jobs.ExitCode = df_jobs.ExitCode.apply(lambda row: 0 if row == "0:0" else 1)
+
+    df_steps = df.loc[(df.JobID.str.contains("\."))]
+    df_steps["ParentJobID"] = df_steps.JobID.apply(lambda row: row.split(".")[0])
+
+    print(len(df_jobs), df_steps.ParentJobID.unique().size, len(df_steps))
+
+    jobids = df_jobs.JobID.unique()
+    l0 = len(df_steps)
+    df_steps = df_steps.loc[(df_steps.ParentJobID.isin(jobids))]
+    print("{} job steps missing parent jobs removed".format(l0 - len(df_steps)))
+
+    cols = ["MaxRSS", "MaxVMSize", "AvePages", "NTasks", "AveDiskWrite", "AveDiskRead",
+            "AllocNodes"]
+    df_steps[cols] = df_steps[cols].replace(
+        { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+    ).astype(float).astype(int)
+
+    df_jobs["MaxRSSPerNode"] = np.nan
+    df_jobs["MaxVMSizePerNode"] = np.nan
+    df_jobs["DiskReadRatePerNode"] = np.nan
+    df_jobs["DiskWriteRatePerNode"] = np.nan
+    df_jobs["PageFaultRatePerNode"] = np.nan
+    df_jobs["NumStepsPerNode"] = np.nan
+    df_jobs["NumTasksPerNode"] = np.nan
+
+    df_steps["MaxRSSPerNode"] = df_steps.apply(
+        lambda row: float(row.MaxRSS * row.NTasks) / float(row.AllocNodes), axis=1
+    )
+    df_steps["MaxVMSizePerNode"] = df_steps.apply(
+        lambda row: float(row.MaxVMSize * row.NTasks) / float(row.AllocNodes), axis=1
+    )
+    df_steps["TotAveDiskRead"] = df_steps.apply(lambda row: row.AveDiskRead * row.NTasks, axis=1)
+    df_steps["TotAveDiskWrite"] = df_steps.apply(lambda row: row.AveDiskWrite * row.NTasks, axis=1)
+    df_steps["TotAvePageFault"] = df_steps.apply(lambda row: row.AvePages * row.NTasks, axis=1)
+
+    for jobid in tqdm(jobids, desc="Aggregating data from job steps..."):
+        df_steps_slice = df_steps.loc[(df_steps.ParentJobID == jobid)]
+        max_rss_pernode = df_steps_slice.MaxRSSPerNode.max()
+        max_vmsize_pernode = df_steps_slice.MaxVMSizePerNode.max()
+
+        df_jobs_slice = df_jobs.loc[(df_jobs.JobID == jobid)]
+        elapsed = float(df_jobs_slice.Elapsed.iloc[0])
+        allocnodes = float(df_jobs_slice.AllocNodes.iloc[0])
+        diskread_rate_pernode = float(df_steps_slice.TotAveDiskRead.sum()) / elapsed / allocnodes
+        diskwrite_rate_pernode = float(df_steps_slice.TotAveDiskWrite.sum()) / elapsed / allocnodes
+        pagefault_rate_pernode = float(df_steps_slice.TotAvePageFault.sum()) / elapsed / allocnodes
+
+        numtasks_pernode = float(df_steps_slice.NTasks.sum()) / allocnodes
+
+        df_jobs.loc[(df_jobs.JobID == jobid), "NumStepsPerNode"] = (float(len(df_steps_slice)) /
+                                                                    allocnodes)
+
+        df_jobs.loc[(df_jobs.JobID == jobid), "NumTasksPerNode"] = numtasks_pernode
+        df_jobs.loc[(df_jobs.JobID == jobid), "MaxRSSPerNode"] = max_rss_pernode / 1e+9
+        df_jobs.loc[(df_jobs.JobID == jobid), "MaxVMSizePerNode"] = max_vmsize_pernode / 1e+9
+        df_jobs.loc[(df_jobs.JobID == jobid), "DiskReadRatePerNode"] = (diskread_rate_pernode /
+                                                                        1e+6)
+        df_jobs.loc[(df_jobs.JobID == jobid), "DiskWriteRatePerNode"] = (diskwrite_rate_pernode /
+                                                                         1e+6)
+        df_jobs.loc[(df_jobs.JobID == jobid), "PageFaultRatePerNode"] = pagefault_rate_pernode
+
+    df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: round(row / 60))
+
+    return df_jobs
 
 
 def hyperparam_search(data, target, encoder, params, save_prefix):
@@ -120,27 +205,56 @@ def print_predictions(model, data_test, target_test, data_train=None, target_tra
 
 
 def main(args):
-    df_power = parse_cache(
-        args.data,
-        args.cache,
-        ".".join(os.path.basename(args.data).split(".")[:-1]),
-        "decision_tree_queue_df",
-        cols=POWER_COLS+SUBMIT_COLS if args.queue_data else POWER_COLS+SUBMIT_COLS+FINISH_COLS
-    )
+    if args.cache == "load_cleaned":
+        df_power = pd.read_pickle(os.path.join(CACHE_DIR, "{}/{}.pkl".format(
+            ".".join(os.path.basename(args.data).split(".")[:-1]),
+            "decision_tree_queue_df_cleaned" if args.queue_data
+                                             else "decision_tree_queue_run_df_cleaned"
+        )))
+    else:
+        df_power = parse_cache(
+            args.data,
+            args.cache,
+            ".".join(os.path.basename(args.data).split(".")[:-1]),
+            "decision_tree_queue_df" if args.queue_data else "decision_tree_queue_run_df",
+            cols=POWER_COLS+SUBMIT_COLS if args.queue_data else POWER_COLS+SUBMIT_COLS+FINISH_COLS,
+            remove_steps=args.queue_data
+        )
 
-    df_power = clean_df(df_power, queue_only=args.queue_data)
+        pd.options.mode.chained_assignment = None
+        df_power = clean_df(df_power, queue_only=args.queue_data)
+        pd.options.mode.chained_assignment = None
 
-    target = df_power.PowerPerNode
-    data = df_power.drop(
-        [
-            "JobID", "Start", "End", "ConsumedEnergyRaw", "AllocNodes", "DeltaT", "Power",
-            "PowerPerNode"
-        ],
-        axis=1
-    )
+        target = df_power.PowerPerNode
+        data = df_power.drop(
+            ["JobID", "Start", "End", "ConsumedEnergyRaw", "DeltaT", "Power", "PowerPerNode" ], axis=1
+        )
+        if args.queue_data:
+            data = data.drop(["AllocNodes"], axis=1)
+        else:
+            data = data.drop(
+                ["NTasks", "TotalCPU", "CPUTime", "MaxRSS", "MaxVMSize", "AvePages", "AveDiskRead",
+                 "AveDiskWrite"],
+                axis=1
+            )
+
+    if args.cache == "save_cleaned":
+        df_power.to_pickle(os.path.join(CACHE_DIR, "{}/{}.pkl".format(
+            ".".join(os.path.basename(args.data).split(".")[:-1]),
+            "decision_tree_queue_df_cleaned" if args.queue_data
+                                             else "decision_tree_queue_run_df_cleaned"
+        )))
+
+    print(df_power[["JobID", "Elapsed", "ExitCode", "CPUUtil", "MaxRSSPerNode", "DiskReadRatePerNode", "MaxVMSizePerNode", "DiskWriteRatePerNode", "PageFaultRatePerNode", "NumStepsPerNode", "NumTasksPerNode"]])
+
+    print(target)
+    print(data)
+
+    sys.exit()
 
     numerical_columns = ["ReqCPUS", "ReqNodes", "ReqMem", "Timelimit"]
     categorical_columns = ["Group", "QOS", "Submit"]
+    # if args.queue_and_run_data:
 
     categorical_preprocessor = OneHotEncoder(handle_unknown="ignore", sparse=False)
     numerical_preprocessor = StandardScaler()
@@ -162,8 +276,8 @@ def main(args):
 
     save_prefix ="queue" if args.queue_data else "queue-run"
     if args.model_pkl == "load":
-        xgboost_model = joblib.load(
-            os.path.join(MODELS_DIR, "{}_xgboostmodel.joblib".format(save_prefix))
+        model = joblib.load(
+            os.path.join(MODELS_DIR, "{}_xgboostpipeline.joblib".format(save_prefix))
         )
 
     else:
@@ -190,10 +304,28 @@ def main(args):
             #     'reg_alpha' : [0.0, 0.05], 'reg_lambda' : [0.7, 0.8, 0.9],
             #     'gamma' : [0.25, 0.5, 0.75], 'min_child_weight' : [0.25, 0.5, 0.75]
             # }
+            # params = {
+            #     'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
+            #     'reg_alpha' : [0.0], 'reg_lambda' : [0.1, 0.4, 0.5, 0.6, 0.7],
+            #     'gamma' : [0.75, 0.85], 'min_child_weight' : [0.1, 0.25, 0.4]
+            # }
+            # params = {
+            #     'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
+            #     'reg_alpha' : [0.0], 'reg_lambda' : [0.7], 'gamma' : [0.85, 0.9, 0.95],
+            #     'min_child_weight' : [0.25, 0.5, 0.75, 0.1]
+            # }
+            # params = {
+            #     'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
+            #     'reg_alpha' : [0.0], 'reg_lambda' : [0.7], 'gamma' : [0.9],
+            #     'min_child_weight' : [0.0, 0.0005, 0.001]
+            # }
+
+            # Semi-manual grid search history for queue and run data
             params = {
-                'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
-                'reg_alpha' : [0.0], 'reg_lambda' : [0.1, 0.4, 0.5, 0.6, 0.7],
-                'gamma' : [0.75, 0.85], 'min_child_weight' : [0.1, 0.25, 0.4]
+                'n_estimators' : [150, 200, 250] , 'max_depth' : [8, 12, 14],
+                'learning_rate' : [0.2, 0.30, 0.4], 'reg_alpha' : [0.0, 0.1],
+                'reg_lambda' : [0.6, 0.7, 0.8], 'gamma' : [0.8, 0.9, 1.0],
+                'min_child_weight' : [0.0, 0.001]
             }
 
             best_params = hyperparam_search(data, target, encoder, params, save_prefix)
@@ -206,14 +338,16 @@ def main(args):
             best_params = {}
 
         xgboost_model = xgb.XGBRegressor(verbosity=2, n_jobs=4, **best_params)
-
         model = make_pipeline(encoder, xgboost_model)
 
         model.fit(data_train, target_train)
 
     if args.model_pkl == "save":
         joblib.dump(
-            xgboost_model, os.path.join( MODELS_DIR, "{}_xgboostmodel.joblib".format(save_prefix))
+            model, os.path.join(MODELS_DIR, "{}_xgboostpipeline.joblib".format(save_prefix))
+        )
+        joblib.dump(
+            xgboost_model, os.path.join(MODELS_DIR, "{}_xgboostmodel.joblib".format(save_prefix))
         )
 
     print_predictions(
@@ -258,7 +392,7 @@ def parse_arguments():
 
     parser.add_argument(
         "--cache", type=str, default="",
-        help="How to use the cache (save|load)"
+        help="How to use the cache (save|load|load_cleaned)"
     )
 
     parser.add_argument(

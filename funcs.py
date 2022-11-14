@@ -15,13 +15,22 @@ def mkdir_p(dir):
 
 
 def timelimit_str_to_timedelta(t_str):
-    if "-" in t_str:
-        days = int(t_str.split("-")[0])
-        t_str = t_str.split("-")[1]
-    else:
-        days = 0
+    days, hrs = 0, 0
+    try:
+        if "-" in t_str:
+            days = int(t_str.split("-")[0])
+            t_str = t_str.split("-")[1]
+    except:
+        print(t_str)
 
-    hrs, mins, secs = map(int, t_str.split(":"))
+    if t_str.count(":") == 1 and t_str.count("."): # MM:SS.SS
+        mins, secs = t_str.split(":")
+        mins = int(mins)
+        secs = float(secs)
+    elif t_str.count(":") == 2: ## HH:MM:SS (SS has no decimal place for these ones)
+        hrs, mins, secs = map(int, t_str.split(":"))
+    else:
+        raise NotImplementedError("Bruh")
 
     return datetime.timedelta(days=days, hours=hrs, minutes=mins, seconds=secs)
 
@@ -59,13 +68,14 @@ def power_print_dump(df_power):
     ))
 
 
-def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True):
+def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=None):
     if isinstance(df, str) and cache != "load": # filepath
         df = pd.read_csv(
             df,
             delimiter='|',
             header=0,
             usecols=cols,
+            nrows=nrows
         )
 
     mkdir_p("/work/y02/y02/awilkins/pandas_cache/{}".format(data_name))
