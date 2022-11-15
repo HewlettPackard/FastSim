@@ -69,6 +69,10 @@ def power_print_dump(df_power):
 
 
 def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=None):
+    # Ew
+    has_partition = "Partition" in cols
+    cols += ["Partition"] if not has_partition else []
+
     if isinstance(df, str) and cache != "load": # filepath
         df = pd.read_csv(
             df,
@@ -88,19 +92,23 @@ def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=No
         df_power = pd.read_pickle(
             "/work/y02/y02/awilkins/pandas_cache/{}/{}.pkl".format(data_name, df_name)
         )
+        return df_power
     else:
         df_power = process_power(df, cols=cols, remove_steps=remove_steps)
 
-    return df_power
+    return df_power.drop(["Partition"], axis=1) if not has_partition else df_power
 
 
 def process_power(df, cols=None, remove_steps=True):
     if cols:
+        # Partition slice is removing data analysis nodes
+        # (note this will leave job steps without a parent)
         df_power = df.loc[
             (
                 (df.Start != "Unknown") & (df.Start.notna() &
                 (df.End != "Unknown") & (df.End.notna())) &
-                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna())
+                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
+                (df.Partition != "serial")
             ),
             cols
         ]
@@ -109,7 +117,8 @@ def process_power(df, cols=None, remove_steps=True):
             (
                 (df.Start != "Unknown") & (df.Start.notna() &
                 (df.End != "Unknown") & (df.End.notna())) &
-                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna())
+                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
+                (df.Partition != "serial")
             )
         ]
 
