@@ -402,22 +402,23 @@ def power_usage_user(df, timesteps, cache, data_name):
     ]
     top_5percent = list(reversed(top_5percent))
 
-    slice = df_power.loc[(df_power.User.isin([ user for user, _ in top_1percent ]))]
-    power_usage = np.zeros(t.values.size - 1)
-    for i_tick in range(len(power_usage)):
-        slice_time = slice.loc[(slice.Start <= t[i_tick]) & (slice.End > t[i_tick + 1])]
-        power_usage[i_tick] = slice_time.Power.sum()
-    plt.plot_date(
-        dates, power_usage, '-', linewidth=0.8, label="Top 1% ({} users)".format(len(top_1percent))
-    )
+    # slice = df_power.loc[(df_power.User.isin([ user for user, _ in top_1percent ]))]
+    # power_usage = np.zeros(t.values.size - 1)
+    # for i_tick in range(len(power_usage)):
+    #     slice_time = slice.loc[(slice.Start <= t[i_tick]) & (slice.End > t[i_tick + 1])]
+    #     power_usage[i_tick] = slice_time.Power.sum()
+    # plt.plot_date(
+    #     dates, power_usage, '-', linewidth=0.8, label="Top 1% ({} users)".format(len(top_1percent))
+    # )
 
-    slice = df_power.loc[(df_power.User.isin([ user for user, _ in top_2percent ]))]
     power_usage = np.zeros(t.values.size - 1)
-    for i_tick in range(len(power_usage)):
-        slice_time = slice.loc[(slice.Start <= t[i_tick]) & (slice.End > t[i_tick + 1])]
-        power_usage[i_tick] = slice_time.Power.sum()
+    slice = df_power.loc[(~df_power.User.isin([ user for user, _ in top_5percent ]))]
+    for i in range(len(power_usage)):
+        slice_time = slice.loc[(slice.Start <= t[i]) & (slice.End > t[i + 1])]
+        power_usage[i] = slice_time.Power.sum()
     plt.plot_date(
-        dates, power_usage, '-', linewidth=0.8, label="Top 2% ({} users)".format(len(top_2percent))
+        dates, power_usage, 'k', linewidth=0.5,
+        label="Bottom 95% ({} users)".format(int(len(user_usage) - len(top_5percent)))
     )
 
     slice = df_power.loc[(df_power.User.isin([ user for user, _ in top_5percent ]))]
@@ -426,17 +427,16 @@ def power_usage_user(df, timesteps, cache, data_name):
         slice_time = slice.loc[(slice.Start <= t[i_tick]) & (slice.End > t[i_tick + 1])]
         power_usage[i_tick] = slice_time.Power.sum()
     plt.plot_date(
-        dates, power_usage, '-', linewidth=0.8, label="Top 5% ({} users)".format(len(top_5percent))
+        dates, power_usage, '-', linewidth=0.5, label="Top 5% ({} users)".format(len(top_5percent))
     )
 
+    slice = df_power.loc[(df_power.User.isin([ user for user, _ in top_2percent ]))]
     power_usage = np.zeros(t.values.size - 1)
-    slice = df_power.loc[(~df_power.User.isin([ user for user, _ in top_5percent ]))]
-    for i in range(len(power_usage)):
-        slice_time = slice.loc[(slice.Start <= t[i]) & (slice.End > t[i + 1])]
-        power_usage[i] = slice_time.Power.sum()
+    for i_tick in range(len(power_usage)):
+        slice_time = slice.loc[(slice.Start <= t[i_tick]) & (slice.End > t[i_tick + 1])]
+        power_usage[i_tick] = slice_time.Power.sum()
     plt.plot_date(
-        dates, power_usage, 'k', linewidth=0.8,
-        label="Bottom 95% ({} users)".format(int(len(user_usage) - len(top_5percent)))
+        dates, power_usage, '-', linewidth=0.5, label="Top 2% ({} users)".format(len(top_2percent))
     )
 
     plt.legend()
