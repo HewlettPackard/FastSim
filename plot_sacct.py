@@ -140,6 +140,48 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.savefig("plots/powerusage_cabs.pdf")
     plt.show()
 
+    # print(power_usage_slurm.shape, power_usage_cabs.shape)
+    print("t_cabs: len={}. min={}, max={}".format(len(t_cabs), min(t_cabs), max(t_cabs)))
+    print("t_slurm: len={}. min={}, max={}".format(len(t_slurm), min(t_slurm), max(t_slurm)))
+
+    # NOTE: make sure  min(t_slurm) < min(t_cabs) && max(t_slurm) > max(t_cabs) first
+    power_usage_slurm_tcabs = np.zeros(t_cabs.values.size - 1)
+    for i in range(len(power_usage_slurm_tcabs)):
+        slice = df_power.loc[(df_power.Start <= t_cabs[i]) & (df_power.End > t_cabs[i + 1])]
+        power_usage_slurm_tcabs[i] = slice.Power.sum()
+
+    power_usage_residuals = power_usage_cabs - power_usage_slurm_tcabs
+
+    fig = plt.figure(1)
+
+    ax_main=fig.add_axes((.1,.3,.8,.6))
+    plt.plot_date(dates_cabs, power_usage_slurm_tcabs, 'g', linewidth=0.8, label="Slurm logs")
+    plt.plot_date(dates_cabs, power_usage_cabs, 'r', linewidth=0.8, label="cabinet power dumps")
+    plt.legend()
+    plt.ylabel("Power (W)")
+    plt.title("Power consumption on ARCHER2")
+    ax_main.set_xticklabels([])
+
+    ax_residuals = fig.add_axes((.1,.1,.8,.2))
+    plt.plot_date(dates_cabs, power_usage_residuals, 'k', linewidth=0.6, label="cabinet power dumps - Slurm logs")
+    plt.legend()
+    plt.ylabel("PCab - PSlurm (W)")
+    fig = plt.gcf()
+    fig.set_size_inches(14, 8)
+    fig.tight_layout()
+    fig.savefig("plots/powerusage_cabs_residuals.pdf")
+    plt.show()
+
+    plt.scatter(power_usage_slurm_tcabs, power_usage_cabs, s=2)
+    plt.xlabel("PSlurm")
+    plt.ylabel("PCabs")
+    plt.xlim(left=-0.1e+6, right=4e+6)
+    plt.ylim(bottom=-0.1e+6, top=4e+6)
+    fig = plt.gcf()
+    fig.tight_layout()
+    fig.savefig("plots/powerusage_cabs_against_slurm.pdf")
+    plt.show()
+
     cabs_fine = {
         datetime.datetime.strptime(os.path.basename(path), "cabs_%y%m%d") : path
         for path in glob(os.path.join(cab_dir, "cabs_[2]*"))
@@ -178,6 +220,7 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     plt.plot_date(dates_slurm, power_usage_slurm, 'g', linewidth=0.8, label="Slurm logs")
     plt.plot_date(dates_cabs_fine, power_usage_cabs_fine, 'r', linewidth=0.8, label="All cabinets")
 
+    power_usage_all_cabs = []
     cabs_itr = tqdm(
         df_cabs_fine.Cabinet.unique(), desc="Plotting individual cabinet power usage..."
     )
@@ -208,6 +251,8 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
             label="Individual cabinets" if not i_cab else ""
         )
 
+        power_usage_all_cabs.append(power_usage_cab)
+
     plt.yscale("log")
     plt.legend()
     plt.ylabel("Power (W)")
@@ -217,6 +262,75 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.tight_layout()
     fig.savefig("plots/powerusage_cabs_individual.pdf")
     plt.show()
+
+    shift = np.diff(power_usage_slurm_tcabs).argmax() - np.diff(power_usage_cabs).argmax()
+    print(shift)
+    power_usage_slurm_tcabs_shifted = np.roll(power_usage_slurm_tcabs, -shift)
+    power_usage_slurm_tcabs_shifted[-shift:] = 0
+
+    power_usage_shifted_residuals = power_usage_cabs - power_usage_slurm_tcabs_shifted
+
+    fig = plt.figure(1)
+
+    ax_main=fig.add_axes((.1,.3,.8,.6))
+    plt.plot_date(dates_cabs, power_usage_slurm_tcabs_shifted, 'g', linewidth=0.8, label="Slurm logs (shifted)")
+    plt.plot_date(dates_cabs, power_usage_cabs, 'r', linewidth=0.8, label="cabinet power dumps")
+    plt.legend()
+    plt.ylabel("Power (W)")
+    plt.title("Power consumption on ARCHER2")
+    ax_main.set_xticklabels([])
+
+    ax_residuals = fig.add_axes((.1,.1,.8,.2))
+    plt.plot_date(dates_cabs, power_usage_shifted_residuals, 'k', linewidth=0.6, label="cabinet power dumps - Slurm logs")
+    plt.legend()
+    plt.ylabel("PCab - PSlurm (W)")
+    fig = plt.gcf()
+    fig.set_size_inches(14, 8)
+    fig.tight_layout()
+    fig.savefig("plots/powerusage_cabs_shifted_residuals.pdf")
+    plt.show()
+
+    plt.scatter(power_usage_slurm_tcabs_shifted, power_usage_cabs, s=1)
+    plt.xlabel("PSlurm (shifted)")
+    plt.ylabel("PCabs")
+    plt.xlim(left=-0.1e+6, right=4e+6)
+    plt.ylim(bottom=-0.1e+6, top=4e+6)
+    fig = plt.gcf()
+    fig.set_size_inches(12, 10)
+    fig.tight_layout()
+    fig.savefig("plots/powerusage_cabs_against_slurm_shifted.pdf")
+    plt.show()
+
+    cabs_off, cabs_partial = [], []
+    for t in range(len(power_usage_all_cabs[0])):
+        for power_usage in power_usage_all_cabs:
+            if power_usage[t] == 0:
+                pass
+                # cabs_off.apend
+
+
+    # NOTE: Trying to mask out times where cabinet power jumps, I'm not sure it really makes sense
+    # to do this. Thought was when nodes switch on it takes time for jobs to be allocated, but when
+    # nodes are powered down the slurm power usage persists so I don't really know whats going on
+    # anymore, will just try to shift the slurm power usage backwards to match the cab data
+    # cab_switches = (np.abs(np.array(power_usage_cabs_diffs)) > 10e+3).astype(int)
+    # print(cab_switches.shape)
+    # print(cab_switches)
+    # significant_switches = cab_switches.sum(axis=0) > 4
+    # print(significant_switches.size)
+    # print(significant_switches.sum())
+    # print(significant_switches)
+
+    # switch_mask = significant_switches
+    # delta_t = t_cabs[1] - t_cabs[0]
+    # mask_length = int((datetime.timedelta(hours=1, minutes=15) / delta_t) + 1)
+    # print(mask_length)
+    # print(switch_mask.shape)
+    # for i in range(1, mask_length):
+    #     switch_mask[i:] += significant_switches[:-i]
+    # switch_mask = switch_mask.astype(bool)
+    # print(switch_mask.sum())
+    # print(switch_mask)
 
 
 def power_usage_allocnodes(df, timesteps, cache, data_name):
