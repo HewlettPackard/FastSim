@@ -12,6 +12,9 @@ from matplotlib import pyplot as plt
 import matplotlib.dates
 from tqdm import tqdm
 
+from sklearn.linear_model import RANSACRegressor, HuberRegressor
+from sklearn.preprocessing import StandardScaler
+
 from funcs import power_print_dump, parse_cache
 
 
@@ -264,7 +267,7 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     plt.show()
 
     shift = np.diff(power_usage_slurm_tcabs).argmax() - np.diff(power_usage_cabs).argmax()
-    print(shift)
+    print("Shifting by {}".format(shift))
     power_usage_slurm_tcabs_shifted = np.roll(power_usage_slurm_tcabs, -shift)
     power_usage_slurm_tcabs_shifted[-shift:] = 0
 
@@ -301,36 +304,87 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.savefig("plots/powerusage_cabs_against_slurm_shifted.pdf")
     plt.show()
 
-    cabs_off, cabs_partial = [], []
+    cabs_off, cabs_partial = np.zeros_like(power_usage_all_cabs[0], dtype=int), np.zeros_like(power_usage_all_cabs[0], dtype=int)
     for t in range(len(power_usage_all_cabs[0])):
         for power_usage in power_usage_all_cabs:
             if power_usage[t] == 0:
-                pass
-                # cabs_off.apend
+                cabs_off[t] += 1
+            elif power_usage[t] <= 5e+3:
+                cabs_partial[t] += 1
 
+    print("cabs off count:")
+    for num in np.unique(cabs_off):
+        print(num, (cabs_off == num).sum(), end=" - ")
+    print("\ncabs partially off count:")
+    for num in np.unique(cabs_partial):
+        print(num, (cabs_partial == num).sum(), end=" - ")
+    print()
 
-    # NOTE: Trying to mask out times where cabinet power jumps, I'm not sure it really makes sense
-    # to do this. Thought was when nodes switch on it takes time for jobs to be allocated, but when
-    # nodes are powered down the slurm power usage persists so I don't really know whats going on
-    # anymore, will just try to shift the slurm power usage backwards to match the cab data
-    # cab_switches = (np.abs(np.array(power_usage_cabs_diffs)) > 10e+3).astype(int)
-    # print(cab_switches.shape)
-    # print(cab_switches)
-    # significant_switches = cab_switches.sum(axis=0) > 4
-    # print(significant_switches.size)
-    # print(significant_switches.sum())
-    # print(significant_switches)
+    power_usage_slurm_tcabsfine = np.zeros(t_cabs_fine.values.size - 1)
+    for i in range(len(power_usage_slurm_tcabsfine)):
+        slice = df_power.loc[(df_power.Start <= t_cabs_fine[i]) & (df_power.End > t_cabs_fine[i + 1])]
+        power_usage_slurm_tcabsfine[i] = slice.Power.sum()
 
-    # switch_mask = significant_switches
-    # delta_t = t_cabs[1] - t_cabs[0]
-    # mask_length = int((datetime.timedelta(hours=1, minutes=15) / delta_t) + 1)
-    # print(mask_length)
-    # print(switch_mask.shape)
-    # for i in range(1, mask_length):
-    #     switch_mask[i:] += significant_switches[:-i]
-    # switch_mask = switch_mask.astype(bool)
-    # print(switch_mask.sum())
-    # print(switch_mask)
+    power_usage_allcabssum = np.array(power_usage_all_cabs).sum(axis=0)
+
+    shift = np.diff(power_usage_slurm_tcabsfine).argmax() - np.diff(power_usage_allcabssum).argmax()
+    print("Shifting by {}".format(shift))
+    power_usage_slurm_tcabsfine_shifted = np.roll(power_usage_slurm_tcabsfine, -shift)
+    power_usage_slurm_tcabsfine_shifted = power_usage_slurm_tcabsfine_shifted[:-shift]
+    power_usage_allcabssum = power_usage_allcabssum[:-shift]
+    cabs_off, cabs_partial = cabs_off[:-shift], cabs_partial[:-shift]
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    colors = iter(['b', 'g', 'r', 'y'])
+
+    for num, cnt in np.array(np.unique(cabs_off, return_counts=True)).T:
+        if cnt <= 1000:
+            continue
+
+        mask = (cabs_off == num)
+        x = power_usage_slurm_tcabsfine_shifted[mask]
+        y = power_usage_allcabssum[mask]
+
+        model = RANSACRegressor()
+        model.fit(x[:, None], y)
+        preds = model.predict(x[:, None]).ravel()
+
+        plt.scatter(
+            x, y, c=next(colors), s=1,
+            label="{} cabs off (RANSAC: {}x + {})".format(
+                num, model.estimator_.coef_[0], model.estimator_.intercept_
+            )
+        )
+        plt.plot(x, preds, c='k')
+
+    for num, cnt in np.array(np.unique(cabs_partial, return_counts=True)).T:
+        if num == 0 or cnt <= 1000:
+            continue
+
+        mask = (cabs_partial == num)
+        x = power_usage_slurm_tcabsfine_shifted[mask]
+        y = power_usage_allcabssum[mask]
+
+        model = RANSACRegressor()
+        model.fit(x[:, None], y)
+        preds = model.predict(x[:, None]).ravel()
+
+        plt.scatter(
+            x, y, c=next(colors), s=1,
+            label="{} cabs partially off (RANSAC: {}x + {})".format(
+                num, model.estimator_.coef_[0], model.estimator_.intercept_
+            )
+        )
+        plt.plot(x, preds, c='k')
+
+    plt.xlabel("PSlurm (shifted)")
+    plt.ylabel("PCabs")
+    plt.xlim(left=-0.1e+6, right=4e+6)
+    plt.ylim(bottom=-0.1e+6, top=4e+6)
+    plt.legend()
+    fig.tight_layout()
+    # fig.savefig("plots/powerusage_cabs_against_slurm_shifted_grouped.pdf")
+    plt.show()
 
 
 def power_usage_allocnodes(df, timesteps, cache, data_name):
