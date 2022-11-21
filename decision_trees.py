@@ -24,16 +24,18 @@ from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
 
 POWER_COLS = ["JobID", "Start", "End", "ConsumedEnergyRaw", "AllocNodes"]
 # Not going to try categorising JobName and SubmitLine
-SUBMIT_COLS = ["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "Timelimit", "Submit"]
+SUBMIT_COLS = ["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "Timelimit", "Submit", "NTasks"]
 FINISH_COLS = ["Elapsed", "ExitCode", "NTasks", "TotalCPU", "CPUTime", "MaxRSS", "MaxVMSize",
                "AvePages", "AveDiskRead", "AveDiskWrite"]
+
+GROUPTOPROJECT_FILE = "/work/y02/y02/awilkins/ProjectAreas.csv"
 
 HPARAM_DIR = "/work/y02/y02/awilkins/archer2_jobdata/hparams"
 MODELS_DIR = "/work/y02/y02/awilkins/archer2_jobdata/models"
 CACHE_DIR = "/work/y02/y02/awilkins/pandas_cache"
 PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 
-def clean_df(df, queue_only=False):
+def clean_df(df, queue_only=False, project_to_area=False):
     cols_to_str = ["JobID", "ReqMem", "ReqCPUS", "ReqNodes", "AllocNodes"]
     df[cols_to_str] = df[cols_to_str].astype(str)
 
@@ -61,7 +63,9 @@ def clean_df(df, queue_only=False):
         lambda row: round(timelimit_str_to_timedelta(row).total_seconds() / 60)
     )
 
-    df_jobs["PowerPerNode"] = df_jobs.apply(lambda row: float(row.Power) / float(row.AllocNodes), axis=1)
+    df_jobs["PowerPerNode"] = df_jobs.apply(
+        lambda row: float(row.Power) / float(row.AllocNodes), axis=1
+    )
 
     # NOTE there are a few jobs with >2kW power per node (36 in the case I checked),
     # this seems unrealistic for a 128 core node. Just going to leave them for now, the model
@@ -69,6 +73,22 @@ def clean_df(df, queue_only=False):
     # print(len(df_jobs.loc[(df_jobs.PowerPerNode >= 2000)]))
     # print(df_jobs.loc[(data_test.PowerPerNode >= 2000)])
     # sys.exit()
+
+    if project_to_area:
+        group_to_area = {}
+        with open(GROUPTOPROJECT_FILE, 'r') as f:
+            next(f)
+            for line in f:
+                group, area = line.strip('\n').split(',')
+                group_to_area[group] = area
+
+        df_jobs.Group = df_jobs.Group.apply(
+            lambda row: group_to_area[row] if row in group_to_area else "Unknown"
+        )
+
+        print("Groups categorised into research ares:")
+        for area in df_jobs.Group.unique():
+            print("{}: {}".format(area, len(df_jobs.loc[(df_jobs.Group == area)])))
 
     if queue_only:
         return df_jobs
@@ -283,7 +303,9 @@ def main(args):
         )
 
         pd.options.mode.chained_assignment = None
-        df_power = clean_df(df_power, queue_only=args.queue_data)
+        df_power = clean_df(
+            df_power, queue_only=args.queue_data, project_to_area=args.use_project_to_area
+        )
         pd.options.mode.chained_assignment = None
 
         df_power = df_power.drop(
@@ -389,10 +411,18 @@ def main(args):
                 #     'learning_rate' : [0.2, 0.3, 0.4], 'reg_alpha' : [0.0], 'reg_lambda' : [0.7],
                 #     'gamma' : [0.9], 'min_child_weight' : [0.0]
                 # }
+                # params = {
+                #     'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
+                #     'reg_alpha' : [0.0, 0.05], 'reg_lambda' : [0.6, 0.7, 0.8],
+                #     'gamma' : [0.85, 0.9, 0.95], 'min_child_weight' : [0.0, 0.05]
+                # }
+
+                # Semi-manual grid search history for queue-only data after categorsing groups into
+                # areas
                 params = {
-                    'n_estimators' : [200] , 'max_depth' : [12], 'learning_rate' : [0.3],
-                    'reg_alpha' : [0.0, 0.05], 'reg_lambda' : [0.6, 0.7, 0.8],
-                    'gamma' : [0.85, 0.9, 0.95], 'min_child_weight' : [0.0, 0.05]
+                    'n_estimators' : [175] , 'max_depth' : [11], 'learning_rate' : [0.25],
+                    'reg_alpha' : [0.0], 'reg_lambda' : [0.75],
+                    'gamma' : [1.0, 1.1], 'min_child_weight' : [0.0]
                 }
 
             else:
@@ -619,70 +649,70 @@ def main(args):
             plt.show()
 
         else:
-            # print("min CPUUtil={}, max CPUUtil={}".format(
-            #     data_train.CPUUtil.min(), data_train.CPUUtil.max()
-            # ))
-            # max_cpuutil = data_train.CPUUtil.max()
-            # PartialDependenceDisplay.from_estimator(
-            #     model, data_train, ["CPUUtil"], kind="both", n_jobs=4, grid_resolution=1000,
-            #     percentiles=(0.00, 1.00), verbose=1
-            # )
-            # fig = plt.gcf()
-            # fig.set_size_inches(14, 8)
-            # plt.ylabel("Partial Dependence (Power W)", fontsize=16)
-            # plt.xlabel("CPUUtil ([0,1])", fontsize=16)
-            # plt.xlim(left=-0.01*max_cpuutil, right=1.01*max_cpuutil)
-            # plt.ylim(bottom=100, top=800)
-            # plt.title("Partial Dependence of Power Per Node on CPUUtil", fontsize=16)
-            # fig.tight_layout()
-            # plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_CPUUtil.pdf"))
-            # plt.show()
+            print("min CPUUtil={}, max CPUUtil={}".format(
+                data_train.CPUUtil.min(), data_train.CPUUtil.max()
+            ))
+            max_cpuutil = data_train.CPUUtil.max()
+            PartialDependenceDisplay.from_estimator(
+                model, data_train, ["CPUUtil"], kind="both", n_jobs=4, grid_resolution=1000,
+                percentiles=(0.00, 1.00), verbose=1
+            )
+            fig = plt.gcf()
+            fig.set_size_inches(14, 8)
+            plt.ylabel("Partial Dependence (Power W)", fontsize=16)
+            plt.xlabel("CPUUtil ([0,1])", fontsize=16)
+            plt.xlim(left=-0.01*max_cpuutil, right=1.01*max_cpuutil)
+            plt.ylim(bottom=100, top=800)
+            plt.title("Partial Dependence of Power Per Node on CPUUtil", fontsize=16)
+            fig.tight_layout()
+            plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_CPUUtil.pdf"))
+            plt.show()
 
-            # print("min NumTasksPerNode={}, max NumTasksPerNode={}".format(
-            #     data_train.NumTasksPerNode.min(), data_train.NumTasksPerNode.max()
-            # ))
-            # data_train_boundnumtaskspernode = data_train.loc[(data_train.NumTasksPerNode <= 800)]
-            # max_numtaskspernode = data_train_boundnumtaskspernode.NumTasksPerNode.max()
-            # print("Fraction of data with NumTasksPerNode<={} is {}".format(
-            #     max_numtaskspernode, len(data_train_boundnumtaskspernode) / len(data_train)
-            # ))
-            # PartialDependenceDisplay.from_estimator(
-            #     model, data_train_boundnumtaskspernode, ["NumTasksPerNode"], kind="both", n_jobs=4,
-            #     grid_resolution=800, percentiles=(0.0, 1.0), verbose=1
-            # )
-            # fig = plt.gcf()
-            # fig.set_size_inches(14, 8)
-            # plt.ylabel("Partial Dependence (Power W)", fontsize=16)
-            # plt.xlabel("NumTasksPerNode", fontsize=16)
-            # plt.xlim(left=-0.01*max_numtaskspernode, right=1.01*max_numtaskspernode)
-            # plt.ylim(bottom=100, top=800)
-            # plt.title("Partial Dependence of Power Per Node on NumTasksPerNode", fontsize=16)
-            # fig.tight_layout()
-            # plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_NumTasksPerNode.pdf"))
-            # plt.show()
+            print("min NumTasksPerNode={}, max NumTasksPerNode={}".format(
+                data_train.NumTasksPerNode.min(), data_train.NumTasksPerNode.max()
+            ))
+            data_train_boundnumtaskspernode = data_train.loc[(data_train.NumTasksPerNode <= 800)]
+            max_numtaskspernode = data_train_boundnumtaskspernode.NumTasksPerNode.max()
+            print("Fraction of data with NumTasksPerNode<={} is {}".format(
+                max_numtaskspernode, len(data_train_boundnumtaskspernode) / len(data_train)
+            ))
+            PartialDependenceDisplay.from_estimator(
+                model, data_train_boundnumtaskspernode, ["NumTasksPerNode"], kind="both", n_jobs=4,
+                grid_resolution=800, percentiles=(0.0, 1.0), verbose=1
+            )
+            fig = plt.gcf()
+            fig.set_size_inches(14, 8)
+            plt.ylabel("Partial Dependence (Power W)", fontsize=16)
+            plt.xlabel("NumTasksPerNode", fontsize=16)
+            plt.xlim(left=-0.01*max_numtaskspernode, right=1.01*max_numtaskspernode)
+            plt.ylim(bottom=100, top=800)
+            plt.title("Partial Dependence of Power Per Node on NumTasksPerNode", fontsize=16)
+            fig.tight_layout()
+            plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_NumTasksPerNode.pdf"))
+            plt.show()
 
-            # print("min Elapsed={}, max Elapsed={}".format(
-            #     data_train.Elapsed.min(), data_train.Elapsed.max()
-            # ))
-            # data_train_boundelapsed = data_train.loc[(data_train.Elapsed <= 500)]
-            # max_elapsed = data_train_boundelapsed.Elapsed.max()
-            # print("Fraction of data with Elapsed<={} is {}".format(
-            #     max_elapsed, len(data_train_boundelapsed) / len(data_train)
-            # ))
-            # PartialDependenceDisplay.from_estimator(
-            #     model, data_train_boundelapsed, ["Elapsed"], kind="both", n_jobs=4,
-            #     grid_resolution=500, percentiles=(0.0, 1.0), verbose=1
-            # )
-            # fig = plt.gcf()
-            # fig.set_size_inches(14, 8)
-            # plt.ylabel("Partial Dependence (Power W)", fontsize=16)
-            # plt.xlabel("Elapsed (minutes)", fontsize=16)
-            # plt.title("Partial Dependence of Power Per Node on Elapsed", fontsize=16)
-            # plt.xlim(left=-0.01*max_elapsed, right=1.01*max_elapsed)
-            # plt.ylim(bottom=100, top=800)
-            # fig.tight_layout()
-            # plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_Elapsed.pdf"))
-            # plt.show()
+            print("min Elapsed={}, max Elapsed={}".format(
+                data_train.Elapsed.min(), data_train.Elapsed.max()
+            ))
+            data_train_boundelapsed = data_train.loc[(data_train.Elapsed <= 500)]
+            max_elapsed = data_train_boundelapsed.Elapsed.max()
+            print("Fraction of data with Elapsed<={} is {}".format(
+                max_elapsed, len(data_train_boundelapsed) / len(data_train)
+            ))
+            PartialDependenceDisplay.from_estimator(
+                model, data_train_boundelapsed, ["Elapsed"], kind="both", n_jobs=4,
+                grid_resolution=500, percentiles=(0.0, 1.0), verbose=1
+            )
+            fig = plt.gcf()
+            fig.set_size_inches(14, 8)
+            plt.ylabel("Partial Dependence (Power W)", fontsize=16)
+            plt.xlabel("Elapsed (minutes)", fontsize=16)
+            plt.title("Partial Dependence of Power Per Node on Elapsed", fontsize=16)
+            plt.xlim(left=-0.01*max_elapsed, right=1.01*max_elapsed)
+            plt.ylim(bottom=100, top=800)
+            fig.tight_layout()
+            plt.savefig(os.path.join(PLOT_DIR, "partialdependence_queue_run_Elapsed.pdf"))
+            plt.show()
 
             print("min MaxVMSizePerNode={}, max MaxVMSizePerNode={}".format(
                 data_train.MaxVMSizePerNode.min(), data_train.MaxVMSizePerNode.max()
@@ -775,6 +805,12 @@ def parse_arguments():
     parser.add_argument(
         "--print_predictions", action="store_true",
         help="Print and summarise power predictions for all entires in test + training set"
+    )
+
+    parser.add_argument(
+        "--use_project_to_area", action='store_true',
+        help="Use the project to area csv to transform Group name to field of study" +
+             "(made model slightly worse)"
     )
 
     args = parser.parse_args()
