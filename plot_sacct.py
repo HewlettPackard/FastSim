@@ -15,7 +15,7 @@ from tqdm import tqdm
 from sklearn.linear_model import RANSACRegressor, HuberRegressor
 from sklearn.preprocessing import StandardScaler
 
-from funcs import power_print_dump, parse_cache
+from funcs import power_print_dump, parse_cache, timelimit_str_to_timedelta
 
 
 # with pd.option_context('display.max_rows', None):
@@ -717,6 +717,143 @@ def power_usage_cpufreq(df, timesteps, cache, data_name):
     plt.show()
 
 
+def power_distributions(df, cache, data_name):
+    df_power = parse_cache(
+        df, cache, data_name, "power_distributions_df",
+        ["JobID", "Start", "End", "ConsumedEnergyRaw", "Elapsed", "AllocNodes"]
+    )
+
+    df_power.AllocNodes = df_power.AllocNodes.astype(str)
+    df_power.AllocNodes = df_power.AllocNodes.replace(
+        { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+    ).astype(float).astype(int)
+
+    df_power["PowerPerNode"] = df_power.apply(
+        lambda row: float(row.Power) / float(row.AllocNodes), axis=1
+    )
+
+    # print(df_power.AllocNodes.unique())
+
+    bins_allocnodes = np.array(
+        list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+        list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+    )
+    print("Using AllocNodes bins:\n{}".format(bins_allocnodes))
+
+    bins_power = np.array(list(range(100, 801, 25)))
+    print("Using PowerPerNodes bins:\n{}".format(bins_power))
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    h = ax.hist2d(
+        df_power.AllocNodes, df_power.PowerPerNode, bins=[bins_allocnodes, bins_power],
+        range=[[0, 3000], [100, 801]], cmap="jet"
+    )
+    ax.set_xscale("log")
+    ax.set_title("Hist of PowerPerNode v AllocNodes for Jobs")
+    ax.set_xlabel("AllocNodes")
+    ax.set_ylabel("PowerPerNode (W)")
+    fig.colorbar(h[3], ax=ax)
+    fig.tight_layout()
+    plt.close()
+
+    df_power.Elapsed = df_power.Elapsed.apply(
+        lambda row: timelimit_str_to_timedelta(row).total_seconds() / 60
+    )
+
+    print(df_power.Elapsed.sort_values().unique())
+
+    bins_elapsed = np.array(
+        (
+            list(range(1, 61, 10)) + list(range(90, 361, 30)) + list(range(420, 961, 60)) +
+            list(range(1200, 2881, 240)) + list(range(4320, 8641, 1440))
+        ),
+        dtype=float
+    )
+    bins_elapsed /= 60
+    print("Using Elapsed bins:\n{}".format(bins_elapsed))
+
+    print("Using PowerPerNodes bins:\n{}".format(bins_power))
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    h = ax.hist2d(
+        df_power.Elapsed, df_power.PowerPerNode, bins=[bins_elapsed, bins_power],
+        range=[[0, 144], [100, 801]], cmap="jet"
+    )
+    ax.set_xscale("log")
+    ax.set_title("Hist of PowerPerNode v Elapsed for Jobs")
+    ax.set_xlabel("Elapsed (hours)")
+    ax.set_ylabel("PowerPerNode (W)")
+    fig.colorbar(h[3], ax=ax)
+    fig.tight_layout()
+    plt.close()
+
+    df_power_low = df_power.loc[(df_power.PowerPerNode < 300)]
+    df_power_medlow = df_power.loc[(df_power.PowerPerNode >= 300) & (df_power.PowerPerNode < 400)]
+    df_power_medhigh = df_power.loc[(df_power.PowerPerNode >= 400) & (df_power.PowerPerNode < 500)]
+    df_power_high = df_power.loc[(df_power.PowerPerNode >= 500)]
+
+    low_power_util = df_power_low.apply(
+        lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+    ).sum()
+    medlow_power_util = df_power_medlow.apply(
+        lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+    ).sum()
+    medhigh_power_util = df_power_medhigh.apply(
+        lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+    ).sum()
+    high_power_util = df_power_high.apply(
+        lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+    ).sum()
+
+    print(low_power_util, medlow_power_util, medhigh_power_util, high_power_util)
+
+    norm_factor = low_power_util + medlow_power_util + medhigh_power_util + high_power_util
+
+    print("Low power (<300W) job average system utilisation: {:.2f} %".format(
+        low_power_util / norm_factor * 100
+    ))
+    print("Medium low power (300W<= < 400W) job average system utilisation: {:.2f} %".format(
+        medlow_power_util / norm_factor * 100
+    ))
+    print("Medium high power (400W<= < 500W) job average system utilisation: {:.2f} %".format(
+        medhigh_power_util / norm_factor * 100
+    ))
+    print("High power (>=500W) job average system utilisation: {:.2f} %".format(
+        high_power_util / norm_factor * 100
+    ))
+
+    powers = [0] + list(range(300, 700, 25)) + [700]
+    utils = []
+    for i, power in enumerate(powers):
+        if i == 0:
+            util = df_power.loc[(df_power.PowerPerNode < power)].apply(
+                lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+            ).sum()
+        elif i + 1 == len(powers):
+            util = df_power.loc[(df_power.PowerPerNode >= power)].apply(
+                lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+            ).sum()
+        else:
+            util = df_power.loc[
+                (df_power.PowerPerNode >= power) & (df_power.PowerPerNode < powers[i + 1])
+            ].apply(
+                lambda row: row.AllocNodes * (row.Elapsed / 60), axis=1
+            ).sum()
+
+        utils.append((util / norm_factor) * 100)
+
+    x = np.array(list(range(len(powers))))
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+    ax.bar(x, utils)
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        ["<300"] +
+        [ "{}-{}".format(powers[i], powers[i + 1]) for i in range(1, len(powers) - 1) ] + [">700"]
+    )
+    fig.tight_layout()
+    plt.show()
+
+
 def main(args):
     if args.cache != "load":
         df = pd.read_csv(
@@ -764,6 +901,9 @@ def main(args):
             df, args.time_steps, args.cache, ".".join(os.path.basename(args.data).split(".")[:-1])
         )
 
+    if args.power_distributions:
+        power_distributions(df, args.cache, ".".join(os.path.basename(args.data).split(".")[:-1]))
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -779,6 +919,7 @@ def parse_arguments():
     parser.add_argument("--power_usage_allocnodes", action='store_true')
     parser.add_argument("--power_usage_user", action='store_true')
     parser.add_argument("--power_usage_cpufreq", action='store_true')
+    parser.add_argument("--power_distributions", action='store_true')
 
     parser.add_argument("--cols", type=int, default=0, help="Number of cols to select")
     parser.add_argument(
