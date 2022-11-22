@@ -754,7 +754,7 @@ def power_distributions(df, cache, data_name):
     ax.set_ylabel("PowerPerNode (W)")
     fig.colorbar(h[3], ax=ax)
     fig.tight_layout()
-    plt.close()
+    plt.show()
 
     df_power.Elapsed = df_power.Elapsed.apply(
         lambda row: timelimit_str_to_timedelta(row).total_seconds() / 60
@@ -785,7 +785,7 @@ def power_distributions(df, cache, data_name):
     ax.set_ylabel("PowerPerNode (W)")
     fig.colorbar(h[3], ax=ax)
     fig.tight_layout()
-    plt.close()
+    plt.show()
 
     df_power_low = df_power.loc[(df_power.PowerPerNode < 300)]
     df_power_medlow = df_power.loc[(df_power.PowerPerNode >= 300) & (df_power.PowerPerNode < 400)]
@@ -854,6 +854,38 @@ def power_distributions(df, cache, data_name):
     plt.show()
 
 
+def misc(df, timesteps, cache, data_name):
+    df_power = parse_cache(
+        df, cache, data_name, "misc_df",
+        ["JobID", "Start", "End", "ConsumedEnergyRaw", "Submit"]
+    )
+
+    df_power.Submit = pd.to_datetime(df_power.Submit, format="%Y-%m-%dT%H:%M:%S")
+
+    t = pd.date_range(min(df_power.Start), max(df_power.End), periods=timesteps)
+
+    power_usage = np.zeros(t.values.size - 1)
+
+    for i in range(len(power_usage)):
+        slice = df_power.loc[(df_power.Submit <= t[i]) & (df_power.Start > t[i + 1])]
+        power_usage[i] = len(slice)
+
+    dates= matplotlib.dates.date2num(t[:-1])
+    plt.plot_date(dates, power_usage, 'g', linewidth=0.8)
+    plt.legend()
+    plt.ylabel("Queue Size")
+    plt.title("Job Queue on ARCHER2")
+    fig = plt.gcf()
+    fig.set_size_inches(14, 8)
+    fig.tight_layout()
+    fig.savefig("plots/queue_timeseries.pdf")
+    plt.show()
+
+    df_power["PowerPerNode"] = df_power.apply(
+        lambda row: float(row.Power) / float(row.AllocNodes), axis=1
+    )
+
+
 def main(args):
     if args.cache != "load":
         df = pd.read_csv(
@@ -904,6 +936,10 @@ def main(args):
     if args.power_distributions:
         power_distributions(df, args.cache, ".".join(os.path.basename(args.data).split(".")[:-1]))
 
+    if args.misc:
+        misc(
+            df, args.time_steps, args.cache, ".".join(os.path.basename(args.data).split(".")[:-1])
+        )
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -920,6 +956,7 @@ def parse_arguments():
     parser.add_argument("--power_usage_user", action='store_true')
     parser.add_argument("--power_usage_cpufreq", action='store_true')
     parser.add_argument("--power_distributions", action='store_true')
+    parser.add_argument("--misc", action='store_true')
 
     parser.add_argument("--cols", type=int, default=0, help="Number of cols to select")
     parser.add_argument(
