@@ -34,7 +34,9 @@ class Job():
 
 
 class ARCHER2():
-    def __init__(self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0):
+    def __init__(
+        self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0
+        ):
         self.nodes_free = 5860
         self.nodes_drained = 0
         self.nodes_drained_carryover = 0
@@ -76,7 +78,9 @@ class ARCHER2():
         if self.time.hour != (self.time - time).hour:
             num_drain = max(
                 (
-                    round(np.random.normal(loc=self.node_down_mean, scale=self.node_down_mean / 2)) +
+                    round(np.random.normal(
+                        loc=self.node_down_mean, scale=self.node_down_mean / 2
+                    )) +
                     self.nodes_drained_carryover
                 ),
                 0
@@ -97,6 +101,9 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
     np.random.seed(seed)
     cnt = 0
     while len(df_jobs):
+        # Retains the job the scheduler was waiting for space for if queue has jobs from last step
+        retained = 1 if queue else None
+
         for _, job_row in df_jobs.loc[(df_jobs.Submit < time)].iterrows():
             queue.append(
                 Job(job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.PowerPerNode)
@@ -109,13 +116,13 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
             queue.sort(key=lambda job: job.submit)
         elif scheduler == "low-high_power":
             # high power priority at off-peak, low power priority at peak
-            # To ensure large jobs don't get ignored, each time low/high priority is switched, put
-            # the job that has been queueing longest at the front of the queue
-            queue.sort(key=lambda job: job.submit)
+            # To ensure that reordering the queue doesn't cause the scheduler to dance around
+            # large jobs, any job that the scheduler was waiting to submit will be finished before
+            # reordering the queue
             if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
-                queue[1:] = sorted(queue[1:], key=lambda job: job.node_power)
+                queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power)
             else:
-                queue[1:] = sorted(queue[1:], key=lambda job: job.node_power, reverse=True)
+                queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power, reverse=True)
 
         for job in list(queue):
             if system.has_space(job):
@@ -243,12 +250,12 @@ def main(args):
         fig = plt.figure(1, figsize=(12, 8))
         ax = fig.add_axes((.1, .3, .8, .6))
         ax.plot_date(
-            dates_toy, np.array(archer.power_history), 'g',
-            label="Toy scheduler low-high_power - Slurm power", linewidth=0.6
-        )
-        ax.plot_date(
             dates_toy, np.array(archer_fcfs.power_history), 'r',
             label="Toy scheduler fcfs - Slurm power", linewidth=0.6
+        )
+        ax.plot_date(
+            dates_toy, np.array(archer.power_history), 'g',
+            label="Toy scheduler low-high_power - Slurm power", linewidth=0.6
         )
         for day_num in range(round((end - start).days + 0.5) + 1):
             day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
@@ -267,12 +274,12 @@ def main(args):
         plt.legend()
         ax2 = fig.add_axes((.1, .1, .8, .2))
         ax2.plot_date(
-            dates_toy, (np.array(archer.occupancy_history) / 5860) * 100, 'g',
-            label="Toy scheduler low-high_power - system occupancy", linewidth=0.6
-        )
-        ax2.plot_date(
             dates_toy, (np.array(archer_fcfs.occupancy_history) / 5860) * 100, 'r',
             label="Toy scheduler fcfs - system occupancy", linewidth=0.6
+        )
+        ax2.plot_date(
+            dates_toy, (np.array(archer.occupancy_history) / 5860) * 100, 'g',
+            label="Toy scheduler low-high_power - system occupancy", linewidth=0.6
         )
         for day_num in range(round((end - start).days + 0.5) + 1):
             day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
@@ -292,6 +299,30 @@ def main(args):
         fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy.pdf"))
         plt.show()
 
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.plot_date(
+            dates_toy, np.array(archer.power_history), 'g',
+            label="Toy scheduler low-high_power - Slurm power", linewidth=0.6
+        )
+        for day_num in range(round((end - start).days + 0.5) + 1):
+            day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
+            ax.axvspan(
+                matplotlib.dates.date2num(day - timedelta(hours=4)),
+                matplotlib.dates.date2num(day + timedelta(hours=8)),
+                label="8pm - 8am" if not day_num else "_", color="gray", alpha=0.3
+            )
+            ax.axvspan(
+                matplotlib.dates.date2num(day + timedelta(hours=8)),
+                matplotlib.dates.date2num(day + timedelta(hours=20)),
+                label="8am - 8pm" if not day_num else "_", color="lightgray", alpha=0.3
+            )
+        ax.set_ylabel("Power (MW)")
+        ax.set_xticklabels([])
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_power.pdf"))
+        plt.show()
+
         day_powers, night_powers = [], []
         day_occupancies, night_occupancies = [], []
         for tick, date in enumerate(t_toy):
@@ -304,10 +335,10 @@ def main(args):
 
         print(
             "For low-high power scheduler:\n" +
-            "Mean daytime power = {:.4f} MW\tMean nightime power = {:.4f} MW".format(
+            "Mean daytime power = {:.4f} MW\t Mean nightime power = {:.4f} MW".format(
                 np.mean(day_powers), np.mean(night_powers)
             ) +
-            "Mean daytime occupancy = {:.2f} %\tMean nightime occupancy = {:.2f} %".format(
+            "Mean daytime occupancy = {:.2f} %\t Mean nightime occupancy = {:.2f} %".format(
                 np.mean(day_occupancies) * 100, np.mean(night_occupancies) * 100
             )
         )
