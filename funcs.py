@@ -77,6 +77,7 @@ def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=No
         df = pd.read_csv(
             df,
             delimiter='|',
+            lineterminator='\n', # NOTE The new data allocations_noconvert needed this to work
             header=0,
             usecols=cols,
             nrows=nrows
