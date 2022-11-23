@@ -1,7 +1,7 @@
 """
 """
 
-import argparse, os
+import argparse, os, pickle
 from glob import glob
 from datetime import datetime, timedelta
 
@@ -74,8 +74,8 @@ class ARCHER2():
             self.nodes_free += job.nodes
             self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
 
-        # Simulate drained nodes every hour at most
-        if self.time.hour != (self.time - time).hour:
+        # Resample drained nodes every sixth hour or day
+        if self.time.hour != (self.time - time).hour and not self.time.hour % 6:
             num_drain = max(
                 (
                     round(np.random.normal(
@@ -95,7 +95,7 @@ class ARCHER2():
 
 def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
     time = t0 + t_step
-    queue = []
+    queue, queue_size_history = [], []
 
     df_jobs = df_jobs.copy()
     np.random.seed(seed)
@@ -122,13 +122,17 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
             if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
                 queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power)
             else:
-                queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power, reverse=True)
+                queue[retained:] = sorted(
+                    queue[retained:], key=lambda job: job.node_power, reverse=True
+                )
 
         for job in list(queue):
             if system.has_space(job):
                 system.submit(queue.pop(0).start_job(time))
             else:
                 break
+
+        queue_size_history.append(len(queue))
 
         # Checking why utilisation drops for low power priority.
         # There is lowish power 3000 node job that is never getting time to be submitted
@@ -149,7 +153,7 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
         time += t_step
         cnt += 1
 
-    return system
+    return system, queue_size_history
 
 
 def main(args):
@@ -179,17 +183,35 @@ def main(args):
     # Factors are from linear fit (see powerusage_cabs_against_slurm_shifted_grouped.pdf)
     # node_down_mean is just from assuming todays sinfo -R is typical (there were also big partial
     # shutdowns at the start of the slurm data I am not accounting for)
-    print("Running sim for scheduler {}...".format(scheduler))
-    archer = run_sim(
-        df_jobs, ARCHER2(t0, baseline_power=1789, slurmtocab_factor=0.517, node_down_mean=291),
-        scheduler, t_step, t0, seed=0, verbose=args.verbose
-    )
-    if args.plot_v_fcfs:
-        print("Running sim for scheduler fcfs...")
-        archer_fcfs = run_sim(
+    if args.read_sim_from:
+        print("Reading sim results from {} ...".format(args.read_sim_from))
+        with open(args.read_sim_from, "rb") as f:
+            data = pickle.load(f)
+
+        archer, archer_queue_size_history = data["archer"], data["archer_queue_size_history"]
+        if args.plot_v_fcfs:
+            archer_fcfs = data["archer_fcfs"]
+
+    else:
+        print("Running sim for scheduler {}...".format(scheduler))
+        archer, archer_queue_size_history = run_sim(
             df_jobs, ARCHER2(t0, baseline_power=1789, slurmtocab_factor=0.517, node_down_mean=291),
-            "fcfs", t_step, t0, seed=0, verbose=args.verbose
+            scheduler, t_step, t0, seed=0, verbose=args.verbose
         )
+        if args.plot_v_fcfs:
+            print("Running sim for scheduler fcfs...")
+            archer_fcfs, _ = run_sim(
+                df_jobs,
+                ARCHER2(t0, baseline_power=1789, slurmtocab_factor=0.517, node_down_mean=291),
+                "fcfs", t_step, t0, seed=0, verbose=args.verbose
+            )
+
+    if args.dump_sim_to:
+        data = { "archer" : archer, "archer_queue_size_history" : archer_queue_size_history }
+        if args.plot_v_fcfs:
+            data["archer_fcfs"] = archer_fcfs
+        with open(args.dump_sim_to, 'wb') as f:
+            pickle.dump(data, f)
 
     start, end = t0 + t_step, archer.time
     t_toy = pd.date_range(start, end, periods=len(archer.power_history))
@@ -299,7 +321,8 @@ def main(args):
         fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy.pdf"))
         plt.show()
 
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        fig = plt.figure(1, figsize=(12, 8))
+        ax = fig.add_axes((.1, .3, .8, .6))
         ax.plot_date(
             dates_toy, np.array(archer.power_history), 'g',
             label="Toy scheduler low-high_power - Slurm power", linewidth=0.6
@@ -318,30 +341,120 @@ def main(args):
             )
         ax.set_ylabel("Power (MW)")
         ax.set_xticklabels([])
-        plt.legend()
+        ax.set_title("Power Usage of Using low-high Power Toy Scheduler")
+        ax2 = fig.add_axes((.1, .1, .8, .2))
+        ax2.plot_date(
+            dates_toy, np.array(archer_queue_size_history), 'k',
+            label="Toy scheduler low-high_power - queue size", linewidth=0.6
+        )
+        for day_num in range(round((end - start).days + 0.5) + 1):
+            day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
+            ax2.axvspan(
+                matplotlib.dates.date2num(day - timedelta(hours=4)),
+                matplotlib.dates.date2num(day + timedelta(hours=8)),
+                label="_", color="gray", alpha=0.3
+            )
+            ax2.axvspan(
+                matplotlib.dates.date2num(day + timedelta(hours=8)),
+                matplotlib.dates.date2num(day + timedelta(hours=20)),
+                label="_", color="lightgray", alpha=0.3
+            )
+        ax2.set_ylabel("# Jobs")
+        ax2.set_ylim(bottom=-0.1 * max(archer_queue_size_history))
+        ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
         fig.tight_layout()
-        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_power.pdf"))
+        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_power_queue.pdf"))
         plt.show()
 
-        day_powers, night_powers = [], []
-        day_occupancies, night_occupancies = [], []
-        for tick, date in enumerate(t_toy):
-            if hour_to_timeofday(date.hour) in ["morning", "afternoon", "evening"]:
-                day_powers.append(archer.power_history[tick])
-                day_occupancies.append(archer.occupancy_history[tick] / 5860)
-            else:
-                night_powers.append(archer.power_history[tick])
-                night_occupancies.append(archer.occupancy_history[tick] / 5860)
+        # The same plot but in a range of interest
+        for start_month, start_day, end_month, end_day in [(10, 24, 11, 7), (10, 24, 11, 20)]:
+            for tick, time in enumerate(t_toy):
+                if time.month == start_month and time.day == start_day:
+                    start_tick, start_time = tick, time
+                    break
+            for tick, time in enumerate(reversed(t_toy)):
+                if time.month == end_month and time.day == end_day:
+                    # NOTE: len(t_toy) - tick indexs end_time + t_step, this is fine because
+                    # end_tick is being used as upper index in ranges
+                    end_tick, end_time = len(t_toy) - tick, time
+                    break
 
-        print(
-            "For low-high power scheduler:\n" +
-            "Mean daytime power = {:.4f} MW\t Mean nightime power = {:.4f} MW".format(
-                np.mean(day_powers), np.mean(night_powers)
-            ) +
-            "Mean daytime occupancy = {:.2f} %\t Mean nightime occupancy = {:.2f} %".format(
-                np.mean(day_occupancies) * 100, np.mean(night_occupancies) * 100
+            dates_toy_crop = dates_toy[start_tick:end_tick]
+            fig = plt.figure(1, figsize=(12, 8))
+            ax = fig.add_axes((.1, .3, .8, .6))
+            ax.plot_date(
+                dates_toy_crop, np.array(archer.power_history)[start_tick:end_tick], 'g',
+                label="Toy scheduler low-high_power - Slurm power", linewidth=0.6
             )
-        )
+            for day_num in range(round((end_time - start_time).days + 0.5) + 1):
+                day = (start_time + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
+                ax.axvspan(
+                    matplotlib.dates.date2num(day - timedelta(hours=4)),
+                    matplotlib.dates.date2num(day + timedelta(hours=8)),
+                    label="8pm - 8am" if not day_num else "_", color="gray", alpha=0.3
+                )
+                ax.axvspan(
+                    matplotlib.dates.date2num(day + timedelta(hours=8)),
+                    matplotlib.dates.date2num(day + timedelta(hours=20)),
+                    label="8am - 8pm" if not day_num else "_", color="lightgray", alpha=0.3
+                )
+            ax.set_ylabel("Power (MW)")
+            ax.set_xticklabels([])
+            ax.set_title("Power Usage of Using low-high Power Toy Scheduler")
+            ax2 = fig.add_axes((.1, .1, .8, .2))
+            ax2.plot_date(
+                dates_toy_crop, np.array(archer_queue_size_history)[start_tick:end_tick], 'k',
+                label="Toy scheduler low-high_power - queue size", linewidth=0.6
+            )
+            for day_num in range(round((end_time - start_time).days + 0.5) + 1):
+                day = (start_time + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
+                ax2.axvspan(
+                    matplotlib.dates.date2num(day - timedelta(hours=4)),
+                    matplotlib.dates.date2num(day + timedelta(hours=8)),
+                    label="_", color="gray", alpha=0.3
+                )
+                ax2.axvspan(
+                    matplotlib.dates.date2num(day + timedelta(hours=8)),
+                    matplotlib.dates.date2num(day + timedelta(hours=20)),
+                    label="_", color="lightgray", alpha=0.3
+                )
+            ax2.set_ylabel("# Jobs")
+            ax2.set_ylim(bottom=-0.1 * max(archer_queue_size_history[start_tick:end_tick]))
+            ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
+            fig.tight_layout()
+            fig.savefig(os.path.join(
+                PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}{}-{}{}.pdf".format(
+                    start_day, start_month, end_day, end_month
+                )
+            ))
+            plt.show()
+
+            day_powers, night_powers = [], []
+            day_occupancies, night_occupancies = [], []
+            for tick, date in enumerate(t_toy[start_tick:end_tick]):
+                if hour_to_timeofday(date.hour) in ["morning", "afternoon", "evening"]:
+                    day_powers.append(archer.power_history[start_tick:end_tick][tick])
+                    day_occupancies.append(
+                        archer.occupancy_history[start_tick:end_tick][tick] / 5860
+                    )
+                else:
+                    night_powers.append(archer.power_history[start_tick:end_tick][tick])
+                    night_occupancies.append(
+                        archer.occupancy_history[start_tick:end_tick][tick] / 5860
+                    )
+
+            print(
+                "For low-high power scheduler in range {}-{} to {}-{} ".format(
+                    start_day, start_month, end_day, end_month
+                ) +
+                "(roughly when there is a queue):\n" +
+                "Mean daytime power = {:.4f} MW\t Mean nightime power = {:.4f} MW".format(
+                    np.mean(day_powers), np.mean(night_powers)
+                ) +
+                "Mean daytime occupancy = {:.2f} %\t Mean nightime occupancy = {:.2f} %".format(
+                    np.mean(day_occupancies) * 100, np.mean(night_occupancies) * 100
+                )
+            )
 
 
 def parse_arguments():
@@ -378,6 +491,8 @@ def parse_arguments():
     parser.add_argument("--rows", type=int, default=None)
     parser.add_argument("--cache", type=str, default="", help="How to use the cache (save|load)")
     parser.add_argument("--verbose", action="store_false")
+    parser.add_argument("--dump_sim_to", type=str, default="", help="Pickle sim results")
+    parser.add_argument("--read_sim_from", type=str, default="", help="Read pickled sim results")
 
     args = parser.parse_args()
 
@@ -391,4 +506,3 @@ def parse_arguments():
 
 if __name__ == '__main__':
     main(parse_arguments())
-
