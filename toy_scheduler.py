@@ -1,7 +1,7 @@
 """
 """
 
-import argparse, os, pickle
+import argparse, os, pickle, sys
 from glob import glob
 from datetime import datetime, timedelta
 
@@ -18,9 +18,12 @@ CABS_DIR="/home/y02/shared/power"
 PLOT_DIR="/work/y02/y02/awilkins/archer2_jobdata/plots"
 
 class Job():
-    def __init__(self, submit : datetime, nodes, runtime : timedelta, node_power):
+    def __init__(
+        self, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power
+    ):
         self.nodes = nodes
         self.runtime = runtime
+        self.reqtime = reqtime
         self.node_power = node_power
         self.submit = submit
 
@@ -30,13 +33,14 @@ class Job():
     def start_job(self, time : datetime):
         self.start = time
         self.end = time + self.runtime
+        self.endlimit = time + self.reqtime
         return self
 
 
 class ARCHER2():
     def __init__(
         self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0
-        ):
+    ):
         self.nodes_free = 5860
         self.nodes_drained = 0
         self.nodes_drained_carryover = 0
@@ -58,8 +62,11 @@ class ARCHER2():
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
             self.power_usage += (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
+            return True
         else:
             print("No free nodes, job not submitted")
+            sys.exit()
+            return False
 
     def step(self, time : timedelta):
         self.occupancy_history.append(5860 - self.nodes_free)
@@ -74,7 +81,7 @@ class ARCHER2():
             self.nodes_free += job.nodes
             self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
 
-        # Resample drained nodes every sixth hour or day
+        # Resample drained nodes every 6 hour at most
         if self.time.hour != (self.time - time).hour and not self.time.hour % 6:
             num_drain = max(
                 (
@@ -106,7 +113,10 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
 
         for _, job_row in df_jobs.loc[(df_jobs.Submit < time)].iterrows():
             queue.append(
-                Job(job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.PowerPerNode)
+                Job(
+                    job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
+                    job_row.PowerPerNode
+                )
             )
         df_jobs = df_jobs.loc[~(df_jobs.Submit < time)]
 
@@ -134,6 +144,71 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
 
         queue_size_history.append(len(queue))
 
+        from collections import OrderedDict, defaultdict
+
+        # Conservative backfilling
+        # TODO time resolution
+        #      Can have a persistent free_blocks in the ARCHER class to save computation
+        #      nodes_free, nodes_drained -> total_nodes, nodes drained, nodes_free (total - drained)
+        if queue and (system.nodes_free - system.nodes_drained):
+            backfill_now = []
+            remaining_nodes_ready = system.nodes_free - system.nodes_drained
+
+            free_blocks = defaultdict(int)
+            free_blocks[(time, datetime.max)] = system.nodes_free - system.nodes_drained
+            for job in sorted(system.running_jobs, key=lambda job: job.endlimit): # iterate earliest first
+                if job.endlimit <= time: # Some jobs exceeding timelimit
+                    job.endlimit = time + 0.1 * job.reqtime
+                free_blocks[(job.endlimit, datetime.max)] += job.nodes
+
+            for i_job, job in enumerate(list(queue)[:max(len(queue), 1000)]): # bf_max_job_test=1000
+                free_nodes = 0
+                selected_intervals = OrderedDict()
+                for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
+                    selected_intervals[interval] = nodes
+                    free_nodes += nodes
+
+                    if job.nodes <= free_nodes:
+                        usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
+                        usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
+
+                        # Nodes do not remain available for this jobs runtime, find new block
+                        # print(usage_block_end)
+                        if usage_block_start + job.reqtime > usage_block_end:
+                            selected_intervals = OrderedDict()
+                            free_nodes = 0
+                            continue
+
+                        usage_block_end = usage_block_start + job.reqtime
+
+                        for i_key, key in enumerate(selected_intervals.keys()):
+                            if key[0] != usage_block_start:
+                                free_blocks[(key[0], usage_block_start)] = free_blocks[key]
+                            if key[1] != usage_block_end:
+                                free_blocks[(usage_block_end, key[1])] = free_blocks[key]
+
+                            if i_key + 1 == len(selected_intervals) and (free_nodes - job.nodes):
+                                free_blocks[(usage_block_start, usage_block_end)] = (free_nodes - job.nodes)
+
+                            free_blocks.pop(key)
+
+                        if usage_block_start == time:
+                            backfill_now.append(i_job)
+                            remaining_nodes_ready -= job.nodes
+
+                        break
+
+                if not remaining_nodes_ready:
+                    break
+
+            # print("{} free nodes and queue of {} jobs".format(system.nodes_free - system.nodes_drained, len(queue)))
+            # print("{} jobs being backfilled".format(len(backfill_now)))
+            # print([ queue[i].nodes for i in backfill_now ])
+            for i in sorted(backfill_now, reverse=True):
+                system.submit(queue.pop(i).start_job(time))
+            # print("{} nodes remain free\n".format(system.nodes_free - system.nodes_drained))
+
+
         # Checking why utilisation drops for low power priority.
         # There is lowish power 3000 node job that is never getting time to be submitted
         # if system.nodes_free > 1000 and len(queue):
@@ -160,7 +235,10 @@ def main(args):
     df_jobs = parse_cache(
         args.data, args.cache, ".".join(os.path.basename(args.data).split(".")[:-1]),
         "toy_scheduler_df",
-        ["JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes"],
+        [
+            "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
+            "Timelimit"
+        ],
         nrows=args.rows
     )
 
@@ -174,6 +252,7 @@ def main(args):
     )
 
     df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
+    df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
