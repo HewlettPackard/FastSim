@@ -4,6 +4,7 @@
 import argparse, os, pickle, sys
 from glob import glob
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 import pandas as pd
 import numpy as np
@@ -51,30 +52,45 @@ class ARCHER2():
 
         self.running_jobs = []
 
-        self.power_history = [] # MW
-        self.occupancy_history = [] # %
+        self.power_history = [self.power_usage] # MW
+        self.occupancy_history = [0] # %
+        self.times = [self.time] # %
+
+        self.sorted = False
 
     def has_space(self, job : Job):
-        return True if self.nodes_free - self.nodes_drained >= job.nodes else False
+        return True if self.available_nodes() >= job.nodes else False
+
+    def available_nodes(self):
+        return self.nodes_free - self.nodes_drained
+
+    def next_event(self):
+        if not self.running_jobs:
+            return timedelta()
+
+        if not self.sorted:
+            self.running_jobs.sort(key=lambda job: job.end)
+            self.sorted = True
+
+        return self.running_jobs[0].end
 
     def submit(self, job : Job):
         if self.has_space(job):
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
             self.power_usage += (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
+            self.sorted = False
             return True
         else:
             print("No free nodes, job not submitted")
-            sys.exit()
             return False
 
-    def step(self, time : timedelta):
-        self.occupancy_history.append(5860 - self.nodes_free)
-        self.power_history.append(self.power_usage / 1000)
+    def step(self, t_step : timedelta):
+        self.time += t_step
 
-        self.time += time
-
-        self.running_jobs.sort(key=lambda job: job.end)
+        if not self.sorted:
+            self.running_jobs.sort(key=lambda job: job.end)
+            self.sorted = True
 
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             job = self.running_jobs.pop(0)
@@ -82,7 +98,7 @@ class ARCHER2():
             self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
 
         # Resample drained nodes every 6 hour at most
-        if self.time.hour != (self.time - time).hour and not self.time.hour % 6:
+        if self.time.hour != (self.time - t_step).hour and not self.time.hour % 6:
             num_drain = max(
                 (
                     round(np.random.normal(
@@ -99,42 +115,66 @@ class ARCHER2():
                 self.nodes_drained = self.nodes_free
                 self.nodes_drained_carryover = num_drain - self.nodes_free
 
+        self.occupancy_history.append(1 - (self.available_nodes()/(5860 - self.nodes_drained)))
+        self.power_history.append(self.power_usage / 1000)
+        self.times.append(self.time)
 
-def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
-    time = t0 + t_step
+
+def run_sim(
+    df_jobs, system, scheduler, t0, seed=None, verbose=False, min_step=timedelta(seconds=10)
+):
+    time = t0
     queue, queue_size_history = [], []
 
-    df_jobs = df_jobs.copy()
+    all_jobs = [
+        Job(
+            job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
+            job_row.PowerPerNode
+        ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
+    ]
+
     np.random.seed(seed)
     cnt = 0
-    while len(df_jobs):
-        # Retains the job the scheduler was waiting for space for if queue has jobs from last step
-        retained = 1 if queue else None
+    next_endjob, next_newjob = timedelta(), all_jobs[0].submit
+    while len(all_jobs):
+        if not next_endjob or (next_endjob >= next_newjob):
+            t_step, newjob_step = next_newjob - time, True
+        else:
+            t_step, newjob_step = next_endjob - time, False
 
-        for _, job_row in df_jobs.loc[(df_jobs.Submit < time)].iterrows():
-            queue.append(
-                Job(
-                    job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
-                    job_row.PowerPerNode
-                )
-            )
-        df_jobs = df_jobs.loc[~(df_jobs.Submit < time)]
+        # For simulation time
+        if t_step < min_step:
+            t_step = min_step
+            if not newjob_step and (next_newjob - time) <= t_step:
+                newjob_step = True
+
+        time += t_step
 
         system.step(t_step)
 
-        if scheduler == "fcfs":
-            queue.sort(key=lambda job: job.submit)
-        elif scheduler == "low-high_power":
-            # high power priority at off-peak, low power priority at peak
-            # To ensure that reordering the queue doesn't cause the scheduler to dance around
-            # large jobs, any job that the scheduler was waiting to submit will be finished before
-            # reordering the queue
-            if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
-                queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power)
-            else:
-                queue[retained:] = sorted(
-                    queue[retained:], key=lambda job: job.node_power, reverse=True
-                )
+        if newjob_step:
+            # Retains the job the scheduler was waiting for space for if queue has jobs from last
+            # step
+            retained = 1 if queue else None
+
+            while all_jobs[0].submit <= time:
+                queue.append(all_jobs.pop(0))
+
+            if scheduler == "fcfs":
+                queue.sort(key=lambda job: job.submit)
+            elif scheduler == "low-high_power":
+                # high power priority at off-peak, low power priority at peak
+                # To ensure that reordering the queue doesn't cause the scheduler to dance around
+                # large jobs, any job that the scheduler was waiting to submit will be finished
+                # before reordering the queue
+                if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
+                    queue[retained:] = sorted(queue[retained:], key=lambda job: job.node_power)
+                else:
+                    queue[retained:] = sorted(
+                        queue[retained:], key=lambda job: job.node_power, reverse=True
+                    )
+
+            next_newjob = all_jobs[0].submit
 
         for job in list(queue):
             if system.has_space(job):
@@ -142,90 +182,100 @@ def run_sim(df_jobs, system, scheduler, t_step, t0, seed=None, verbose=False):
             else:
                 break
 
-        queue_size_history.append(len(queue))
-
-        from collections import OrderedDict, defaultdict
-
         # Conservative backfilling
-        # TODO time resolution
-        #      Can have a persistent free_blocks in the ARCHER class to save computation
-        #      nodes_free, nodes_drained -> total_nodes, nodes drained, nodes_free (total - drained)
-        if queue and (system.nodes_free - system.nodes_drained):
+        if queue and system.available_nodes():
             backfill_now = []
-            remaining_nodes_ready = system.nodes_free - system.nodes_drained
 
             free_blocks = defaultdict(int)
-            free_blocks[(time, datetime.max)] = system.nodes_free - system.nodes_drained
-            for job in sorted(system.running_jobs, key=lambda job: job.endlimit): # iterate earliest first
+            free_blocks[(time, datetime.max)] = system.available_nodes()
+            for job in system.running_jobs:
                 if job.endlimit <= time: # Some jobs exceeding timelimit
                     job.endlimit = time + 0.1 * job.reqtime
                 free_blocks[(job.endlimit, datetime.max)] += job.nodes
 
-            for i_job, job in enumerate(list(queue)[:max(len(queue), 1000)]): # bf_max_job_test=1000
+            # bf_max_job_test=1000
+            for i_job, job in enumerate(list(queue)[:max(len(queue), 1000)]):
                 free_nodes = 0
-                selected_intervals = OrderedDict()
+                selected_intervals = {}
+
+                # break if no blocks or only <= 5 minute blocks available for immediate backfill
+                free_blocks_ready = [
+                    interval for interval in free_blocks.keys() if interval[0] == time
+                ]
+                if (
+                    not free_blocks_ready or
+                    max(
+                        free_blocks_ready,
+                        key=lambda interval: interval[1]
+                    )[1] <= time + timedelta(minutes=5)
+                ):
+                    break
+
                 for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
                     selected_intervals[interval] = nodes
                     free_nodes += nodes
 
                     if job.nodes <= free_nodes:
                         usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
-                        usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
+                        usage_block_start = max(
+                            selected_intervals.keys(), key=lambda key: key[0]
+                        )[0]
 
                         # Nodes do not remain available for this jobs runtime, find new block
                         # print(usage_block_end)
                         if usage_block_start + job.reqtime > usage_block_end:
-                            selected_intervals = OrderedDict()
+                            selected_intervals = {}
                             free_nodes = 0
                             continue
 
                         usage_block_end = usage_block_start + job.reqtime
 
-                        for i_key, key in enumerate(selected_intervals.keys()):
+                        for key in selected_intervals.keys():
+                            original_nodes = free_blocks[key]
                             if key[0] != usage_block_start:
-                                free_blocks[(key[0], usage_block_start)] = free_blocks[key]
+                                free_blocks[(key[0], usage_block_start)] += free_blocks[key]
                             if key[1] != usage_block_end:
-                                free_blocks[(usage_block_end, key[1])] = free_blocks[key]
-
-                            if i_key + 1 == len(selected_intervals) and (free_nodes - job.nodes):
-                                free_blocks[(usage_block_start, usage_block_end)] = (free_nodes - job.nodes)
+                                free_blocks[(usage_block_end, key[1])] += free_blocks[key]
 
                             free_blocks.pop(key)
 
+                        if (free_nodes - job.nodes):
+                            free_blocks[(usage_block_start, usage_block_end)] += (
+                                free_nodes - job.nodes
+                            )
+
                         if usage_block_start == time:
                             backfill_now.append(i_job)
-                            remaining_nodes_ready -= job.nodes
 
                         break
 
-                if not remaining_nodes_ready:
-                    break
-
-            # print("{} free nodes and queue of {} jobs".format(system.nodes_free - system.nodes_drained, len(queue)))
+            # print("{} free nodes and queue of {} jobs".format(system.available_nodes(), len(queue)))
             # print("{} jobs being backfilled".format(len(backfill_now)))
-            # print([ queue[i].nodes for i in backfill_now ])
             for i in sorted(backfill_now, reverse=True):
                 system.submit(queue.pop(i).start_job(time))
-            # print("{} nodes remain free\n".format(system.nodes_free - system.nodes_drained))
-
+            # print("{} nodes remain free".format(system.available_nodes()))
 
         # Checking why utilisation drops for low power priority.
         # There is lowish power 3000 node job that is never getting time to be submitted
         # if system.nodes_free > 1000 and len(queue):
         #     print(time, hour_to_timeofday(time.hour), queue[0].nodes, queue[0].node_power)
 
-        if verbose and cnt % 25 == 0:
+        next_endjob = system.next_event()
+
+        # Print every 3 hours at most
+        if verbose and (time.hour != (time - t_step).hour and not time.hour % 3):
             print(
                 "{} (step {}):\n".format(time, cnt) +
                 "Utilisation = {:.2f}%\tNodesDrained = {}({})\tPower = {:.4f} MW\tQueueSize = {}\t\
                  RunningJobs = {}".format(
-                    (1 - (system.nodes_free / 5860)) * 100, system.nodes_drained,
+                    system.occupancy_history[-1] * 100, system.nodes_drained,
                     system.nodes_drained_carryover, system.power_usage / 1000, len(queue),
                     len(system.running_jobs)
                 )
             )
 
-        time += t_step
+        queue_size_history.append(len(queue))
+
         cnt += 1
 
     return system, queue_size_history
@@ -257,8 +307,7 @@ def main(args):
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
     scheduler = "fcfs" if args.fcfs else "low-high_power"
-    t0 = df_jobs.Start.min()
-    t_step = timedelta(minutes=args.stepsize)
+    t0 = df_jobs.Submit.min()
     # Factors are from linear fit (see powerusage_cabs_against_slurm_shifted_grouped.pdf)
     # node_down_mean is just from assuming todays sinfo -R is typical (there were also big partial
     # shutdowns at the start of the slurm data I am not accounting for)
@@ -275,14 +324,14 @@ def main(args):
         print("Running sim for scheduler {}...".format(scheduler))
         archer, archer_queue_size_history = run_sim(
             df_jobs, ARCHER2(t0, baseline_power=1789, slurmtocab_factor=0.517, node_down_mean=291),
-            scheduler, t_step, t0, seed=0, verbose=args.verbose
+            scheduler, t0, seed=0, verbose=args.verbose
         )
         if args.plot_v_fcfs:
             print("Running sim for scheduler fcfs...")
-            archer_fcfs, _ = run_sim(
+            archer_fcfs, _, archer_times = run_sim(
                 df_jobs,
                 ARCHER2(t0, baseline_power=1789, slurmtocab_factor=0.517, node_down_mean=291),
-                "fcfs", t_step, t0, seed=0, verbose=args.verbose
+                "fcfs", t0, seed=0, verbose=args.verbose
             )
 
     if args.dump_sim_to:
@@ -292,17 +341,13 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    start, end = t0 + t_step, archer.time
-    t_toy = pd.date_range(start, end, periods=len(archer.power_history))
+    start, end = archer.times[0], archer.times[-1]
+    t_toy = pd.DateTimeIndex(archer.times)
     dates_toy = matplotlib.dates.date2num(t_toy)
 
     # TODO might want to shift the slurm info back as done in plot_sacct.py,
     # need to check the size of the shift in time rather than ticks then just hardcode it
     if args.cab_power_plot:
-        start, end = t0 + t_step, archer.time
-        t_toy = pd.date_range(start, end, periods=len(archer.power_history))
-        dates_toy = matplotlib.dates.date2num(t_toy)
-
         cabs = {
             datetime.strptime(os.path.basename(path), "system_%y%m%d") : path
             for path in glob(os.path.join(CABS_DIR, "system_[2]*"))
@@ -337,12 +382,18 @@ def main(args):
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(PATH_DIR, "toyscheduler_{}_cabs.pdf".format(scheduler)))
-        plt.show()
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
+    # XXX NOTE fcfs needs its own times now
     if args.plot_v_fcfs:
-        start, end = t0, archer.time - t_step
-        t_toy = pd.date_range(start, end, periods=len(archer.power_history))
+        start, end = archer.times[0], archer.times[-1]
+        t_toy = pd.DateTimeIndex(archer.times)
+        t_toy_fcfs = pd.DateTimeIndex(archer_fcfs.times)
         dates_toy = matplotlib.dates.date2num(t_toy)
+        dates_toy_fcfs = matplotlib.dates.date2num(t_toy_fcfs)
 
         # Sanity check
         if sum(archer.power_history) != sum(archer_fcfs.power_history):
@@ -351,7 +402,7 @@ def main(args):
         fig = plt.figure(1, figsize=(12, 8))
         ax = fig.add_axes((.1, .3, .8, .6))
         ax.plot_date(
-            dates_toy, np.array(archer_fcfs.power_history), 'r',
+            dates_toy_fcfs, np.array(archer_fcfs.power_history), 'r',
             label="Toy scheduler fcfs - Slurm power", linewidth=0.6
         )
         ax.plot_date(
@@ -375,11 +426,11 @@ def main(args):
         plt.legend()
         ax2 = fig.add_axes((.1, .1, .8, .2))
         ax2.plot_date(
-            dates_toy, (np.array(archer_fcfs.occupancy_history) / 5860) * 100, 'r',
+            dates_toy_fcfs, np.array(archer_fcfs.occupancy_history) * 100, 'r',
             label="Toy scheduler fcfs - system occupancy", linewidth=0.6
         )
         ax2.plot_date(
-            dates_toy, (np.array(archer.occupancy_history) / 5860) * 100, 'g',
+            dates_toy, np.array(archer.occupancy_history) * 100, 'g',
             label="Toy scheduler low-high_power - system occupancy", linewidth=0.6
         )
         for day_num in range(round((end - start).days + 0.5) + 1):
@@ -398,7 +449,10 @@ def main(args):
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy.pdf"))
-        plt.show()
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
         fig = plt.figure(1, figsize=(12, 8))
         ax = fig.add_axes((.1, .3, .8, .6))
@@ -443,7 +497,10 @@ def main(args):
         ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
         fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_power_queue.pdf"))
-        plt.show()
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
         # The same plot but in a range of interest
         for start_month, start_day, end_month, end_day in [(10, 24, 11, 7), (10, 24, 11, 20)]:
@@ -506,6 +563,9 @@ def main(args):
                     start_day, start_month, end_day, end_month
                 )
             ))
+        if batch:
+            plt.close()
+        else:
             plt.show()
 
             day_powers, night_powers = [], []
@@ -513,14 +573,10 @@ def main(args):
             for tick, date in enumerate(t_toy[start_tick:end_tick]):
                 if hour_to_timeofday(date.hour) in ["morning", "afternoon", "evening"]:
                     day_powers.append(archer.power_history[start_tick:end_tick][tick])
-                    day_occupancies.append(
-                        archer.occupancy_history[start_tick:end_tick][tick] / 5860
-                    )
+                    day_occupancies.append(archer.occupancy_history[start_tick:end_tick][tick])
                 else:
                     night_powers.append(archer.power_history[start_tick:end_tick][tick])
-                    night_occupancies.append(
-                        archer.occupancy_history[start_tick:end_tick][tick] / 5860
-                    )
+                    night_occupancies.append(archer.occupancy_history[start_tick:end_tick][tick])
 
             print(
                 "For low-high power scheduler in range {}-{} to {}-{} ".format(
@@ -552,11 +608,6 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--stepsize", type=float, default=5,
-        help="Size of time step to use for simulation in minutes"
-    )
-
-    parser.add_argument(
         "--cab_power_plot", action="store_true",
         help="Plot toy scheduler power history with power from the cabinet data"
     )
@@ -569,6 +620,7 @@ def parse_arguments():
 
     parser.add_argument("--rows", type=int, default=None)
     parser.add_argument("--cache", type=str, default="", help="How to use the cache (save|load)")
+    parser.add_argument("--batch", action='store_true')
     parser.add_argument("--verbose", action="store_false")
     parser.add_argument("--dump_sim_to", type=str, default="", help="Pickle sim results")
     parser.add_argument("--read_sim_from", type=str, default="", help="Read pickled sim results")
