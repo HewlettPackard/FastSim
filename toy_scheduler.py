@@ -14,15 +14,14 @@ from matplotlib.lines import Line2D
 
 from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
 
-
 CABS_DIR = "/home/y02/shared/power"
 PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 
 # Factors are from linear fit (see powerusage_cabs_against_slurm_shifted_grouped.pdf)
 # node_down_mean is just from assuming todays sinfo -R is typical (there were also big partial
 # shutdowns at the start of the slurm data I am not accounting for)
-BASELINE_POWER = 1789 # kW
-SLURMTOCAB_FACTOR = 0.517
+BASELINE_POWER = 1629 # kW (previously 1789)
+SLURMTOCAB_FACTOR = 0.743 # (previously 0.517) 
 NODEDOWN_MEAN = 291
 
 
@@ -99,11 +98,10 @@ class ARCHER2():
         self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0,
         backfill_opts={}
     ):
-        self.power_usage = baseline_power # kW
+        self.power_usage = baseline_power / 1e+3 # MW
         self.slurmtocab_factor = slurmtocab_factor
         self.node_down_mean = node_down_mean
         self.time = init_time
-
         self.backfill_opts = backfill_opts
         if "min_block_width" not in self.backfill_opts:
             self.backfill_opts["min_block_width"] = timedelta(minutes=5) # 1min for ARCHER2
@@ -116,7 +114,7 @@ class ARCHER2():
         self.occupancy_history = [0] # %
         self.queue_size = 0
         self.queue_size_history = [0]
-        self.times = [self.time] # %
+        self.times = [self.time]
 
         self.nodes_free = 5860
         self.nodes_drained = 0
@@ -235,7 +233,7 @@ class ARCHER2():
         if self.has_space(job):
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
-            self.power_usage += (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
+            self.power_usage += (job.node_power * job.nodes * self.slurmtocab_factor) / 1e+6
             self.sorted = False
             return True
         else:
@@ -252,7 +250,7 @@ class ARCHER2():
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             job = self.running_jobs.pop(0)
             self.nodes_free += job.nodes
-            self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1000
+            self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1e+6
 
         # Resample drained nodes every 6 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 6:
@@ -273,7 +271,7 @@ class ARCHER2():
                 self.nodes_drained_carryover = num_drain - self.nodes_free
 
         self.occupancy_history.append(1 - (self.available_nodes()/(5860 - self.nodes_drained)))
-        self.power_history.append(self.power_usage / 1000)
+        self.power_history.append(self.power_usage)
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)
 
@@ -293,6 +291,7 @@ def prep_job_data(data, cache, df_name, cols, rows=None):
     )
 
     df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
+
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
@@ -336,7 +335,7 @@ def run_sim(
                 "Utilisation = {:.2f}%\tNodesDrained = {}({})\tPower = {:.4f} MW\tQueueSize = {}\t\
                  RunningJobs = {}".format(
                     system.occupancy_history[-1] * 100, system.nodes_drained,
-                    system.nodes_drained_carryover, system.power_usage / 1000, len(queue.queue),
+                    system.nodes_drained_carryover, system.power_usage, len(queue.queue),
                     len(system.running_jobs)
                 )
             )
@@ -471,7 +470,7 @@ def plot_blob(
         else:
             plt.show()
 
-        # The same plot but in a range of interest
+        # The same plot but in a ranges of interest
         for start_month, start_day, end_month, end_day in [(10, 24, 11, 7), (10, 24, 11, 20)]:
             for tick, time in enumerate(times):
                 if time.month == start_month and time.day == start_day:
