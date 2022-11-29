@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 import matplotlib.dates
 from tqdm import tqdm
 
-from sklearn.linear_model import RANSACRegressor, HuberRegressor
+from sklearn.linear_model import RANSACRegressor, HuberRegressor, LinearRegression
 from sklearn.preprocessing import StandardScaler
 
 from funcs import power_print_dump, parse_cache, timelimit_str_to_timedelta
@@ -143,7 +143,6 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.savefig("plots/powerusage_cabs.pdf")
     plt.show()
 
-    # print(power_usage_slurm.shape, power_usage_cabs.shape)
     print("t_cabs: len={}. min={}, max={}".format(len(t_cabs), min(t_cabs), max(t_cabs)))
     print("t_slurm: len={}. min={}, max={}".format(len(t_slurm), min(t_slurm), max(t_slurm)))
 
@@ -266,6 +265,10 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.savefig("plots/powerusage_cabs_individual.pdf")
     plt.show()
 
+    # NOTE: This shift is coming from daylight savings which started on 29 October. I think the
+    #       cab power is just GMT while the slurm times take into account daylight savings. So
+    #       before end of 29 October slurm was in BST whilst the cab dump was GMT, hence the need
+    #       to shift slurm power back by an hour
     shift = np.diff(power_usage_slurm_tcabs).argmax() - np.diff(power_usage_cabs).argmax()
     print("Shifting by {}".format(shift))
     power_usage_slurm_tcabs_shifted = np.roll(power_usage_slurm_tcabs, -shift)
@@ -383,9 +386,42 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     plt.ylim(bottom=-0.1e+6, top=4e+6)
     plt.legend()
     fig.tight_layout()
-    # fig.savefig("plots/powerusage_cabs_against_slurm_shifted_grouped.pdf")
+    fig.savefig("plots/powerusage_cabs_against_slurm_shifted_grouped.pdf")
     plt.show()
 
+    print("Cropping out summer time and forcing intercept 1629")
+    for tick, time in enumerate(t_cabs_fine):
+        if time.month == 10 and time.day == 30:
+            start_tick, start_time = tick, time
+            break
+
+    power_usage_allcabssum = np.array(power_usage_all_cabs).sum(axis=0)
+    x = power_usage_slurm_tcabsfine[start_tick:] + 1629 * 1e+3
+    y = power_usage_allcabssum[start_tick:]
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    colors = iter(['b', 'g', 'r', 'y'])
+
+    model = RANSACRegressor(estimator=LinearRegression(fit_intercept=False))
+    model.fit(x[:, None], y)
+    preds = model.predict(x[:, None]).ravel()
+
+    plt.scatter(
+        x, y, c=next(colors), s=1,
+        label="{} cabs off (RANSAC: {}x + {})".format(
+            num, model.estimator_.coef_[0], model.estimator_.intercept_
+        )
+    )
+    plt.plot(x, preds, c='k')
+
+    plt.xlabel("PSlurm (shifted)")
+    plt.ylabel("PCabs")
+    plt.xlim(left=0.9 * min(x), right=1.1 * max(x))
+    plt.ylim(bottom=0.9 * min(y), top=1.1 * max(y))
+    plt.legend()
+    fig.tight_layout()
+    fig.savefig("plots/powerusage_cabs_against_slurm_gmt_crop.pdf")
+    plt.show()
 
 def power_usage_allocnodes(df, timesteps, cache, data_name):
     df_power = parse_cache(
