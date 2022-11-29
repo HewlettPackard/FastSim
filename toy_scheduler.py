@@ -1,7 +1,7 @@
 """
 """
 
-import argparse, os, pickle, sys
+import argparse, os, pickle, sys, joblib
 from glob import glob
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -21,19 +21,21 @@ PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 # node_down_mean is just from assuming todays sinfo -R is typical (there were also big partial
 # shutdowns at the start of the slurm data I am not accounting for)
 BASELINE_POWER = 1629 # kW (previously 1789)
-SLURMTOCAB_FACTOR = 0.743 # (previously 0.517) 
+SLURMTOCAB_FACTOR = 0.578 # (previously 0.517)
 NODEDOWN_MEAN = 291
+BD_THRESHOLD = timedelta(minutes=10)
 
 
 class Queue():
-    def __init__(self, df_jobs, priority, init_time):
+    def __init__(self, df_jobs, priority, init_time, custom_low_or_high=None):
         self.priority = priority
         self.time = init_time
+        self.custom_low_or_high = custom_low_or_high
 
         self.all_jobs = [
             Job(
                 job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
-                job_row.PowerPerNode
+                job_row.PowerPerNode, job_row.TruePowerPerNode
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self.queue = []
@@ -65,6 +67,16 @@ class Queue():
                 self.queue[retained:] = sorted(
                     self.queue[retained:], key=lambda job: job.node_power, reverse=True
                 )
+        elif self.priority == "custom_low_or_high":
+            if custom_low_or_high(self.time.hour) == "low":
+                self.queue[retained:] = sorted(
+                    self.queue[retained:], key=lambda job: job.node_power
+                )
+            else:
+                self.queue[retained:] = sorted(
+                    self.queue[retained:], key=lambda job: job.node_power, reverse=True
+                )
+
 
     def next_newjob(self):
         try:
@@ -75,12 +87,14 @@ class Queue():
 
 class Job():
     def __init__(
-        self, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power
+        self, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
+        true_node_power
     ):
         self.nodes = nodes
         self.runtime = runtime
         self.reqtime = reqtime
         self.node_power = node_power
+        self.true_node_power = true_node_power
         self.submit = submit
 
         self.start = None
@@ -115,6 +129,7 @@ class ARCHER2():
         self.queue_size = 0
         self.queue_size_history = [0]
         self.times = [self.time]
+        self.bd_slowdowns = []
 
         self.nodes_free = 5860
         self.nodes_drained = 0
@@ -143,8 +158,9 @@ class ARCHER2():
         free_blocks = defaultdict(int)
         free_blocks[(self.time, datetime.max)] = self.available_nodes()
         for job in self.running_jobs:
-            if job.endlimit <= self.time: # Some jobs exceeding timelimit
-                job.endlimit = self.time + 0.1 * job.reqtime
+            # Some jobs exceeding timelimit and some with zero reqtime
+            if job.endlimit <= self.time:
+                job.endlimit = self.time + 0.1 * job.reqtime + timedelta(minutes=1)
             free_blocks[(job.endlimit, datetime.max)] += job.nodes
 
         min_required_block_time = min(
@@ -224,8 +240,11 @@ class ARCHER2():
                 break
 
         if queue.queue and self.available_nodes():
-            for i in sorted(self.get_backfill_jobs(queue), reverse=True):
-                self.submit(queue.queue.pop(i).start_job(self.time))
+            backfill_now = self.get_backfill_jobs(queue)
+            # for i in sorted(self.get_backfill_jobs(queue), reverse=True):
+            for i in sorted(backfill_now, reverse=True):
+                if not self.submit(queue.queue.pop(i).start_job(self.time)):
+                    print(self.available_nodes(), i, backfill_now)
 
         self.queue_size = len(queue.queue)
 
@@ -233,7 +252,10 @@ class ARCHER2():
         if self.has_space(job):
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
-            self.power_usage += (job.node_power * job.nodes * self.slurmtocab_factor) / 1e+6
+            self.power_usage += (job.true_node_power * job.nodes * self.slurmtocab_factor) / 1e+6
+            self.bd_slowdowns.append(
+                max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+            )
             self.sorted = False
             return True
         else:
@@ -250,10 +272,10 @@ class ARCHER2():
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             job = self.running_jobs.pop(0)
             self.nodes_free += job.nodes
-            self.power_usage -= (job.node_power * job.nodes * self.slurmtocab_factor) / 1e+6
+            self.power_usage -= (job.true_node_power * job.nodes * self.slurmtocab_factor) / 1e+6
 
-        # Resample drained nodes every 6 hour at most
-        if self.time.hour != (self.time - t_step).hour and not self.time.hour % 6:
+        # Resample drained nodes every 12 hour at most
+        if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
             num_drain = max(
                 (
                     round(np.random.normal(
@@ -276,7 +298,7 @@ class ARCHER2():
         self.times.append(self.time)
 
 
-def prep_job_data(data, cache, df_name, cols, rows=None):
+def prep_job_data(data, cache, df_name, cols, model=None, rows=None):
     df_jobs = parse_cache(
         data, cache, ".".join(os.path.basename(data).split(".")[:-1]), df_name, cols, nrows=rows
     )
@@ -286,9 +308,33 @@ def prep_job_data(data, cache, df_name, cols, rows=None):
         { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
     ).astype(float).astype(int)
 
-    df_jobs["PowerPerNode"] = df_jobs.apply(
+    df_jobs["TruePowerPerNode"] = df_jobs.apply(
         lambda row: float(row.Power) / float(row.AllocNodes), axis=1
     )
+
+    if model:
+        df_jobs_cpy = df_jobs.copy()
+        cols = ["ReqCPUS", "ReqNodes", "ReqMem"]
+        df_jobs_cpy[cols] = df_jobs_cpy[cols].astype(str)
+        df_jobs_cpy[cols] = df_jobs_cpy[cols].replace(
+            { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+        ).astype(float).astype(int)
+        df_jobs_cpy.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
+        df_jobs_cpy.Submit = df_jobs_cpy.Submit.apply(lambda row: hour_to_timeofday(row.hour))
+        df_jobs_cpy.Timelimit = df_jobs_cpy.Timelimit.apply(
+            lambda row: round(timelimit_str_to_timedelta(row).total_seconds() / 60)
+        )
+        df_jobs["PowerPerNode"] = model.predict(df_jobs_cpy[[
+            "JobID", "Start", "End", "ConsumedEnergyRaw", "AllocNodes", "ReqCPUS", "ReqNodes",
+            "Group", "QOS", "ReqMem", "Timelimit", "Submit"
+        ]])
+
+    else:
+        df_jobs["PowerPerNode"] = df_jobs.apply(
+            lambda row: float(row.Power) / float(row.AllocNodes), axis=1
+        )
+
+    df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"], axis=1)
 
     df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
 
@@ -300,7 +346,8 @@ def prep_job_data(data, cache, df_name, cols, rows=None):
 
 
 def run_sim(
-    df_jobs, system, scheduler, t0, seed=None, verbose=False, min_step=timedelta(seconds=10)
+    df_jobs, system, scheduler, t0, seed=None, verbose=False, min_step=timedelta(seconds=10),
+    custom_low_or_high=None
 ):
     queue = Queue(df_jobs, scheduler, t0)
 
@@ -348,7 +395,7 @@ def run_sim(
 # XXX implement save_prefix
 def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
-    save_prefix="", batch=False
+    save_suffix="", batch=False
 ):
     def day_night_shade(ax, start, end):
         for day_num in range(round((end - start).days + 0.5) + 1):
@@ -400,7 +447,9 @@ def plot_blob(
         ax.set_ylabel("Power (MW)")
         plt.legend()
         fig.tight_layout()
-        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_cabs.pdf"))
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_cabs_{}.pdf".format(save_suffix)
+        ))
         if batch:
             plt.close()
         else:
@@ -438,7 +487,9 @@ def plot_blob(
         ax2.set_ylabel("System Occupancy (%)")
         plt.legend()
         fig.tight_layout()
-        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy.pdf"))
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy_{}.pdf".format(save_suffix)
+        ))
         if batch:
             plt.close()
         else:
@@ -464,24 +515,32 @@ def plot_blob(
         ax2.set_ylim(bottom=-0.1 * max(archer.queue_size_history))
         ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
         fig.tight_layout()
-        fig.savefig(os.path.join(PLOT_DIR, "toyscheduler_low-high_power_power_queue.pdf"))
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}.pdf".format(save_suffix)
+        ))
         if batch:
             plt.close()
         else:
             plt.show()
 
         # The same plot but in a ranges of interest
-        for start_month, start_day, end_month, end_day in [(10, 24, 11, 7), (10, 24, 11, 20)]:
+        for start_month, start_day, end_month, end_day in (
+            [(10, 24, 11, 7), (10, 24, 11, 20), (11, 8, 11, 26)]
+        ):
             for tick, time in enumerate(times):
                 if time.month == start_month and time.day == start_day:
                     start_tick, start_time = tick, time
                     break
+            if tick + 1 == len(times): # range not valid for this data
+                continue
             for tick, time in enumerate(reversed(times)):
                 if time.month == end_month and time.day == end_day:
                     # NOTE: len(times) - tick indexs end_time + t_step, this is fine because
                     # end_tick is being used as upper index in ranges
                     end_tick, end_time = len(times) - tick, time
                     break
+            if tick + 1 == len(times):
+                continue
 
             dates_crop = dates[start_tick:end_tick]
             fig = plt.figure(1, figsize=(12, 8))
@@ -505,14 +564,14 @@ def plot_blob(
             ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
             fig.tight_layout()
             fig.savefig(os.path.join(
-                PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}{}-{}{}.pdf".format(
-                    start_day, start_month, end_day, end_month
+                PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}{}-{}{}_{}.pdf".format(
+                    start_day, start_month, end_day, end_month, save_suffix
                 )
             ))
-        if batch:
-            plt.close()
-        else:
-            plt.show()
+            if batch:
+                plt.close()
+            else:
+                plt.show()
 
             day_powers, night_powers = [], []
             day_occupancies, night_occupancies = [], []
@@ -537,51 +596,123 @@ def plot_blob(
                 )
             )
 
+        print(
+            "Mean low-high power bounded slowdown = {:.2f} \t\
+             Mean fcfs bounded slowdown = {:.2f}".format(
+                np.mean(archer.bd_slowdowns), np.mean(archer_fcfs.bd_slowdowns)
+            )
+        )
+
+        print(min(archer.bd_slowdowns), max(archer.bd_slowdowns), (np.array(archer.bd_slowdowns) == 1).sum(), sep=" | ")
+        print(min(archer_fcfs.bd_slowdowns), max(archer_fcfs.bd_slowdowns), (np.array(archer_fcfs.bd_slowdowns) == 1).sum(), sep=" | ")
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.hist(archer.bd_slowdowns, bins=int(max(archer.bd_slowdowns)), range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step", label="low-high_power")
+        ax.hist(archer_fcfs.bd_slowdowns, bins=int(max(archer.bd_slowdowns)), range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step", label="fcfs")
+        ax.set_yscale("log")
+        ax.set_title("Bounded slowdowns")
+        plt.legend()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_boundedslowdowns_{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+    if "scan_plots" in plots:
+        pass
+
 
 def main(args):
     df_jobs = prep_job_data(
-        args.data, args.cache, "toy_scheduler_df",
+        args.data, args.cache,
+        "toy_scheduler_df_{}".format("predpower" if args.use_power_preds else "truepower"),
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
-            "Timelimit"
+            "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"
         ],
-        args.rows
+        model=joblib.load(args.use_power_preds) if args.use_power_preds else None, rows=args.rows
     )
-    t0 = df_jobs.Submit.min()
+    t0 = df_jobs.Start.min()
 
     if args.read_sim_from:
         print("Reading sim results from {} ...".format(args.read_sim_from))
         with open(args.read_sim_from, "rb") as f:
             data = pickle.load(f)
-        archer = data["archer"]
-        if args.plot_v_fcfs:
-            archer_fcfs = data["archer_fcfs"]
+        if args.scan_low_high_power:
+            archers = data["archers"]
+        else:
+            archer = data["archer"]
+            if args.plot_v_fcfs:
+                archer_fcfs = data["archer_fcfs"]
 
     else:
-        print("Running sim for scheduler low-high_power...")
-        archer = run_sim(
-            df_jobs,
-            ARCHER2(
-                t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                node_down_mean=NODEDOWN_MEAN
-            ),
-            "fcfs" if args.fcfs else "low-high_power", t0, seed=0, verbose=args.verbose
-        )
-        if args.plot_v_fcfs:
-            print("Running sim for scheduler fcfs...")
-            archer_fcfs = run_sim(
+        if args.scan_low_high_power:
+            archers = {}
+            for switch_hr in [6, 12, 18, 24, 30, 36, 42, 48]:
+                print(
+                    "Running sim for scheduler low-high_power swithching at {} hr \
+                     intervals...".format(switch_hr)
+                )
+                low_or_high = lambda hr: "low" if (hr // switch_hr) % 2 == 0 else "high"
+                archers[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
+                    df_jobs,
+                    ARCHER2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN
+                    ),
+                    "custom_low-high_power", t0, seed=0, verbose=args.verbose,
+                    custom_low_or_high=low_or_high
+                )
+            # ((low_start,low_end),(high_start,high_end))
+            for switch_intervals in [((0,12),(12,48)), ((0,24),(24,72))]:
+                print(
+                    "Running sim for scheduler low-high_power swithching at {} hr \
+                     intervals...".format(switch_intervals)
+                )
+                low_or_high = lambda hr: (
+                    "low" if (
+                        (hr % switch_interval[1][1]) < switch_interval[0][1]
+                    )
+                    else "high"
+                )
+                archers[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
+                    df_jobs,
+                    ARCHER2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN
+                    ),
+                    "custom_low-high_power", t0, seed=0, verbose=args.verbose,
+                    custom_low_or_high=low_or_high
+                )
+        else:
+            print("Running sim for scheduler low-high_power...")
+            archer = run_sim(
                 df_jobs,
                 ARCHER2(
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN
                 ),
-                "fcfs", t0, seed=0, verbose=args.verbose
+                "fcfs" if args.fcfs else "low-high_power", t0, seed=0, verbose=args.verbose
             )
+            if args.plot_v_fcfs:
+                print("Running sim for scheduler fcfs...")
+                archer_fcfs = run_sim(
+                    df_jobs,
+                    ARCHER2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN
+                    ),
+                    "fcfs", t0, seed=0, verbose=args.verbose
+                )
 
     if args.dump_sim_to:
-        data = { "archer" : archer }
-        if args.plot_v_fcfs:
-            data["archer_fcfs"] = archer_fcfs
+        if args.scan_low_high_power:
+            data = { "archers" : archers }
+        else:
+            data = { "archer" : archer }
+            if args.plot_v_fcfs:
+                data["archer_fcfs"] = archer_fcfs
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
@@ -594,6 +725,8 @@ def main(args):
         plots.append("cab_power_plot")
     if args.plot_v_fcfs:
         plots.append("plot_v_fcfs")
+    if args.scan_low_high_power:
+        plots.append("scan_plots")
 
     if "plot_v_fcfs" in plots:
         times_fcfs = pd.DatetimeIndex(archer_fcfs.times)
@@ -617,8 +750,17 @@ def parse_arguments():
         help="Use only FCFS scheduler for validation"
     )
     scheduler_group.add_argument(
-        "--low-high_power", action="store_true",
+        "--low_high_power", action="store_true",
         help="Alternate between scheduling lowest power and highest power jobs"
+    )
+    scheduler_group.add_argument(
+        "--scan_low_high_power", action="store_true",
+        help="Scan different intervals for low-high power scheduling"
+    )
+
+    parser.add_argument(
+        "--use_power_preds", type=str, default="",
+        help="Use PowerPerNode from a trained model"
     )
 
     parser.add_argument(

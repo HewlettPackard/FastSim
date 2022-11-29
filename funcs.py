@@ -49,7 +49,21 @@ def hour_to_timeofday(hr):
     else: # > 20 and before or equal to 12am
         return "night"
 
-    print(hr)
+
+def hour_to_phase_custom(hr):
+    if hr > 0 and hr <= 4:
+        return "late night"
+    elif hr > 4 and hr <= 8:
+        return "early morning"
+    elif hr > 8 and hr <= 12:
+        return "morning"
+    elif hr > 12 and hr <= 16:
+        return "afternoon"
+    elif hr > 16 and hr <= 20:
+        return "evening"
+    else: # > 20 and before or equal to 12am
+        return "night"
+
 
 def power_print_dump(df_power):
     print("\nFor jobs started after {start} and ending before {end} ({duration}):\n".format(
