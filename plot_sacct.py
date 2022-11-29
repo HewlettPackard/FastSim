@@ -389,15 +389,15 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     fig.savefig("plots/powerusage_cabs_against_slurm_shifted_grouped.pdf")
     plt.show()
 
-    print("Cropping out summer time and forcing intercept 1629")
+    print("Cropping out summer time and forcing intercept 1629 kW")
     for tick, time in enumerate(t_cabs_fine):
         if time.month == 10 and time.day == 30:
             start_tick, start_time = tick, time
             break
 
     power_usage_allcabssum = np.array(power_usage_all_cabs).sum(axis=0)
-    x = power_usage_slurm_tcabsfine[start_tick:] + 1629 * 1e+3
-    y = power_usage_allcabssum[start_tick:]
+    x = power_usage_slurm_tcabsfine[start_tick:]
+    y = power_usage_allcabssum[start_tick:] - 1629 * 1e+3
 
     fig, ax = plt.subplots(1, 1, figsize=(12, 10))
     colors = iter(['b', 'g', 'r', 'y'])
@@ -414,8 +414,8 @@ def power_usage_cabs(df, timesteps, cache, data_name, cab_dir):
     )
     plt.plot(x, preds, c='k')
 
-    plt.xlabel("PSlurm (shifted)")
-    plt.ylabel("PCabs")
+    plt.xlabel("PSlurm")
+    plt.ylabel("PCabs - pCabsIdle")
     plt.xlim(left=0.9 * min(x), right=1.1 * max(x))
     plt.ylim(bottom=0.9 * min(y), top=1.1 * max(y))
     plt.legend()
