@@ -24,7 +24,7 @@ from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
 
 POWER_COLS = ["JobID", "Start", "End", "ConsumedEnergyRaw", "AllocNodes"]
 # Not going to try categorising JobName and SubmitLine
-SUBMIT_COLS = ["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "Timelimit", "Submit", "NTasks"]
+SUBMIT_COLS = ["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "Timelimit", "Submit"]
 FINISH_COLS = ["Elapsed", "ExitCode", "NTasks", "TotalCPU", "CPUTime", "MaxRSS", "MaxVMSize",
                "AvePages", "AveDiskRead", "AveDiskWrite"]
 
