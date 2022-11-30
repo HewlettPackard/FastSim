@@ -19,9 +19,10 @@ PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 
 # Factors are from linear fit (see powerusage_cabs_against_slurm_shifted_grouped.pdf)
 # node_down_mean is just from assuming todays sinfo -R is typical (there were also big partial
-# shutdowns at the start of the slurm data I am not accounting for)
-BASELINE_POWER = 1629 # kW (previously 1789)
-SLURMTOCAB_FACTOR = 0.578 # (previously 0.517)
+# shutdowns at the start of the slurm data I am not accounting for). I am failry sure that these
+# depend on node occupancy so I am just going to ignore these for now
+BASELINE_POWER = 0 # kW (previously 1789 then 1692)
+SLURMTOCAB_FACTOR = 1.0 # (previously 0.517 then 0.578)
 NODEDOWN_MEAN = 291
 BD_THRESHOLD = timedelta(minutes=10)
 
@@ -448,7 +449,7 @@ def plot_blob(
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(
-            PLOT_DIR, "toyscheduler_low-high_power_cabs_{}.pdf".format(save_suffix)
+            PLOT_DIR, "toyscheduler_low-high_power_cabs{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -488,7 +489,7 @@ def plot_blob(
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(
-            PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy_{}.pdf".format(save_suffix)
+            PLOT_DIR, "toyscheduler_low-high_power_fcfs_power_occupancy{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -516,7 +517,7 @@ def plot_blob(
         ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
         fig.tight_layout()
         fig.savefig(os.path.join(
-            PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}.pdf".format(save_suffix)
+            PLOT_DIR, "toyscheduler_low-high_power_power_queue{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -564,7 +565,7 @@ def plot_blob(
             ax2.axhline(0, linestyle="dashed", c="k", linewidth=0.5)
             fig.tight_layout()
             fig.savefig(os.path.join(
-                PLOT_DIR, "toyscheduler_low-high_power_power_queue_{}{}-{}{}_{}.pdf".format(
+                PLOT_DIR, "toyscheduler_low-high_power_power_queue {}{}-{}{}{}.pdf".format(
                     start_day, start_month, end_day, end_month, save_suffix
                 )
             ))
@@ -603,16 +604,30 @@ def plot_blob(
             )
         )
 
-        print(min(archer.bd_slowdowns), max(archer.bd_slowdowns), (np.array(archer.bd_slowdowns) == 1).sum(), sep=" | ")
-        print(min(archer_fcfs.bd_slowdowns), max(archer_fcfs.bd_slowdowns), (np.array(archer_fcfs.bd_slowdowns) == 1).sum(), sep=" | ")
+        print(
+            min(archer.bd_slowdowns), max(archer.bd_slowdowns),
+            (np.array(archer.bd_slowdowns) == 1).sum(), sep=" | "
+        )
+        print(
+            min(archer_fcfs.bd_slowdowns), max(archer_fcfs.bd_slowdowns),
+            (np.array(archer_fcfs.bd_slowdowns) == 1).sum(), sep=" | "
+        )
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-        ax.hist(archer.bd_slowdowns, bins=int(max(archer.bd_slowdowns)), range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step", label="low-high_power")
-        ax.hist(archer_fcfs.bd_slowdowns, bins=int(max(archer.bd_slowdowns)), range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step", label="fcfs")
+        ax.hist(
+            archer.bd_slowdowns, bins=int(max(archer.bd_slowdowns)),
+            range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step",
+            label="low-high_power"
+        )
+        ax.hist(
+            archer_fcfs.bd_slowdowns, bins=int(max(archer.bd_slowdowns)),
+            range=(min(archer.bd_slowdowns),max(archer.bd_slowdowns)), histtype="step",
+            label="fcfs"
+        )
         ax.set_yscale("log")
         ax.set_title("Bounded slowdowns")
         plt.legend()
         fig.savefig(os.path.join(
-            PLOT_DIR, "toyscheduler_low-high_power_boundedslowdowns_{}.pdf".format(save_suffix)
+            PLOT_DIR, "toyscheduler_low-high_power_boundedslowdowns{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -620,7 +635,46 @@ def plot_blob(
             plt.show()
 
     if "scan_plots" in plots:
-        pass
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+
+        for interval, archer_entry in archer.values():
+            bd_slowdown = np.mean(archer_entry.bd_slowdowns[1000:-1000])
+
+            if type(interval) == int:
+                low_or_high = lambda hr: "low" if (hr // switch_hr) % 2 == 0 else "high"
+            elif type(interval) == tuple:
+                low_or_high = lambda hr: (
+                    "low" if (
+                        (hr % switch_interval[1][1]) < switch_interval[0][1]
+                    )
+                    else "high"
+                )
+                
+            low_powers, high_powers = [], []
+            for tick, date in enumerate(times[start_tick:end_tick]):
+                if custom_low_or_high(self.time.hour) == "low":
+                    low_powers.append(archer.power_history[start_tick:end_tick][tick])
+                else:
+                    high_powers.append(archer.power_history[start_tick:end_tick][tick])
+
+            mean_low_power = np.mean(low_powers)
+            mean_high_power = np.mean(high_powers)
+
+            ax.plot(bd_slowdown, (mean_high_power - mean_low_power), label=str(interval))
+
+        ax.set_ylabel("MeanHighPower - MeanLowPower")
+        ax.set_xlabel("Mean Bounded Slowdown")
+        plt.legend()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_low-high_power_boundedslowdown_powerdifference_scan{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
 
 def main(args):
@@ -639,23 +693,20 @@ def main(args):
         print("Reading sim results from {} ...".format(args.read_sim_from))
         with open(args.read_sim_from, "rb") as f:
             data = pickle.load(f)
-        if args.scan_low_high_power:
-            archers = data["archers"]
-        else:
-            archer = data["archer"]
-            if args.plot_v_fcfs:
-                archer_fcfs = data["archer_fcfs"]
+        archer = data["archer"]
+        if args.plot_v_fcfs:
+            archer_fcfs = data["archer_fcfs"]
 
     else:
         if args.scan_low_high_power:
-            archers = {}
+            archer = {}
             for switch_hr in [6, 12, 18, 24, 30, 36, 42, 48]:
                 print(
                     "Running sim for scheduler low-high_power swithching at {} hr \
                      intervals...".format(switch_hr)
                 )
                 low_or_high = lambda hr: "low" if (hr // switch_hr) % 2 == 0 else "high"
-                archers[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
+                archer[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
                     df_jobs,
                     ARCHER2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
@@ -676,7 +727,7 @@ def main(args):
                     )
                     else "high"
                 )
-                archers[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
+                archer[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
                     df_jobs,
                     ARCHER2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
@@ -707,12 +758,9 @@ def main(args):
                 )
 
     if args.dump_sim_to:
-        if args.scan_low_high_power:
-            data = { "archers" : archers }
-        else:
-            data = { "archer" : archer }
-            if args.plot_v_fcfs:
-                data["archer_fcfs"] = archer_fcfs
+        data = { "archer" : archer }
+        if args.plot_v_fcfs:
+            data["archer_fcfs"] = archer_fcfs
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
