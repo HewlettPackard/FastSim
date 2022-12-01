@@ -637,32 +637,30 @@ def plot_blob(
     if "scan_plots" in plots:
         fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
-        for interval, archer_entry in archer.values():
+        for interval, archer_entry in archer.items():
             bd_slowdown = np.mean(archer_entry.bd_slowdowns[1000:-1000])
 
             if type(interval) == int:
-                low_or_high = lambda hr: "low" if (hr // switch_hr) % 2 == 0 else "high"
+                low_or_high = lambda hr: "low" if (hr // interval) % 2 == 0 else "high"
             elif type(interval) == tuple:
                 low_or_high = lambda hr: (
-                    "low" if (
-                        (hr % switch_interval[1][1]) < switch_interval[0][1]
-                    )
-                    else "high"
+                    "low" if (hr % interval[1][1]) < interval[0][1] else "high"
                 )
-                
-            low_powers, high_powers = [], []
-            for tick, date in enumerate(times[start_tick:end_tick]):
-                if custom_low_or_high(self.time.hour) == "low":
-                    low_powers.append(archer.power_history[start_tick:end_tick][tick])
-                else:
-                    high_powers.append(archer.power_history[start_tick:end_tick][tick])
 
+            low_powers, high_powers = [], []
+            for tick, date in enumerate(times[1000:-1000]):
+                if low_or_high(date.hour) == "low":
+                    low_powers.append(archer_entry.power_history[1000:-1000][tick])
+                else:
+                    high_powers.append(archer_entry.power_history[1000:-1000][tick])
+
+            print(interval, len(low_powers), len(high_powers), sep="\t")
             mean_low_power = np.mean(low_powers)
             mean_high_power = np.mean(high_powers)
 
-            ax.plot(bd_slowdown, (mean_high_power - mean_low_power), label=str(interval))
+            ax.scatter(bd_slowdown, (mean_high_power - mean_low_power) * 1000, s=6, label=str(interval))
 
-        ax.set_ylabel("MeanHighPower - MeanLowPower")
+        ax.set_ylabel("MeanHighPower - MeanLowPower (kW)")
         ax.set_xlabel("Mean Bounded Slowdown")
         plt.legend()
         fig.savefig(os.path.join(
@@ -705,7 +703,12 @@ def main(args):
                     "Running sim for scheduler low-high_power swithching at {} hr \
                      intervals...".format(switch_hr)
                 )
-                low_or_high = lambda hr: "low" if (hr // switch_hr) % 2 == 0 else "high"
+                low_or_high = lambda time: (
+                    "low" if (
+                        (((time - t0) // timedelta(hours=1)) // switch_hr) % 2 == 0
+                    )
+                    else "high"
+                )
                 archer[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
                     df_jobs,
                     ARCHER2(
@@ -723,7 +726,8 @@ def main(args):
                 )
                 low_or_high = lambda hr: (
                     "low" if (
-                        (hr % switch_interval[1][1]) < switch_interval[0][1]
+                        (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) <
+                        switch_interval[0][1]
                     )
                     else "high"
                 )
@@ -764,8 +768,9 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    start, end = archer.times[0], archer.times[-1]
-    times = pd.DatetimeIndex(archer.times)
+    archer_times = list(archer.values())[0].times if args.scan_low_high_power else archer.times
+    start, end = archer_times[0], archer_times[-1]
+    times = pd.DatetimeIndex(archer_times)
     dates = matplotlib.dates.date2num(times)
 
     plots = []
