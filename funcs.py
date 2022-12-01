@@ -120,8 +120,8 @@ def process_power(df, cols=None, remove_steps=True):
         # (note this will leave job steps without a parent)
         df_power = df.loc[
             (
-                (df.Start != "Unknown") & (df.Start.notna() &
-                (df.End != "Unknown") & (df.End.notna())) &
+                (df.Start != "Unknown") & (df.Start.notna()) &
+                (df.End != "Unknown") & (df.End.notna()) &
                 (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
                 (df.Partition != "serial")
             ),
@@ -130,8 +130,8 @@ def process_power(df, cols=None, remove_steps=True):
     else:
         df_power = df.loc[
             (
-                (df.Start != "Unknown") & (df.Start.notna() &
-                (df.End != "Unknown") & (df.End.notna())) &
+                (df.Start != "Unknown") & (df.Start.notna()) &
+                (df.End != "Unknown") & (df.End.notna()) &
                 (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
                 (df.Partition != "serial")
             )

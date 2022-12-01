@@ -69,7 +69,7 @@ class Queue():
                     self.queue[retained:], key=lambda job: job.node_power, reverse=True
                 )
         elif self.priority == "custom_low_or_high":
-            if custom_low_or_high(self.time.hour) == "low":
+            if custom_low_or_high(self.time) == "low":
                 self.queue[retained:] = sorted(
                     self.queue[retained:], key=lambda job: job.node_power
                 )
@@ -641,10 +641,19 @@ def plot_blob(
             bd_slowdown = np.mean(archer_entry.bd_slowdowns[1000:-1000])
 
             if type(interval) == int:
-                low_or_high = lambda hr: "low" if (hr // interval) % 2 == 0 else "high"
+                low_or_high = lambda time: (
+                    "low" if (
+                        (((time - t0) // timedelta(hours=1)) // switch_hr) % 2 == 0
+                    )
+                    else "high"
+                )
             elif type(interval) == tuple:
                 low_or_high = lambda hr: (
-                    "low" if (hr % interval[1][1]) < interval[0][1] else "high"
+                    "low" if (
+                        (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) <
+                        switch_interval[0][1]
+                    )
+                    else "high"
                 )
 
             low_powers, high_powers = [], []
