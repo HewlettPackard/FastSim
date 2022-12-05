@@ -107,7 +107,7 @@ def clean_df(df, queue_only=False, project_to_area=False):
     df_jobs.CPUTime = df_jobs.CPUTime.apply(
         lambda row: round(timelimit_str_to_timedelta(row).total_seconds())
     )
-    df_jobs["CPUUtil"] = df_jobs.apply(lambda row: row.TotalCPU/row.CPUTime, axis=1)
+    df_jobs["CPUUtil"] = df_jobs.apply(lambda row: row.TotalCPU / row.CPUTime, axis=1)
 
     df_jobs.ExitCode = df_jobs.ExitCode.apply(lambda row: 0 if row == "0:0" else 1)
 

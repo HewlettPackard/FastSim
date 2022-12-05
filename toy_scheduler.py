@@ -69,7 +69,7 @@ class Queue():
                     self.queue[retained:], key=lambda job: job.node_power, reverse=True
                 )
         elif self.priority == "custom_low_or_high":
-            if custom_low_or_high(self.time) == "low":
+            if self.custom_low_or_high(self.time) == "low":
                 self.queue[retained:] = sorted(
                     self.queue[retained:], key=lambda job: job.node_power
                 )
@@ -77,6 +77,8 @@ class Queue():
                 self.queue[retained:] = sorted(
                     self.queue[retained:], key=lambda job: job.node_power, reverse=True
                 )
+        else:
+            raise NotImplementedError("AUGH")
 
 
     def next_newjob(self):
@@ -113,9 +115,10 @@ class ARCHER2():
         self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0,
         backfill_opts={}
     ):
-        self.power_usage = baseline_power / 1e+3 # MW
+        self.power_usage = 0 # MW
         self.slurmtocab_factor = slurmtocab_factor
         self.node_down_mean = node_down_mean
+        self.init_time = init_time
         self.time = init_time
         self.backfill_opts = backfill_opts
         if "min_block_width" not in self.backfill_opts:
@@ -350,7 +353,7 @@ def run_sim(
     df_jobs, system, scheduler, t0, seed=None, verbose=False, min_step=timedelta(seconds=10),
     custom_low_or_high=None
 ):
-    queue = Queue(df_jobs, scheduler, t0)
+    queue = Queue(df_jobs, scheduler, t0, custom_low_or_high=custom_low_or_high)
 
     np.random.seed(seed)
 
@@ -393,10 +396,9 @@ def run_sim(
     return system
 
 
-# XXX implement save_prefix
 def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
-    save_suffix="", batch=False
+    save_suffix="", batch=False, df_jobs=None
 ):
     def day_night_shade(ax, start, end):
         for day_num in range(round((end - start).days + 0.5) + 1):
@@ -640,38 +642,140 @@ def plot_blob(
         for interval, archer_entry in archer.items():
             bd_slowdown = np.mean(archer_entry.bd_slowdowns[1000:-1000])
 
+            t0 = archer_entry.init_time
             if type(interval) == int:
                 low_or_high = lambda time: (
                     "low" if (
-                        (((time - t0) // timedelta(hours=1)) // switch_hr) % 2 == 0
+                        (((time - t0) // timedelta(hours=1)) // interval) % 2 == 0
                     )
                     else "high"
                 )
             elif type(interval) == tuple:
-                low_or_high = lambda hr: (
+                low_or_high = lambda time: (
                     "low" if (
-                        (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) <
-                        switch_interval[0][1]
+                        (((time - t0) // timedelta(hours=1)) % interval[1][1]) < interval[0][1]
                     )
                     else "high"
                 )
 
             low_powers, high_powers = [], []
-            for tick, date in enumerate(times[1000:-1000]):
-                if low_or_high(date.hour) == "low":
-                    low_powers.append(archer_entry.power_history[1000:-1000][tick])
+            power = archer_entry.power_history[1000:-1000]
+            occupancy = archer_entry.occupancy_history[1000:-1000]
+            baseline_power = 1.692
+            for tick, date in enumerate(times[interval][1000:-1000]):
+                if low_or_high(date) == "low":
+                    low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
                 else:
-                    high_powers.append(archer_entry.power_history[1000:-1000][tick])
+                    high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
 
-            print(interval, len(low_powers), len(high_powers), sep="\t")
             mean_low_power = np.mean(low_powers)
             mean_high_power = np.mean(high_powers)
 
-            ax.scatter(bd_slowdown, (mean_high_power - mean_low_power) * 1000, s=6, label=str(interval))
+            x, y = bd_slowdown, (mean_high_power - mean_low_power) * 1000
+            ax.scatter(x, y, s=16)
+            ax.annotate(
+                "{}hr on. {}hr off".format(interval[0][1], interval[1][1] - interval[1][0]),
+                (x + 0.01,y)
+            )
+
+        # shift mean power measurement window by some hours
+        hr_shift = 0
+        if hr_shift:
+            for interval, archer_entry in archer.items():
+                bd_slowdown = np.mean(archer_entry.bd_slowdowns[1000:-1000])
+
+                t0 = archer_entry.init_time
+                if type(interval) == int:
+                    low_or_high = lambda time: (
+                        "low" if (
+                            (
+                                (((time - t0) // timedelta(hours=1)) % interval) > hr_shift and
+                                (((time - t0) // timedelta(hours=1)) // interval) % 2 == 0
+                            )
+                            or
+                            (
+                                (((time - t0) // timedelta(hours=1)) % interval) <= hr_shift and
+                                (((time - t0) // timedelta(hours=1)) // interval) % 2 == 1
+                            )
+                        )
+                        else "high"
+                    )
+                elif type(interval) == tuple:
+                    low_or_high = lambda time: (
+                        "low" if (
+                            (
+                                hr_shift <
+                                (((time - t0) // timedelta(hours=1)) % interval[1][1]) <
+                                interval[0][1]
+                            )
+                            or (
+                                interval[0][1] <=
+                                (((time - t0) // timedelta(hours=1)) % interval[1][1]) <=
+                                interval[0][1] + hr_shift
+                            )
+                        )
+                        else "high"
+                    )
+
+                low_powers, high_powers = [], []
+                power = archer_entry.power_history[1000:-1000]
+                occupancy = archer_entry.occupancy_history[1000:-1000]
+                baseline_power = 1.692
+                for tick, date in enumerate(times[interval][1000:-1000]):
+                    if low_or_high(date) == "low":
+                        low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+                    else:
+                        high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+
+                mean_low_power = np.mean(low_powers)
+                mean_high_power = np.mean(high_powers)
+
+                x, y = bd_slowdown, (mean_high_power - mean_low_power) * 1000
+                ax.scatter(x, y, s=16)
+                ax.annotate(
+                    "{}hr on. {}hr off ({}hr delay)".format(
+                        interval[0][1], interval[1][1] - interval[1][0], hr_shift
+                    ),
+                    (x + 0.01,y)
+                )
+
+        # ARCHER2 data baseline
+        jobs = [
+            Job(
+                job_row.Submit, job_row.Elapsed, job_row.PowerPerNode, job_row.AllocNodes,
+                job_row.Start, job_row.End
+            ) for _, job_row in df_jobs.sort_values("Start").iterrows()
+        ]
+        bd_slowdown = np.mean(
+            [ max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1) for job in jobs ]
+        )[1000:-1000]
+        # NOTE: No interval to compute low and high powers with so don't need to do this, just set
+        # mean high - mean low to zero
+        # classTempQueue():
+        #     def __init__(self, submit, runtime, powerpernode, nodes, start, end):
+        #         self.submit = submit
+        #         self.runtime = runtime
+        #         self.power = powerpernode * nodes
+        #         self.start = start
+        #         self.end = end
+        # times = [ job.start for job in jobs ] + [ job.end for job in jobs ]
+        # list(set(times)).sort()
+        # powers = np.zeros_like(times)
+        # for job in jobs:
+        #     powers[times.index(job.start):times.index(jobs.end)] += job.power / 1e+6
+        # print(np.mean(powers), np.max(powers))
+        x, y = bd_slowdown, 0
+        ax.scatter(x, y, s=16, c='k')
+        ax.annotate("ARCHER2 Data", (x + 0.01,y))
+
+        # FIFO baseline
+        bd_slowdown = np.mean(archer_fcfs.bd_slowdowns[1000:-1000])
+        x, y = bd_slowdown, 0
+        ax.scatter(x, y, s=16, c='k')
+        ax.annotate("FIFO", (x + 0.01,y))
 
         ax.set_ylabel("MeanHighPower - MeanLowPower (kW)")
         ax.set_xlabel("Mean Bounded Slowdown")
-        plt.legend()
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_low-high_power_boundedslowdown_powerdifference_scan{}.pdf".format(
@@ -701,8 +805,7 @@ def main(args):
         with open(args.read_sim_from, "rb") as f:
             data = pickle.load(f)
         archer = data["archer"]
-        if args.plot_v_fcfs:
-            archer_fcfs = data["archer_fcfs"]
+        archer_fcfs = data["archer_fcfs"]
 
     else:
         if args.scan_low_high_power:
@@ -724,31 +827,42 @@ def main(args):
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN
                     ),
-                    "custom_low-high_power", t0, seed=0, verbose=args.verbose,
+                    "custom_low_or_high", t0, seed=0, verbose=args.verbose,
                     custom_low_or_high=low_or_high
                 )
+
             # ((low_start,low_end),(high_start,high_end))
-            for switch_intervals in [((0,12),(12,48)), ((0,24),(24,72))]:
+            for switch_intervals in [((0,12),(12,48)), ((0,24),(24,72)), ((0,8),(8,24))]:
                 print(
                     "Running sim for scheduler low-high_power swithching at {} hr \
                      intervals...".format(switch_intervals)
                 )
-                low_or_high = lambda hr: (
+                low_or_high = lambda time: (
                     "low" if (
-                        (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) <
-                        switch_interval[0][1]
+                        (((time - t0) // timedelta(hours=1)) % switch_intervals[1][1]) <
+                        switch_intervals[0][1]
                     )
                     else "high"
                 )
-                archer[((0,switch_hr),(switch_hr,switch_hr * 2))] = run_sim(
+                archer[switch_intervals] = run_sim(
                     df_jobs,
                     ARCHER2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN
                     ),
-                    "custom_low-high_power", t0, seed=0, verbose=args.verbose,
+                    "custom_low_or_high", t0, seed=0, verbose=args.verbose,
                     custom_low_or_high=low_or_high
                 )
+
+            print("Running sim for scheduler fcfs...")
+            archer_fcfs = run_sim(
+                df_jobs,
+                ARCHER2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN
+                ),
+                "fcfs", t0, seed=0, verbose=args.verbose
+            )
         else:
             print("Running sim for scheduler low-high_power...")
             archer = run_sim(
@@ -759,28 +873,36 @@ def main(args):
                 ),
                 "fcfs" if args.fcfs else "low-high_power", t0, seed=0, verbose=args.verbose
             )
-            if args.plot_v_fcfs:
-                print("Running sim for scheduler fcfs...")
-                archer_fcfs = run_sim(
-                    df_jobs,
-                    ARCHER2(
-                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                        node_down_mean=NODEDOWN_MEAN
-                    ),
-                    "fcfs", t0, seed=0, verbose=args.verbose
-                )
+
+            print("Running sim for scheduler fcfs...")
+            archer_fcfs = run_sim(
+                df_jobs,
+                ARCHER2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN
+                ),
+                "fcfs", t0, seed=0, verbose=args.verbose
+            )
 
     if args.dump_sim_to:
         data = { "archer" : archer }
-        if args.plot_v_fcfs:
-            data["archer_fcfs"] = archer_fcfs
+        data["archer_fcfs"] = archer_fcfs
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    archer_times = list(archer.values())[0].times if args.scan_low_high_power else archer.times
-    start, end = archer_times[0], archer_times[-1]
-    times = pd.DatetimeIndex(archer_times)
-    dates = matplotlib.dates.date2num(times)
+    if args.scan_low_high_power:
+        archer_times, times, dates = {}, {}, {}
+        for interval, archer_entry in archer.items():
+            archer_times[interval] = archer_entry.times
+            times[interval] = pd.DatetimeIndex(archer_times[interval])
+            dates[interval] = matplotlib.dates.date2num(times[interval])
+        start = min(archer_times.values(), key=lambda times: times[0])
+        end = max(archer_times.values(), key=lambda times: times[-1])
+    else:
+        archer_times = archer.times
+        start, end = archer_times[0], archer_times[-1]
+        times = pd.DatetimeIndex(archer_times)
+        dates = matplotlib.dates.date2num(times)
 
     plots = []
     if args.cab_power_plot:
@@ -796,6 +918,13 @@ def main(args):
         plot_blob(
             plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
             times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch
+        )
+    elif "scan_plots" in plots:
+        times_fcfs = pd.DatetimeIndex(archer_fcfs.times)
+        dates_fcfs = matplotlib.dates.date2num(times_fcfs)
+        plot_blob(
+            plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
+            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs
         )
     else:
         plot_blob(plots, archer, start, end, times, dates, batch=args.batch)
