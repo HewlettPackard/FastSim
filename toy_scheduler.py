@@ -897,10 +897,10 @@ def main(args):
                     ARCHER2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN,
-                        backfill_opts={ "min_block_width" : timedelta(minutes=1) }
+                        backfill_opts={ "min_block_width" : timedelta(minutes=10) }
                     ),
                     "custom_low_or_high", t0, seed=0, verbose=args.verbose,
-                    custom_low_or_high=low_or_high, min_step=timedelta(seconds=0)
+                    custom_low_or_high=low_or_high, min_step=timedelta(seconds=10)
                 )
 
             # ((low_start,low_end),(high_start,high_end))
@@ -921,10 +921,10 @@ def main(args):
                     ARCHER2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN,
-                        backfill_opts={ "min_block_width" : timedelta(minutes=1) }
+                        backfill_opts={ "min_block_width" : timedelta(minutes=10) }
                     ),
                     "custom_low_or_high", t0, seed=0, verbose=args.verbose,
-                    custom_low_or_high=low_or_high, min_step=timedelta(seconds=0)
+                    custom_low_or_high=low_or_high, min_step=timedelta(seconds=10)
                 )
 
             print("Running sim for scheduler fcfs...")
@@ -933,9 +933,9 @@ def main(args):
                 ARCHER2(
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN,
-                    backfill_opts={ "min_block_width" : timedelta(minutes=1) }
+                    backfill_opts={ "min_block_width" : timedelta(minutes=10) }
                 ),
-                "fcfs", t0, seed=0, verbose=args.verbose, min_step=timedelta(seconds=0)
+                "fcfs", t0, seed=0, verbose=args.verbose, min_step=timedelta(seconds=10)
             )
         else:
             print("Running sim for scheduler low-high_power...")
@@ -1005,7 +1005,7 @@ def main(args):
         )
     else:
         plot_blob(
-            plots, archer, start, end, times, dates, batch=args.batch, 
+            plots, archer, start, end, times, dates, batch=args.batch,
             save_suffix=args.save_suffix
         )
 
