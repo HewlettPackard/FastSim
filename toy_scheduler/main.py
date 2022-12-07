@@ -128,8 +128,7 @@ def main(args):
         )
     else:
         plot_blob(
-            plots, archer, start, end, times, dates, batch=args.batch,
-            save_suffix=args.save_suffix
+            plots, archer, start, end, times, dates, batch=args.batch, save_suffix=args.save_suffix
         )
 
 

@@ -3,5 +3,6 @@
 /plots/
 /models/
 /hparams/
+/cpu_freq_tests/
 
 __pycache__
