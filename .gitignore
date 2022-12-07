@@ -1,7 +1,7 @@
 .venv*
 
-/__pycache__/
 /plots/
 /models/
 /hparams/
 
+__pycache__
