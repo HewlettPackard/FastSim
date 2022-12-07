@@ -10,7 +10,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.dates
 from matplotlib import pyplot as plt
-from matplotlib.lines import Line2D
 
 from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
 
@@ -134,6 +133,7 @@ class ARCHER2():
         self.queue_size_history = [0]
         self.times = [self.time]
         self.bd_slowdowns = []
+        self.job_history = []
 
         self.nodes_free = 5860
         self.nodes_drained = 0
@@ -260,6 +260,7 @@ class ARCHER2():
             self.bd_slowdowns.append(
                 max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
             )
+            self.job_history.append(jobs)
             self.sorted = False
             return True
         else:
