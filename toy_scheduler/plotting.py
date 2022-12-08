@@ -49,6 +49,7 @@ def interval_shade(ax, start, end, interval):
 
 """ End Helper Plotting Thingys """
 
+
 def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
     save_suffix="", batch=False, df_jobs=None
@@ -377,7 +378,7 @@ def plot_blob(
                 )
 
         # ARCHER2 data baseline
-        bd_slowdown = np.mean(
+        bd_slowdown_data = np.mean(
             [
                 max(
                     (job_row.End - job_row.Submit)/max(job_row.Elapsed, BD_THRESHOLD), 1
@@ -405,7 +406,7 @@ def plot_blob(
         # for job in jobs:
         #     powers[times.index(job.start):times.index(jobs.end)] += job.power / 1e+6
         # print(np.mean(powers), np.max(powers))
-        x, y = bd_slowdown, 0
+        x, y = bd_slowdown_data, 0
         ax.scatter(x, y, s=64, c='k')
         ax.annotate("ARCHER2 Data", (x + 0.025,y), fontsize=12)
 
@@ -430,7 +431,7 @@ def plot_blob(
         else:
             plt.show()
 
-        # Plot specific power usage for interval I want to see
+        # Examine intervals I want to see
         interval = ((0,24),(24,72))
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
         ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
@@ -445,7 +446,8 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
-        interval = ((0,24),(24,48))
+
+        interval = ((0,24),(24,48)) # This looks the clearest
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
         ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
         interval_shade(ax, start[interval], end[interval], interval)
@@ -459,6 +461,29 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
+        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        ax.hist(
+            archer[interval].bd_slowdowns, bins=int(max(archer[interval].bd_slowdowns)),
+            range=(min(archer[interval].bd_slowdowns),max(archer[interval].bd_slowdowns)),
+            histtype="step", label="My scheduler"
+        )
+        ax.hist(
+            bd_slowdown_data, bins=int(max(archer[interval].bd_slowdowns)),
+            range=(min(archer[interval].bd_slowdowns),max(archer[interval].bd_slowdowns)),
+            histtype="step", label="data"
+        )
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_low-high_power_0242448_data_bdslowdowns_scan{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
         interval = ((0,12),(12,48))
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
         ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)

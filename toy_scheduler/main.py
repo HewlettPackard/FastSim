@@ -1,6 +1,9 @@
 import argparse, os, pickle, joblib, sys
 from datetime import timedelta
 
+import pandas as pd
+import matplotlib.dates
+
 from classes import Archer2
 from simulation_funcs import prep_job_data, run_sim
 from plotting import plot_blob
@@ -123,7 +126,7 @@ def main(args):
     if plots:
         plot_blob(
             plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
-            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs
+            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs,
             save_suffix=args.save_suffix
         )
 
