@@ -36,7 +36,7 @@ def model_power_predictions(model, df):
 
 def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs = parse_cache(
-        data, cache, ".".join(os.path.basename(data).split(".")[:-1]), df_name, 
+        data, cache, ".".join(os.path.basename(data).split(".")[:-1]), df_name,
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"
@@ -44,10 +44,10 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         nrows=rows
     )
 
-    convert_to_raw(df, "AllocNodes")
+    convert_to_raw(df_jobs, "AllocNodes")
 
     if model:
-        df_jobs["PowerPerNode"] = model_power_predictions(model, df)
+        df_jobs["PowerPerNode"] = model_power_predictions(model, df_jobs)
     else:
         df_jobs["PowerPerNode"] = df_jobs.apply(
             lambda row: float(row.Power) / float(row.AllocNodes), axis=1
@@ -67,10 +67,9 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
 
 def run_sim(
-    df_jobs, system, scheduler, t0, seed=None, verbose=False, min_step=timedelta(seconds=10),
-    custom_low_or_high=None
+    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10)
 ):
-    queue = Queue(df_jobs, scheduler, t0, custom_low_or_high=custom_low_or_high)
+    queue = Queue(df_jobs, t0, priority_sorter)
 
     np.random.seed(seed)
 

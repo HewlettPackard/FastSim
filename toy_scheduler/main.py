@@ -1,10 +1,34 @@
-import argparse, os, pickle, joblib
+import argparse, os, pickle, joblib, sys
 from datetime import timedelta
 
 from classes import Archer2
 from simulation_funcs import prep_job_data, run_sim
 from plotting import plot_blob
 from globals import * # TODO: dont do this
+sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
+from funcs import hour_to_timeofday
+
+
+""" Priority Sorters """
+
+def fifo_sorter(queue, time):
+    return sorted(queue, key=lambda job: job.submit)
+
+def simple_low_high_power_sorter(queue, time):
+    if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
+        return sorted(queue, key=lambda job: job.node_power)
+    else:
+        return sorted(queue, key=lambda job: job.node_power, reverse=True)
+
+def low_high_power_sorter_factory(switch_interval, t0):
+    def low_high_power_sorter(queue, time):
+        if (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) < switch_interval[0][1]:
+            return sorted(queue, key=lambda job: job.node_power)
+        else:
+            return sorted(queue, key=lambda job: job.node_power, reverse=True)
+    return low_high_power_sorter
+    
+""" End Priority Sorters """
 
 
 def main(args):
@@ -26,32 +50,45 @@ def main(args):
         if args.scan_low_high_power:
             archer = {}
             # ((low_start,low_end),(high_start,high_end))
-            switch_intervals_trials = [
+            switch_intervals = [
                 ((0,6),(6,12)), ((0,12),(12,24)), ((0,18),(18,36)), ((0,24),(24,48)),
                 ((0,36),(36,72)), ((0,48),(48,96)), ((0,12),(12,48)), ((0,24),(24,72)),
                 ((0,8),(8,24))
             ]
-            for switch_intervals in switch_intervals_trials:
+            for switch_interval in switch_intervals:
                 print(
                     "Running sim for scheduler low-high_power swithching at {} hr \
-                     intervals...".format(switch_intervals)
+                     intervals...".format(switch_interval)
                 )
-                low_or_high = lambda time: (
-                    "low" if (
-                        (((time - t0) // timedelta(hours=1)) % switch_intervals[1][1]) <
-                        switch_intervals[0][1]
-                    )
-                    else "high"
-                )
-                archer[switch_intervals] = run_sim(
+                archer[switch_interval] = run_sim(
                     df_jobs,
                     Archer2(
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                     ),
-                    "custom_low_or_high", t0, seed=0, verbose=args.verbose,
-                    custom_low_or_high=low_or_high, min_step=MIN_STEP
+                    t0, low_high_power_sorter_factory(switch_interval, t0), seed=0,
+                    verbose=args.verbose, min_step=MIN_STEP
                 )
+
+            print("Running sim for scheduler fcfs...")
+            archer[switch_interval] = run_sim(
+                df_jobs,
+                Archer2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                ),
+                t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
+            )
+        else:
+            print("Running sim for scheduler low-high_power...")
+            archer = run_sim(
+                df_jobs,
+                Archer2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                ),
+                t0, simple_low_high_power_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
+            )
 
             print("Running sim for scheduler fcfs...")
             archer_fcfs = run_sim(
@@ -60,27 +97,7 @@ def main(args):
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                 ),
-                "fcfs", t0, seed=0, verbose=args.verbose, min_step=MIN_STEP
-            )
-        else:
-            print("Running sim for scheduler low-high_power...")
-            archer = run_sim(
-                df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN
-                ),
-                "low-high_power", t0, seed=0, verbose=args.verbose, min_step=MIN_STEP
-            )
-
-            print("Running sim for scheduler fcfs...")
-            archer_fcfs = run_sim(
-                df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN
-                ),
-                "fcfs", t0, seed=0, verbose=args.verbose, min_step=MIN_STEP
+                t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
     if args.dump_sim_to:

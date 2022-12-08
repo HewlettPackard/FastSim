@@ -29,10 +29,9 @@ class Job():
 
 
 class Queue():
-    def __init__(self, df_jobs, priority, init_time, custom_low_or_high=None):
-        self.priority = priority
+    def __init__(self, df_jobs, init_time, priority_sorter):
+        self.priority_sorter = priority_sorter
         self.time = init_time
-        self.custom_low_or_high = custom_low_or_high
 
         self.all_jobs = [
             Job(
@@ -54,33 +53,7 @@ class Queue():
         except IndexError:
             pass
 
-        if self.priority == "fcfs":
-            self.queue.sort(key=lambda job: job.submit)
-        elif self.priority == "low-high_power":
-            # high power priority at off-peak, low power priority at peak
-            # To ensure that reordering the queue doesn't cause the scheduler to dance around
-            # large jobs, any job that the scheduler was waiting to submit will be finished
-            # before reordering the queue
-            if hour_to_timeofday(self.time.hour) in ["morning", "afternoon", "evening"]:
-                self.queue[retained:] = sorted(
-                    self.queue[retained:], key=lambda job: job.node_power
-                )
-            else:
-                self.queue[retained:] = sorted(
-                    self.queue[retained:], key=lambda job: job.node_power, reverse=True
-                )
-        elif self.priority == "custom_low_or_high":
-            if self.custom_low_or_high(self.time) == "low":
-                self.queue[retained:] = sorted(
-                    self.queue[retained:], key=lambda job: job.node_power
-                )
-            else:
-                self.queue[retained:] = sorted(
-                    self.queue[retained:], key=lambda job: job.node_power, reverse=True
-                )
-        else:
-            raise NotImplementedError("AUGH")
-
+        self.queue[retained:] = self.priority_sorter(self.queue[retained:], self.time)
 
     def next_newjob(self):
         try:
