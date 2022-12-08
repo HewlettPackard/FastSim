@@ -9,47 +9,50 @@ from matplotlib import pyplot as plt
 from globals import *
 
 
+""" Helper Plotting Thingys """
+
+def day_night_shade(ax, start, end):
+    for day_num in range(round((end - start).days + 0.5) + 1):
+        day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
+        ax.axvspan(
+            matplotlib.dates.date2num(day - timedelta(hours=4)),
+            matplotlib.dates.date2num(day + timedelta(hours=8)),
+            label="8pm - 8am" if not day_num else "_", color="gray", alpha=0.3
+        )
+        ax.axvspan(
+            matplotlib.dates.date2num(day + timedelta(hours=8)),
+            matplotlib.dates.date2num(day + timedelta(hours=20)),
+            label="8am - 8pm" if not day_num else "_", color="lightgray", alpha=0.3
+        )
+
+def interval_shade(ax, start, end, interval):
+    for cycle_num in range((end - start) // timedelta(hours=1) // interval[1][1] + 1):
+        ax.axvspan(
+            matplotlib.dates.date2num(start + timedelta(hours=cycle_num * interval[1][1])),
+            matplotlib.dates.date2num(
+                start + timedelta(hours=cycle_num * interval[1][1]) +
+                timedelta(hours=interval[0][1])
+            ),
+            label="low power priority" if not cycle_num else "_", color="gray", alpha=0.3
+        )
+        ax.axvspan(
+            matplotlib.dates.date2num(
+                start + timedelta(hours=cycle_num * interval[1][1]) +
+                timedelta(hours=interval[0][1])
+            ),
+            matplotlib.dates.date2num(
+                start + timedelta(hours=cycle_num * interval[1][1]) +
+                timedelta(hours=interval[1][1])
+            ),
+            label="high power priority" if not cycle_num else "_", color="lightgray", alpha=0.3
+        )
+
+""" End Helper Plotting Thingys """
+
 def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
     save_suffix="", batch=False, df_jobs=None
 ):
-    def day_night_shade(ax, start, end):
-        for day_num in range(round((end - start).days + 0.5) + 1):
-            day = (start + timedelta(days=day_num)).replace(hour=0, minute=0, second=0)
-            ax.axvspan(
-                matplotlib.dates.date2num(day - timedelta(hours=4)),
-                matplotlib.dates.date2num(day + timedelta(hours=8)),
-                label="8pm - 8am" if not day_num else "_", color="gray", alpha=0.3
-            )
-            ax.axvspan(
-                matplotlib.dates.date2num(day + timedelta(hours=8)),
-                matplotlib.dates.date2num(day + timedelta(hours=20)),
-                label="8am - 8pm" if not day_num else "_", color="lightgray", alpha=0.3
-            )
-    def interval_shade(ax, start, end, interval):
-        for cycle_num in range((end - start) // timedelta(hours=1) // interval[1][1] + 1):
-            ax.axvspan(
-                matplotlib.dates.date2num(start + timedelta(hours=cycle_num * interval[1][1])),
-                matplotlib.dates.date2num(
-                    start + timedelta(hours=cycle_num * interval[1][1]) +
-                    timedelta(hours=interval[0][1])
-                ),
-                label="low power priority" if not cycle_num else "_", color="gray", alpha=0.3
-            )
-            ax.axvspan(
-                matplotlib.dates.date2num(
-                    start + timedelta(hours=cycle_num * interval[1][1]) +
-                    timedelta(hours=interval[0][1])
-                ),
-                matplotlib.dates.date2num(
-                    start + timedelta(hours=cycle_num * interval[1][1]) +
-                    timedelta(hours=interval[1][1])
-                ),
-                label="high power priority" if not cycle_num else "_", color="lightgray", alpha=0.3
-            )
-
-    # TODO might want to shift the slurm info back as done in plot_sacct.py,
-    # need to check the size of the shift in time rather than ticks then just hardcode it
     if "cab_power_plot" in plots:
         cabs = {
             datetime.strptime(os.path.basename(path), "system_%y%m%d") : path

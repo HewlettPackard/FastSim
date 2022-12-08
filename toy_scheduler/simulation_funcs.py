@@ -20,7 +20,6 @@ def convert_to_raw(df, cols):
     ).astype(float).astype(int)
     return df
 
-
 def model_power_predictions(model, df):
     df = df.copy()
     convert_to_raw(df, ["ReqCPUS", "ReqNodes", "ReqMem"])

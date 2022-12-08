@@ -27,7 +27,7 @@ def low_high_power_sorter_factory(switch_interval, t0):
         else:
             return sorted(queue, key=lambda job: job.node_power, reverse=True)
     return low_high_power_sorter
-    
+
 """ End Priority Sorters """
 
 
@@ -70,15 +70,6 @@ def main(args):
                     verbose=args.verbose, min_step=MIN_STEP
                 )
 
-            print("Running sim for scheduler fcfs...")
-            archer[switch_interval] = run_sim(
-                df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
-                t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
-            )
         else:
             print("Running sim for scheduler low-high_power...")
             archer = run_sim(
@@ -90,15 +81,15 @@ def main(args):
                 t0, simple_low_high_power_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
-            print("Running sim for scheduler fcfs...")
-            archer_fcfs = run_sim(
-                df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
-                t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
-            )
+        print("Running sim for scheduler fcfs...")
+        archer_fcfs = run_sim(
+            df_jobs,
+            Archer2(
+                t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+            ),
+            t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
+        )
 
     if args.dump_sim_to:
         data = { "archer" : archer }
@@ -118,6 +109,8 @@ def main(args):
         start, end = archer_times[0], archer_times[-1]
         times = pd.DatetimeIndex(archer_times)
         dates = matplotlib.dates.date2num(times)
+    times_fcfs = pd.DatetimeIndex(archer_fcfs.times)
+    dates_fcfs = matplotlib.dates.date2num(times_fcfs)
 
     plots = []
     if args.cab_power_plot:
@@ -127,25 +120,11 @@ def main(args):
     if args.scan_low_high_power:
         plots.append("scan_plots")
 
-    if "plot_v_fcfs" in plots:
-        times_fcfs = pd.DatetimeIndex(archer_fcfs.times)
-        dates_fcfs = matplotlib.dates.date2num(times_fcfs)
+    if plots:
         plot_blob(
             plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
-            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch,
+            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs
             save_suffix=args.save_suffix
-        )
-    elif "scan_plots" in plots:
-        times_fcfs = pd.DatetimeIndex(archer_fcfs.times)
-        dates_fcfs = matplotlib.dates.date2num(times_fcfs)
-        plot_blob(
-            plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
-            times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs,
-            save_suffix=args.save_suffix
-        )
-    else:
-        plot_blob(
-            plots, archer, start, end, times, dates, batch=args.batch, save_suffix=args.save_suffix
         )
 
 
