@@ -893,7 +893,7 @@ def power_distributions(df, cache, data_name):
 def misc(df, timesteps, cache, data_name):
     df_power = parse_cache(
         df, cache, data_name, "misc_df",
-        ["JobID", "Start", "End", "ConsumedEnergyRaw", "Submit"]
+        ["JobID", "Start", "End", "ConsumedEnergyRaw", "Submit", "AllocNodes"]
     )
 
     df_power.Submit = pd.to_datetime(df_power.Submit, format="%Y-%m-%dT%H:%M:%S")
@@ -901,14 +901,12 @@ def misc(df, timesteps, cache, data_name):
     t = pd.date_range(min(df_power.Start), max(df_power.End), periods=timesteps)
 
     power_usage = np.zeros(t.values.size - 1)
-
     for i in range(len(power_usage)):
         slice = df_power.loc[(df_power.Submit <= t[i]) & (df_power.Start > t[i + 1])]
         power_usage[i] = len(slice)
 
-    dates= matplotlib.dates.date2num(t[:-1])
+    dates = matplotlib.dates.date2num(t[:-1])
     plt.plot_date(dates, power_usage, 'g', linewidth=0.8)
-    plt.legend()
     plt.ylabel("Queue Size")
     plt.title("Job Queue on ARCHER2")
     fig = plt.gcf()
@@ -917,9 +915,24 @@ def misc(df, timesteps, cache, data_name):
     fig.savefig("plots/queue_timeseries.pdf")
     plt.show()
 
-    df_power["PowerPerNode"] = df_power.apply(
-        lambda row: float(row.Power) / float(row.AllocNodes), axis=1
-    )
+    df_power.AllocNodes = df_power.AllocNodes.astype(str)
+    df_power.AllocNodes = df_power.AllocNodes.replace(
+        { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
+    ).astype(float).astype(int)
+
+    utilisation = np.zeros(t.values.size - 1)
+    for i in range(len(utilisation)):
+        slice = df_power.loc[(df_power.Start <= t[i]) & (df_power.End > t[i + 1])]
+        utilisation[i] = sum(slice.AllocNodes) / 5860 * 100
+
+    plt.plot_date(dates, utilisation, 'g', linewidth=0.8)
+    plt.ylabel("System Utilisation %")
+    plt.title("Utilisation for ARCHER2")
+    fig = plt.gcf()
+    fig.set_size_inches(14, 8)
+    fig.tight_layout()
+    fig.savefig("plots/utilisation_timeseries.pdf")
+    plt.show()
 
 
 def main(args):
