@@ -31,6 +31,9 @@ def low_high_power_sorter_factory(switch_interval, t0):
             return sorted(queue, key=lambda job: job.node_power, reverse=True)
     return low_high_power_sorter
 
+def data_start_sorter(queue, time):
+    return sorted(queue, key=lambda job: job.true_job_start)
+
 """ End Priority Sorters """
 
 
@@ -72,6 +75,18 @@ def main(args):
                     t0, low_high_power_sorter_factory(switch_interval, t0), seed=0,
                     verbose=args.verbose, min_step=MIN_STEP
                 )
+
+        elif args.true_job_start_test:
+            print("Running sim for scheduler using job start times from data...")
+            archer = run_sim(
+                df_jobs,
+                Archer2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                ),
+                t0, data_start_sorter , seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                no_retained=True
+            )
 
         else:
             print("Running sim for scheduler low-high_power...")
@@ -122,6 +137,8 @@ def main(args):
         plots.append("plot_v_fcfs")
     if args.scan_low_high_power:
         plots.append("scan_plots")
+    if args.true_job_start_test:
+        plots.append("true_job_start")
 
     if plots:
         plot_blob(
@@ -144,6 +161,10 @@ def parse_arguments():
     scheduler_group.add_argument(
         "--scan_low_high_power", action="store_true",
         help="Scan different intervals for low-high power scheduling"
+    )
+    scheduler_group.add_argument(
+        "--true_job_start_test", action="store_true",
+        help="Submit jobs as they were in data for a sanity check"
     )
 
     parser.add_argument(

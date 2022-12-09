@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.dates
 from matplotlib import pyplot as plt
 
+from classes import Archer2
 from globals import *
 
 
@@ -378,35 +379,12 @@ def plot_blob(
                 )
 
         # ARCHER2 data baseline
-        bd_slowdown_data = np.mean(
-            [
-                max(
-                    (job_row.End - job_row.Submit)/max(job_row.Elapsed, BD_THRESHOLD), 1
-                ) for _, job_row in df_jobs.iterrows()
-            ][1000:-1000]
-        )
-        # NOTE: No interval to compute low and high powers with so don't need to do this, just set
-        # mean high - mean low to zero
-        # classTempQueue():
-        #     def __init__(self, submit, runtime, powerpernode, nodes, start, end):
-        #         self.submit = submit
-        #         self.runtime = runtime
-        #         self.power = powerpernode * nodes
-        #         self.start = start
-        #         self.end = end
-        # jobs = [
-        #     Job(
-        #         job_row.Submit, job_row.Elapsed, job_row.PowerPerNode, job_row.AllocNodes,
-        #         job_row.Start, job_row.End
-        #     ) for _, job_row in df_jobs.sort_values("Start").iterrows()
-        # ]
-        # times = [ job.start for job in jobs ] + [ job.end for job in jobs ]
-        # list(set(times)).sort()
-        # powers = np.zeros_like(times)
-        # for job in jobs:
-        #     powers[times.index(job.start):times.index(jobs.end)] += job.power / 1e+6
-        # print(np.mean(powers), np.max(powers))
-        x, y = bd_slowdown_data, 0
+        bd_slowdowns_data = [
+            max(
+                (job_row.End - job_row.Submit)/max(job_row.Elapsed, BD_THRESHOLD), 1
+            ) for _, job_row in df_jobs.iterrows()
+        ][1000:-1000]
+        x, y = np.mean(bd_slowdowns_data), 0
         ax.scatter(x, y, s=64, c='k')
         ax.annotate("ARCHER2 Data", (x + 0.025,y), fontsize=12)
 
@@ -463,13 +441,18 @@ def plot_blob(
             plt.show()
 
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        print("max(archer[{}].bd_slowdowns[1000:-1000])={}".format(
+            interval, max(archer[interval].bd_slowdowns[1000:-1000])
+        ))
+        print("max(bd_slowdowns_data)={}".format(max(bd_slowdowns_data)))
         ax.hist(
-            archer[interval].bd_slowdowns, bins=int(max(archer[interval].bd_slowdowns)),
+            archer[interval].bd_slowdowns[1000:-1000],
+            bins=int(max(archer[interval].bd_slowdowns)),
             range=(min(archer[interval].bd_slowdowns),max(archer[interval].bd_slowdowns)),
             histtype="step", label="My scheduler"
         )
         ax.hist(
-            bd_slowdown_data, bins=int(max(archer[interval].bd_slowdowns)),
+            bd_slowdowns_data, bins=int(max(archer[interval].bd_slowdowns)),
             range=(min(archer[interval].bd_slowdowns),max(archer[interval].bd_slowdowns)),
             histtype="step", label="data"
         )
@@ -478,6 +461,58 @@ def plot_blob(
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_low-high_power_0242448_data_bdslowdowns_scan{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = plt.subplots(1, 2, figsize=(14, 8))
+        allocnodes_data = [ job_row.AllocNodes for _, job_row in df_jobs.iterrows() ][1000:-1000]
+        allocnodes = [ job.nodes for job in archer[interval].job_history ][1000:-1000]
+        bins_allocnodes = np.array(
+            list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+            list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+        )
+        bins_bd_slowdowns = np.array(
+            [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
+            list(range(150, 301, 50))
+        )
+        vmax = max(
+            sum([
+                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                    zip(allocnodes_data, bd_slowdowns_data)
+                )
+            ]),
+            sum([
+                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                    zip(allocnodes, archer[interval].bd_slowdowns[1000:-1000])
+                )
+            ])
+        )
+        ax[0].hist2d(
+            allocnodes_data, bd_slowdowns_data, bins=[bins_allocnodes, bins_bd_slowdowns],
+            cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+        )
+        ax[0].set_title("ARCHER2 data")
+        ax[0].set_ylabel("Job Bounded Slowdown")
+        h = ax[1].hist2d(
+            allocnodes, archer[interval].bd_slowdowns[1000:-1000],
+            bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+            norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+        )
+        ax[1].set_title("Scheduling Simulation")
+        for a in ax:
+            a.set_xlabel("AllocNodes")
+            a.set_xscale("log")
+            a.set_yscale("log")
+        fig.tight_layout()
+        fig.colorbar(h[3], ax=ax[1])
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_low-high_power_0242448_data_bdslowdowns_allocnodesscan{}.pdf".format(
+                save_suffix
+            )
         ))
         if batch:
             plt.close()
@@ -498,3 +533,67 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
+    if "true_job_start" in plots:
+        print("fifo mean bd slowdown={}+-{} true start mean bd slowdown={}+-{}".format(
+            np.mean(archer_fcfs.bd_slowdowns), np.std(archer_fcfs.bd_slowdowns),
+            np.mean(archer.bd_slowdowns), np.std(archer.bd_slowdowns)
+        ))
+        print("fifo mean utilisation={}+-{} true start mean utilisation={}+-{}".format(
+            np.mean(archer_fcfs.occupancy_history), np.std(archer_fcfs.occupancy_history),
+            np.mean(archer.occupancy_history), np.std(archer.occupancy_history)
+        ))
+
+        fig, ax = plt.subplots(1, 2, figsize=(14, 8))
+        allocnodes_true = [ job.nodes for job in archer.job_history ][1000:-1000]
+        allocnodes = [ job.nodes for job in archer_fcfs.job_history ][1000:-1000]
+        bins_allocnodes = np.array(
+            list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+            list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+        )
+        bins_bd_slowdowns = np.array(
+            [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
+            list(range(150, 301, 50))
+        )
+        vmax = max(
+            sum([
+                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                    zip(allocnodes_true, archer.bd_slowdowns[1000:-1000])
+                )
+            ]),
+            sum([
+                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                    zip(allocnodes, archer_fcfs.bd_slowdowns[1000:-1000])
+                )
+            ])
+        )
+        ax[0].hist2d(
+                allocnodes_true, archer.bd_slowdowns[1000:-1000],
+                bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+                norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+        )
+        ax[0].set_title("ARCHER2 True Start Times")
+        ax[0].set_ylabel("Job Bounded Slowdown")
+        h = ax[1].hist2d(
+            allocnodes, archer_fcfs.bd_slowdowns[1000:-1000],
+            bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+            norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+        )
+        ax[1].set_title("Scheduling Simulation FIFO")
+        for a in ax:
+            a.set_xlabel("AllocNodes")
+            a.set_xscale("log")
+            a.set_yscale("log")
+        fig.tight_layout()
+        fig.colorbar(h[3], ax=ax[1])
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_true_starts_bdslowdowns_allocnodes_{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+

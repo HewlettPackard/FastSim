@@ -66,7 +66,8 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
 
 def run_sim(
-    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10)
+    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10),
+    no_retained=False
 ):
     queue = Queue(df_jobs, t0, priority_sorter)
 
@@ -74,6 +75,11 @@ def run_sim(
 
     cnt = 0
     time = t0
+
+    if not no_retained:
+        num_retained = lambda queue: 1 if queue.queue else None
+    else:
+        num_retained = lambda queue: None
 
     while queue.all_jobs or queue.queue or system.running_jobs:
         # Not enough precision to compute timedeltas with datetime.max
@@ -90,7 +96,7 @@ def run_sim(
         time += t_step
 
         system.step(t_step)
-        queue.step(t_step, 1 if queue.queue else None)
+        queue.step(t_step, num_retained(queue))
 
         system.submit_jobs(queue)
 
