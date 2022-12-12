@@ -14,25 +14,46 @@ from funcs import hour_to_timeofday
 
 """ Priority Sorters """
 
-def fifo_sorter(queue, time):
-    return sorted(queue, key=lambda job: job.submit)
+class FIFOSorter():
+    def __init__(self):
+        pass
 
-def simple_low_high_power_sorter(queue, time):
-    if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
-        return sorted(queue, key=lambda job: job.node_power)
-    else:
-        return sorted(queue, key=lambda job: job.node_power, reverse=True)
+    def sort(self, queue, time):
+        return sorted(queue, key=lambda job: job.submit)
 
-def low_high_power_sorter_factory(switch_interval, t0):
-    def low_high_power_sorter(queue, time):
-        if (((time - t0) // timedelta(hours=1)) % switch_interval[1][1]) < switch_interval[0][1]:
+
+class SimpleLowHighPowerSorter():
+    def __init__(self):
+        pass
+
+    def sort(self, queue, time):
+        if hour_to_timeofday(time.hour) in ["morning", "afternoon", "evening"]:
             return sorted(queue, key=lambda job: job.node_power)
         else:
             return sorted(queue, key=lambda job: job.node_power, reverse=True)
-    return low_high_power_sorter
 
-def data_start_sorter(queue, time):
-    return sorted(queue, key=lambda job: job.true_job_start)
+
+class LowHighPowerSorter():
+    def __init__(self, switch_interval, t0):
+        self.switch_interval = switch_interval
+        self.t0 = t0
+
+    def sort(self, queue, time):
+        if (
+            (((time - self.t0) // timedelta(hours=1)) % self.switch_interval[1][1]) <
+            self.switch_interval[0][1]
+        ):
+            return sorted(queue, key=lambda job: job.node_power)
+        else:
+            return sorted(queue, key=lambda job: job.node_power, reverse=True)
+
+
+class DataStartSorter{}:
+    def __init__(self):
+        pass
+
+    def sort(self, queue, time):
+        return sorted(queue, key=lambda job: job.true_job_start)
 
 """ End Priority Sorters """
 
@@ -72,8 +93,8 @@ def main(args):
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                     ),
-                    t0, low_high_power_sorter_factory(switch_interval, t0), seed=0,
-                    verbose=args.verbose, min_step=MIN_STEP
+                    t0, LowHighPowerSorter(switch_interval, t0), seed=0, verbose=args.verbose,
+                    min_step=MIN_STEP
                 )
 
         elif args.true_job_start_test:
@@ -84,7 +105,7 @@ def main(args):
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                 ),
-                t0, data_start_sorter , seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                t0, DataStartSortera(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
 
@@ -96,7 +117,7 @@ def main(args):
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                 ),
-                t0, simple_low_high_power_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
+                t0, SimpleLowHighPowerSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
         print("Running sim for scheduler fcfs...")
@@ -106,7 +127,7 @@ def main(args):
                 t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                 node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
             ),
-            t0, fifo_sorter, seed=0, verbose=args.verbose, min_step=MIN_STEP
+            t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
         )
 
     if args.dump_sim_to:

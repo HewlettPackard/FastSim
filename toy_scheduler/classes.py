@@ -54,7 +54,7 @@ class Queue():
         except IndexError:
             pass
 
-        self.queue[retained:] = self.priority_sorter(self.queue[retained:], self.time)
+        self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
 
     def next_newjob(self):
         try:
