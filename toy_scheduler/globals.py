@@ -18,7 +18,7 @@ PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 # depend on node occupancy so I am just going to ignore these for now
 BASELINE_POWER = 0 # kW (previously 1789 then 1692)
 SLURMTOCAB_FACTOR = 1.0 # (previously 0.517 then 0.578)
-NODEDOWN_MEAN = 291
+NODEDOWN_MEAN = 0 # 291
 BD_THRESHOLD = timedelta(hours=1)
 MIN_STEP = timedelta(seconds=10)
 

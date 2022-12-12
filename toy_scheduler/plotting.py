@@ -597,3 +597,26 @@ def plot_blob(
         else:
             plt.show()
 
+    if "scan_size_weights_plots":
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        x = np.arange(0, len(archer) + 1)
+        x_labels, bd_slowdowns = [], []
+        for size_weight, archer_entry in archer.items():
+            x_labels.append(size_weight if size_weight != -1 else "true data")
+            bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns[1000:-1000]))
+        x_labels.append("fifo")
+        bd_slowdowns.append(np.mean(archer_fcfs.bd_slowdowns[1000:-1000]))
+        print(x_labels, bd_slowdowns)
+        ax.bar(x, bd_slowdowns)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels)
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_bdslowdowns_scan{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+

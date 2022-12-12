@@ -48,12 +48,35 @@ class LowHighPowerSorter():
             return sorted(queue, key=lambda job: job.node_power, reverse=True)
 
 
-class DataStartSorter{}:
+class DataStartSorter():
     def __init__(self):
         pass
 
     def sort(self, queue, time):
         return sorted(queue, key=lambda job: job.true_job_start)
+
+
+class AgeSizeSorter():
+    def __init__(self, prioritise_small, size_weight):
+        if prioritise_small:
+            self.size_factor_calc = lambda job: (1 / job.nodes) * size_weight
+        else:
+            self.size_factor_calc = lambda job: (job.nodes / 5860) * size_weight
+
+    def sort(self, queue, time):
+        # for job in queue:
+        #     print((time - job.submit).total_seconds() / (24 * (60**2)) / 14, self.size_factor_calc(job))
+        # print()
+        sorted_queue = sorted(
+            queue,
+            key=(
+                lambda job: max((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) +
+                self.size_factor_calc(job)
+            ),
+            reverse=True
+        )
+        return sorted_queue
+
 
 """ End Priority Sorters """
 
@@ -84,7 +107,7 @@ def main(args):
             ]
             for switch_interval in switch_intervals:
                 print(
-                    "Running sim for scheduler low-high_power swithching at {} hr \
+                    "Running sim for scheduler low-high_power switching at {} hr \
                      intervals...".format(switch_interval)
                 )
                 archer[switch_interval] = run_sim(
@@ -105,7 +128,35 @@ def main(args):
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                 ),
-                t0, DataStartSortera(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                no_retained=True
+            )
+
+        elif args.scan_job_size_weights:
+            archer = {}
+            size_weights = [0, 1e+9]
+            for size_weight in size_weights:
+                print(
+                    "Running sim for scheduler with age and priority small job size with size" +
+                    "weight {} ...".format(size_weight)
+                )
+                archer[size_weight] = run_sim(
+                    df_jobs,
+                    Archer2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                    ),
+                    t0, AgeSizeSorter(True, size_weight), seed=0, verbose=args.verbose,
+                    min_step=MIN_STEP
+                )
+            print("Running sim for scheduler using job start times from data...")
+            archer[-1] = run_sim(
+                df_jobs,
+                Archer2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                ),
+                t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
 
@@ -136,7 +187,7 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    if args.scan_low_high_power:
+    if args.scan_low_high_power or args.scan_job_size_weights:
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
         for interval, archer_entry in archer.items():
             archer_times[interval] = archer_entry.times
@@ -160,6 +211,8 @@ def main(args):
         plots.append("scan_plots")
     if args.true_job_start_test:
         plots.append("true_job_start")
+    if args.scan_job_size_weights:
+        plots.append("scan_size_weights_plots")
 
     if plots:
         plot_blob(
@@ -186,6 +239,11 @@ def parse_arguments():
     scheduler_group.add_argument(
         "--true_job_start_test", action="store_true",
         help="Submit jobs as they were in data for a sanity check"
+    )
+    scheduler_group.add_argument(
+        "--scan_job_size_weights", action="store_true",
+        help="Scan for different values for the job size factor weight in an age + size" +
+             "(priority small jobs) priority"
     )
 
     parser.add_argument(
