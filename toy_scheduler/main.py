@@ -57,7 +57,8 @@ class DataStartSorter():
 
 
 class AgeSizeSorter():
-    def __init__(self, prioritise_small, size_weight):
+    def __init__(self, prioritise_small, size_weight, age_weight=1.0):
+        self.age_weight = age_weight
         if prioritise_small:
             self.size_factor_calc = lambda job: (1 / job.nodes) * size_weight
         else:
@@ -70,13 +71,21 @@ class AgeSizeSorter():
         sorted_queue = sorted(
             queue,
             key=(
-                lambda job: max((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) +
-                self.size_factor_calc(job)
+                lambda job: (
+                    min(
+                        (time - job.submit).total_seconds() / (24 * (60**2)) / 14,
+                        1
+                    ) * 
+                    self.age_weight +
+                    self.size_factor_calc(job)
+                )
             ),
             reverse=True
         )
+        # for job in sorted_queue:
+        #     print(min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1), self.size_factor_calc(job), min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) + self.size_factor_calc(job))
+        # print()
         return sorted_queue
-
 
 """ End Priority Sorters """
 
@@ -134,7 +143,7 @@ def main(args):
 
         elif args.scan_job_size_weights:
             archer = {}
-            size_weights = [0, 1e+9]
+            size_weights = [0.01, 0.05, 0.1, 0.5, 1]
             for size_weight in size_weights:
                 print(
                     "Running sim for scheduler with age and priority small job size with size" +
@@ -158,6 +167,16 @@ def main(args):
                 ),
                 t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
+            )
+            print("Running sim for scheduler with priority small job size")
+            archer[999] = run_sim(
+                df_jobs,
+                Archer2(
+                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                ),
+                t0, AgeSizeSorter(True, 1.0, age_weight=0.0), seed=0, verbose=args.verbose,
+                min_step=MIN_STEP, no_retained=True
             )
 
         else:

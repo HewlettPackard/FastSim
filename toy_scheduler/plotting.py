@@ -48,6 +48,14 @@ def interval_shade(ax, start, end, interval):
             label="high power priority" if not cycle_num else "_", color="lightgray", alpha=0.3
         )
 
+# Treating slurm to cab as a scaling factor + baseline power of any nodes without jobs runnning
+# and so not reported by slurm
+def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
+    baseline_power = 1.692
+    full_slurm_to_cab = 1.185
+    return slurm_power * full_slurm_to_cab + (1 - occupancy) * baseline_power
+
+
 """ End Helper Plotting Thingys """
 
 
@@ -300,12 +308,14 @@ def plot_blob(
             low_powers, high_powers = [], []
             power = archer_entry.power_history[1000:-1000]
             occupancy = archer_entry.occupancy_history[1000:-1000]
-            baseline_power = 1.692
+            # baseline_power = 1.692
             for tick, date in enumerate(times[interval][1000:-1000]):
                 if low_or_high(date) == "low":
-                    low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+                    low_powers.append(slurm_to_cab(power[tick], occupancy[tick]))
+                    # low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
                 else:
-                    high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+                    high_powers.append(slurm_to_cab(power[tick], occupancy[tick]))
+                    # high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
 
             mean_low_power = np.mean(low_powers)
             mean_high_power = np.mean(high_powers)
@@ -359,12 +369,14 @@ def plot_blob(
                 low_powers, high_powers = [], []
                 power = archer_entry.power_history[1000:-1000]
                 occupancy = archer_entry.occupancy_history[1000:-1000]
-                baseline_power = 1.692
+                # baseline_power = 1.692
                 for tick, date in enumerate(times[interval][1000:-1000]):
                     if low_or_high(date) == "low":
-                        low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+                        low_powers.append(slurm_to_cab(power[tick], occupancy[tick]))
+                        # low_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
                     else:
-                        high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
+                        high_powers.append(slurm_to_cab(power[tick], occupancy[tick]))
+                        # high_powers.append(power[tick] + (1 - occupancy[tick]) * baseline_power)
 
                 mean_low_power = np.mean(low_powers)
                 mean_high_power = np.mean(high_powers)
@@ -599,21 +611,55 @@ def plot_blob(
 
     if "scan_size_weights_plots":
         fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+
         x = np.arange(0, len(archer) + 1)
-        x_labels, bd_slowdowns = [], []
+        x_labels, bd_slowdowns, bd_slowdowns_err = [], [], []
         for size_weight, archer_entry in archer.items():
-            x_labels.append(size_weight if size_weight != -1 else "true data")
+            if size_weight == -1:
+                x_labels.append("true data")
+            elif size_weight == 999:
+                x_labels.append("smallest first")
+            else:
+                x_labels.append(size_weight)
             bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns[1000:-1000]))
+            bd_slowdowns_err.append(np.std(archer_entry.bd_slowdowns[1000:-1000]))
         x_labels.append("fifo")
         bd_slowdowns.append(np.mean(archer_fcfs.bd_slowdowns[1000:-1000]))
-        print(x_labels, bd_slowdowns)
-        ax.bar(x, bd_slowdowns)
+        bd_slowdowns_err.append(np.std(archer_fcfs.bd_slowdowns[1000:-1000]))
+        x_labels = [
+            label for label, _ in sorted(zip(x_labels, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns_err = [
+            err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns.sort()
+        # print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
+
+        ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
         ax.set_xticks(x)
         ax.set_xticklabels(x_labels)
+        ax.grid(axis="y")
+        ax.set_ylabel("Mean bounded slowdown")
         fig.tight_layout()
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_priority_small_and_age_bdslowdowns_scan{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        ax.bar(x, bd_slowdowns)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels)
+        ax.grid(axis="y")
+        ax.set_ylabel("Mean bounded slowdown")
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_bdslowdowns_scan_noerrs{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
