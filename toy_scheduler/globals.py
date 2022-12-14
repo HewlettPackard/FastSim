@@ -24,3 +24,5 @@ MIN_STEP = timedelta(seconds=10)
 
 BACKFILL_OPTS = { "min_block_width" : timedelta(minutes=10), "max_job_test" : 1000 }
 
+KDE_MODEL_2 = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
+

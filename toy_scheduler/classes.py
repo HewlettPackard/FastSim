@@ -66,7 +66,8 @@ class Queue():
 class Archer2():
     def __init__(
         self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0,
-        backfill_opts={}
+        backfill_opts={}, low_freq_condition=lambda queue: False, low_freq_kde=None,
+        max_time_factor=1.0
     ):
         self.power_usage = 0 # MW
         self.slurmtocab_factor = slurmtocab_factor
@@ -78,6 +79,9 @@ class Archer2():
             self.backfill_opts["min_block_width"] = timedelta(minutes=5) # 1min for Archer2
         if "max_job_test" not in self.backfill_opts:
             self.backfill_opts["max_job_test"] = 1000 # 1000 for Archer2
+        self.low_freq_condition = low_freq_condition
+        self.low_freq_kde = low_freq_kde
+        self.max_time_factor = max_time_factor
 
         self.running_jobs = []
 
@@ -123,7 +127,9 @@ class Archer2():
 
         min_required_block_time = min(
             self.time + self.backfill_opts["min_block_width"],
-            self.time + min(queue.queue, key=lambda job: job.reqtime).reqtime
+            self.time + (
+                min(queue.queue, key=lambda job: job.reqtime).reqtime * self.max_time_factor
+            )
         )
 
         # max_block_time = datetime.max
@@ -134,8 +140,9 @@ class Archer2():
         for i_job, job in enumerate(
             list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
         ):
+            reqtime = job.reqtime * self.max_time_factor
             # Only need to plan nodes for jobs that may be relevant to immediate scheduling
-            if self.time + job.reqtime > max_block_time:
+            if self.time + reqtime > max_block_time:
                 continue
 
             free_nodes = 0
@@ -157,12 +164,12 @@ class Archer2():
                     usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
 
                     # Nodes do not remain available for this jobs runtime, find new block
-                    if usage_block_start + job.reqtime > usage_block_end:
+                    if usage_block_start + reqtime > usage_block_end:
                         selected_intervals = {}
                         free_nodes = 0
                         continue
 
-                    usage_block_end = usage_block_start + job.reqtime
+                    usage_block_end = usage_block_start + reqtime
 
                     if usage_block_start == self.time:
                         backfill_now.append(i_job)
@@ -191,17 +198,27 @@ class Archer2():
         return backfill_now
 
     def submit_jobs(self, queue : Queue):
+        low_freqs = self.low_freq_condition(queue)
         for job in list(queue.queue):
             if self.has_space(job):
-                self.submit(queue.queue.pop(0).start_job(self.time))
+                job_ready = queue.queue.pop(0).start_job(self.time)
+                if low_freqs:
+                    power_factor, time_factor = self.low_freq_kde.sample(1)[0]
+                    job.runtime *= max(time_factor, 1)
+                    job.true_node_power *= min(power_factor, 1)
+                self.submit(job_ready)
             else:
                 break
 
         if queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
-            # for i in sorted(self.get_backfill_jobs(queue), reverse=True):
             for i in sorted(backfill_now, reverse=True):
-                if not self.submit(queue.queue.pop(i).start_job(self.time)):
+                job_ready = queue.queue.pop(i).start_job(self.time)
+                if low_freqs:
+                    power_factor, time_factor = self.low_freq_kde.sample(1)[0]
+                    job.runtime *= max(time_factor, 1)
+                    job.true_node_power *= min(power_factor, 1)
+                if not self.submit(job_ready):
                     print(self.available_nodes(), i, backfill_now)
 
         self.queue_size = len(queue.queue)

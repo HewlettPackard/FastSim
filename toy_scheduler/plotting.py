@@ -26,6 +26,7 @@ def day_night_shade(ax, start, end):
             label="8am - 8pm" if not day_num else "_", color="lightgray", alpha=0.3
         )
 
+
 def interval_shade(ax, start, end, interval):
     for cycle_num in range((end - start) // timedelta(hours=1) // interval[1][1] + 1):
         ax.axvspan(
@@ -48,6 +49,7 @@ def interval_shade(ax, start, end, interval):
             label="high power priority" if not cycle_num else "_", color="lightgray", alpha=0.3
         )
 
+
 # Treating slurm to cab as a scaling factor + baseline power of any nodes without jobs runnning
 # and so not reported by slurm
 def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
@@ -55,6 +57,68 @@ def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
     full_slurm_to_cab = 1.185
     return slurm_power * full_slurm_to_cab + (1 - occupancy) * baseline_power
 
+
+def bdslowdowns_allocnodes_hist2d(
+    archer_true, archer, archer_title, allocnodes_true=[], bd_slowdowns_true=[]
+):
+    bd_slowdowns_true = bd_slowdowns_true if bd_slowdowns_true else (
+        archer_true.bd_slowdowns[1000:-1000]
+    )
+    bd_slowdowns = archer.bd_slowdowns[1000:-1000]
+
+    fig, ax = plt.subplots(1, 2, figsize=(14, 8))
+
+    allocnodes_true = allocnodes_true if allocnodes_true else [
+        job.nodes for job in archer_true.job_history[1000:-1000]
+    ]
+    allocnodes = [ job.nodes for job in archer.job_history[1000:-1000] ]
+    bins_allocnodes = np.array(
+        list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+        list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+    )
+    bins_bd_slowdowns = np.array(
+        [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
+        list(range(150, 301, 50))
+    )
+    # I know bottom left will be most populated bin
+    vmax = max(
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(allocnodes_true, bd_slowdowns_true)
+            )
+        ]),
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(allocnodes, bd_slowdowns)
+            )
+        ])
+    )
+
+    ax[0].hist2d(
+            allocnodes_true, bd_slowdowns_true, bins=[bins_allocnodes, bins_bd_slowdowns],
+            cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[0].set_title("ARCHER2 True Start Times")
+    ax[0].set_ylabel("Job Bounded Slowdown")
+
+    h = ax[1].hist2d(
+        allocnodes, bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+        norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[1].set_title(archer_title)
+
+    for a in ax:
+        a.set_xlabel("AllocNodes")
+        a.set_xscale("log")
+        a.set_yscale("log")
+
+    fig.tight_layout()
+
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.03, 0.7])
+    fig.colorbar(h[3], cax=cbar_ax)
+
+    return fig, ax
 
 """ End Helper Plotting Thingys """
 
@@ -479,47 +543,11 @@ def plot_blob(
         else:
             plt.show()
 
-        fig, ax = plt.subplots(1, 2, figsize=(14, 8))
-        allocnodes_data = [ job_row.AllocNodes for _, job_row in df_jobs.iterrows() ][1000:-1000]
-        allocnodes = [ job.nodes for job in archer[interval].job_history ][1000:-1000]
-        bins_allocnodes = np.array(
-            list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
-            list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+        allocnodes_true = [ job_row.AllocNodes for _, job_row in df_jobs.iterrows() ][1000:-1000]
+        fig, ax = bdslowdowns_allocnodes_hist2d(
+            None, archer[interval], "{}hr on {}hr off".format(interval[0][1], interval[1][1]),
+            allocnodes_true=allocnodes_true, bd_slowdowns_true=bd_slowdowns_data
         )
-        bins_bd_slowdowns = np.array(
-            [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
-            list(range(150, 301, 50))
-        )
-        vmax = max(
-            sum([
-                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
-                    zip(allocnodes_data, bd_slowdowns_data)
-                )
-            ]),
-            sum([
-                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
-                    zip(allocnodes, archer[interval].bd_slowdowns[1000:-1000])
-                )
-            ])
-        )
-        ax[0].hist2d(
-            allocnodes_data, bd_slowdowns_data, bins=[bins_allocnodes, bins_bd_slowdowns],
-            cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
-        )
-        ax[0].set_title("ARCHER2 data")
-        ax[0].set_ylabel("Job Bounded Slowdown")
-        h = ax[1].hist2d(
-            allocnodes, archer[interval].bd_slowdowns[1000:-1000],
-            bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
-            norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
-        )
-        ax[1].set_title("Scheduling Simulation")
-        for a in ax:
-            a.set_xlabel("AllocNodes")
-            a.set_xscale("log")
-            a.set_yscale("log")
-        fig.tight_layout()
-        fig.colorbar(h[3], ax=ax[1])
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_low-high_power_0242448_data_bdslowdowns_allocnodesscan{}.pdf".format(
@@ -556,48 +584,7 @@ def plot_blob(
             np.mean(archer.occupancy_history), np.std(archer.occupancy_history)
         ))
 
-        fig, ax = plt.subplots(1, 2, figsize=(14, 8))
-        allocnodes_true = [ job.nodes for job in archer.job_history ][1000:-1000]
-        allocnodes = [ job.nodes for job in archer_fcfs.job_history ][1000:-1000]
-        bins_allocnodes = np.array(
-            list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
-            list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
-        )
-        bins_bd_slowdowns = np.array(
-            [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
-            list(range(150, 301, 50))
-        )
-        vmax = max(
-            sum([
-                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
-                    zip(allocnodes_true, archer.bd_slowdowns[1000:-1000])
-                )
-            ]),
-            sum([
-                1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
-                    zip(allocnodes, archer_fcfs.bd_slowdowns[1000:-1000])
-                )
-            ])
-        )
-        ax[0].hist2d(
-                allocnodes_true, archer.bd_slowdowns[1000:-1000],
-                bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
-                norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
-        )
-        ax[0].set_title("ARCHER2 True Start Times")
-        ax[0].set_ylabel("Job Bounded Slowdown")
-        h = ax[1].hist2d(
-            allocnodes, archer_fcfs.bd_slowdowns[1000:-1000],
-            bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
-            norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
-        )
-        ax[1].set_title("Scheduling Simulation FIFO")
-        for a in ax:
-            a.set_xlabel("AllocNodes")
-            a.set_xscale("log")
-            a.set_yscale("log")
-        fig.tight_layout()
-        fig.colorbar(h[3], ax=ax[1])
+        fig, ax = bdslowdowns_allocnodes_hist2d(archer, archer_fcfs, "FIFO")
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_test_true_starts_bdslowdowns_allocnodes_{}.pdf".format(
@@ -609,7 +596,7 @@ def plot_blob(
         else:
             plt.show()
 
-    if "scan_size_weights_plots":
+    if "scan_size_weights_plots" in plots:
         fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
         x = np.arange(0, len(archer) + 1)
@@ -665,4 +652,92 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(
+            archer[-1], archer[1], "Age and Priority Small (size weight 1)"
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_bdslowdowns_allocnodes_weight1{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+    if "scan_size_weights_noise_plots" in plots:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+
+        x = np.arange(0, len(archer) + 1)
+        x_labels, bd_slowdowns, bd_slowdowns_err = [], [], []
+        for size_noise_weight, archer_entry in archer.items():
+            if size_noise_weight == -1:
+                x_labels.append("true data")
+            else:
+                x_labels.append(size_noise_weight)
+            bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns[1000:-1000]))
+            bd_slowdowns_err.append(np.std(archer_entry.bd_slowdowns[1000:-1000]))
+        x_labels.append("fifo")
+        bd_slowdowns.append(np.mean(archer_fcfs.bd_slowdowns[1000:-1000]))
+        bd_slowdowns_err.append(np.std(archer_fcfs.bd_slowdowns[1000:-1000]))
+        x_labels = [
+            label for label, _ in sorted(zip(x_labels, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns_err = [
+            err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns.sort()
+        print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
+
+        ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels)
+        ax.grid(axis="y")
+        ax.set_ylabel("Mean bounded slowdown")
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_noise_bdslowdowns_scan{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        ax.bar(x, bd_slowdowns)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels)
+        ax.grid(axis="y")
+        ax.set_ylabel("Mean bounded slowdown")
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_noise_bdslowdowns_scan_noerrs{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(
+            archer[-1], archer[(2.25, 2)], "Age and Priority Small (size weight 1)"
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_noise_bdslowdowns_allocnodes_sizeweight225" +
+            "noiseweight2{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        if "test_frequencies" in plots:
+            for key, val in archer.items():
+                print(key, np.mean(val.bd_slowdowns), np.mean(val.power_history))
 

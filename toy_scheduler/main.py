@@ -1,6 +1,7 @@
 import argparse, os, pickle, joblib, sys
 from datetime import timedelta
 
+import numpy as np
 import pandas as pd
 import matplotlib.dates
 
@@ -57,34 +58,36 @@ class DataStartSorter():
 
 
 class AgeSizeSorter():
-    def __init__(self, prioritise_small, size_weight, age_weight=1.0):
+    def __init__(self, prioritise_small, size_weight, age_weight=1.0, noise_params=None):
         self.age_weight = age_weight
         if prioritise_small:
             self.size_factor_calc = lambda job: (1 / job.nodes) * size_weight
         else:
             self.size_factor_calc = lambda job: (job.nodes / 5860) * size_weight
+        if noise_params:
+            self.noise_factor_calc = (
+                lambda job: (
+                    np.clip(
+                        np.random.normal(noise_params["mu"], noise_params["sigma"]), 0.0, 1.0
+                    ) *
+                    noise_params["weight"]
+                )
+            )
+        else:
+            self.noise_factor_calc = lambda job: 0
+
 
     def sort(self, queue, time):
-        # for job in queue:
-        #     print((time - job.submit).total_seconds() / (24 * (60**2)) / 14, self.size_factor_calc(job))
-        # print()
         sorted_queue = sorted(
             queue,
             key=(
                 lambda job: (
-                    min(
-                        (time - job.submit).total_seconds() / (24 * (60**2)) / 14,
-                        1
-                    ) * 
-                    self.age_weight +
-                    self.size_factor_calc(job)
+                    min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) *
+                    self.age_weight + self.size_factor_calc(job) + self.noise_factor_calc(job)
                 )
             ),
             reverse=True
         )
-        # for job in sorted_queue:
-        #     print(min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1), self.size_factor_calc(job), min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) + self.size_factor_calc(job))
-        # print()
         return sorted_queue
 
 """ End Priority Sorters """
@@ -141,23 +144,36 @@ def main(args):
                 no_retained=True
             )
 
-        elif args.scan_job_size_weights:
+        elif args.scan_job_size_weights or args.scan_job_size_weights_noise:
             archer = {}
-            size_weights = [0.01, 0.05, 0.1, 0.5, 1]
+            # size_weights = [0.01, 0.05, 0.1, 0.5, 1]
+            # size_weights = [2, 2.25, 2.5, 3]
+            size_weights = [2.25]
+            if args.scan_job_size_weights_noise:
+                noise_params_lst = [
+                    { "mu" : 0.5, "sigma" : 0.5, "weight" : weight } for weight in (
+                        [1, 2, 5]
+                    )
+                ]
+            else:
+                noise_params_lst = [None]
+
             for size_weight in size_weights:
-                print(
-                    "Running sim for scheduler with age and priority small job size with size" +
-                    "weight {} ...".format(size_weight)
-                )
-                archer[size_weight] = run_sim(
-                    df_jobs,
-                    Archer2(
-                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                    ),
-                    t0, AgeSizeSorter(True, size_weight), seed=0, verbose=args.verbose,
-                    min_step=MIN_STEP
-                )
+                for noise_params in noise_params_lst:
+                    print(
+                        "Running sim for scheduler with age and priority small job size with" +
+                        "size weight {} and noise params {} ...".format(size_weight, noise_params)
+                    )
+                    key = (size_weight, noise_params["weight"]) if noise_params else size_weight
+                    archer[key] = run_sim(
+                        df_jobs,
+                        Archer2(
+                            t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                            node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                        ),
+                        t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
+                        verbose=args.verbose, min_step=MIN_STEP
+                    )
             print("Running sim for scheduler using job start times from data...")
             archer[-1] = run_sim(
                 df_jobs,
@@ -168,15 +184,53 @@ def main(args):
                 t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
-            print("Running sim for scheduler with priority small job size")
-            archer[999] = run_sim(
+            if args.scan_job_size_weights:
+                print("Running sim for scheduler with priority small job size")
+                archer[999] = run_sim(
+                    df_jobs,
+                    Archer2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
+                    ),
+                    t0, AgeSizeSorter(True, 1.0, age_weight=0.0), seed=0, verbose=args.verbose,
+                    min_step=MIN_STEP
+                )
+
+        elif args.test_frequencies:
+            kde = joblib.load(KDE_MODEL_2)
+            archer = {}
+            size_weight, noise_params = 2.25, None
+            small_queue_cuts = [10, 100, 500, 1000]
+            for small_queue_cut in small_queue_cuts:
+                print(
+                    "Running sim for scheduler with age and priority small job size with size" +
+                    "weight {} and noise params {}. Setting jobs to 2GHz when quene < {}".format(
+                        size_weight, noise_params, small_queue_cut
+                    )
+                )
+                archer[small_queue_cut] = run_sim(
+                    df_jobs,
+                    Archer2(
+                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
+                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
+                        low_freq_condition=lambda queue: len(queue.queue) < small_queue_cut,
+                        low_freq_kde=kde, max_time_factor=1.2
+                    ),
+                    t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
+                    verbose=args.verbose, min_step=MIN_STEP
+                )
+            print(
+                "Running sim for scheduler with age and priority small job size with size" +
+                "weight {} and noise params {}. No 2GHz jobs".format(size_weight, noise_params)
+            )
+            archer[-1] = run_sim(
                 df_jobs,
                 Archer2(
                     t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                     node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
                 ),
-                t0, AgeSizeSorter(True, 1.0, age_weight=0.0), seed=0, verbose=args.verbose,
-                min_step=MIN_STEP, no_retained=True
+                t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
+                verbose=args.verbose, min_step=MIN_STEP
             )
 
         else:
@@ -206,7 +260,7 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    if args.scan_low_high_power or args.scan_job_size_weights:
+    if args.scan_low_high_power or args.scan_job_size_weights or args.scan_job_size_weights_noise:
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
         for interval, archer_entry in archer.items():
             archer_times[interval] = archer_entry.times
@@ -232,6 +286,10 @@ def main(args):
         plots.append("true_job_start")
     if args.scan_job_size_weights:
         plots.append("scan_size_weights_plots")
+    if args.scan_job_size_weights_noise:
+        plots.append("scan_size_weights_noise_plots")
+    if args.test_frequencies:
+        plots.append("test_frequencies")
 
     if plots:
         plot_blob(
@@ -263,6 +321,15 @@ def parse_arguments():
         "--scan_job_size_weights", action="store_true",
         help="Scan for different values for the job size factor weight in an age + size" +
              "(priority small jobs) priority"
+    )
+    scheduler_group.add_argument(
+        "--scan_job_size_weights_noise", action="store_true",
+        help="Scan for different values for the job size factor weight in an age + size" +
+             "(priority small jobs) priority with noise in priority calculation"
+    )
+    scheduler_group.add_argument(
+        "--test_frequencies", action="store_true",
+        help="Test setting lower job cpu frequency at different times"
     )
 
     parser.add_argument(
