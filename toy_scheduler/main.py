@@ -1,4 +1,5 @@
-import argparse, os, pickle, joblib, sys
+import argparse, os, joblib, sys
+import dill as pickle
 from datetime import timedelta
 
 import numpy as np
@@ -91,6 +92,13 @@ class AgeSizeSorter():
         return sorted_queue
 
 """ End Priority Sorters """
+
+""" Low Freq Response Calcs """
+
+class AppGroupMeanResponses():
+    pass
+
+""" End Low Freq Response Calcs"""
 
 
 def main(args):
@@ -200,7 +208,7 @@ def main(args):
             kde = joblib.load(KDE_MODEL_2)
             archer = {}
             size_weight, noise_params = 2.25, None
-            small_queue_cuts = [10, 100, 500, 1000]
+            small_queue_cuts = [0, 10, 50,  100, 500, 1000, float("inf")]
             for small_queue_cut in small_queue_cuts:
                 print(
                     "Running sim for scheduler with age and priority small job size with size" +
@@ -260,7 +268,10 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
-    if args.scan_low_high_power or args.scan_job_size_weights or args.scan_job_size_weights_noise:
+    if (
+        args.scan_low_high_power or args.scan_job_size_weights or
+        args.scan_job_size_weights_noise or args.test_frequencies
+    ):
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
         for interval, archer_entry in archer.items():
             archer_times[interval] = archer_entry.times

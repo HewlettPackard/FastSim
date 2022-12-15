@@ -737,7 +737,29 @@ def plot_blob(
         else:
             plt.show()
 
-        if "test_frequencies" in plots:
-            for key, val in archer.items():
-                print(key, np.mean(val.bd_slowdowns), np.mean(val.power_history))
+    if "test_frequencies" in plots:
+        for queue_cut, archer_entry in archer.items():
+            power = [
+                slurm_to_cab(power, archer_entry.occupancy_history[tick]) for tick, power in (
+                    enumerate(archer_entry.power_history)
+                )
+            ]
+            print(queue_cut, np.mean(archer_entry.bd_slowdowns), np.mean(archer_entry.power_history))
+            fig = plt.figure(1, figsize=(12, 8))
+            ax = fig.add_axes((.1, .3, .8, .6))
+            ax.plot_date(
+                dates[queue_cut], power, 'g', label="cab power (converted from slurm)",
+                linewidth=0.6
+            )
+            ax.set_ylabel("Power (MW)")
+            ax.set_xticklabels([])
+            ax.set_title("Power Usage with {} Queue Cut for Low Frequency Jobs".format(queue_cut))
+            ax2 = fig.add_axes((.1, .1, .8, .2))
+            ax2.plot_date(
+                dates[queue_cut], archer_entry.queue_size_history, 'k', label="queue size",
+                linewidth=0.6
+            )
+            ax2.axhline(queue_cut, c='r', linewidth=0.5)
+            fig.tight_layout()
+            plt.show()
 
