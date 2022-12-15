@@ -108,7 +108,8 @@ if False:
     plt.show()
 
 x, y = cpuresponse_2_data[:, 0], cpuresponse_2_data[:, 1]
-xx, yy, = np.mgrid[1.0:1.3:500j, 0.65:1.0:500j]
+# xx, yy, = np.mgrid[1.0:1.3:500j, 0.65:1.0:500j]
+xx, yy, = np.mgrid[0.5:1.8:500j, 0.0:1.5:500j]
 xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
 xy_train = np.vstack([y, x]).T
 
@@ -120,13 +121,11 @@ kde.fit(xy_train)
 z = np.exp(kde.score_samples(xy_sample))
 zz = np.reshape(z, xx.shape)
 
-plt.pcolormesh(xx, yy, zz)
+plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-4, zz))
 plt.scatter(x, y, s=1, facecolor='white')
 plt.show()
 
 joblib.dump(kde, os.path.join(MODELS_DIR, "cpufreq2ghz_kde.joblib"))
-
-print(kde.sample(10))
 
 x, y = cpuresponse_15_data[:, 0], cpuresponse_15_data[:, 1]
 xx, yy, = np.mgrid[1.0:1.6:500j, 0.60:1.0:500j]
