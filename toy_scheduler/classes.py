@@ -65,12 +65,10 @@ class Queue():
 
 class Archer2():
     def __init__(
-        self, init_time : datetime, baseline_power=1500, slurmtocab_factor=1.0, node_down_mean=0,
-        backfill_opts={}, low_freq_condition=lambda queue: False, low_freq_calc=None,
-        low_freq_reqtime_factor=1.0
+        self, init_time : datetime, node_down_mean=0, backfill_opts={},
+        low_freq_condition=lambda queue: False, low_freq_calc=None, low_freq_reqtime_factor=1.0
     ):
         self.power_usage = 0 # MW
-        self.slurmtocab_factor = slurmtocab_factor
         self.node_down_mean = node_down_mean
         self.init_time = init_time
         self.time = init_time
@@ -92,6 +90,7 @@ class Archer2():
         self.times = [self.time]
         self.bd_slowdowns = []
         self.job_history = []
+        self.total_energy = 0.0 # GJ
 
         self.nodes_free = 5860
         self.nodes_drained = 0
@@ -225,9 +224,12 @@ class Archer2():
         if self.has_space(job):
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
-            self.power_usage += (job.true_node_power * job.nodes * self.slurmtocab_factor) / 1e+6
+            self.power_usage += job.true_node_power * job.nodes / 1e+6
             self.bd_slowdowns.append(
                 max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+            )
+            self.total_energy += (
+                job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
             )
             self.job_history.append(job)
             self.sorted = False
@@ -246,7 +248,7 @@ class Archer2():
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             job = self.running_jobs.pop(0)
             self.nodes_free += job.nodes
-            self.power_usage -= (job.true_node_power * job.nodes * self.slurmtocab_factor) / 1e+6
+            self.power_usage -= (job.true_node_power * job.nodes / 1e+6
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:

@@ -160,10 +160,7 @@ def main(args):
                 )
                 archer[switch_interval] = run_sim(
                     df_jobs,
-                    Archer2(
-                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                    ),
+                    Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                     t0, LowHighPowerSorter(switch_interval, t0), seed=0, verbose=args.verbose,
                     min_step=MIN_STEP
                 )
@@ -172,10 +169,7 @@ def main(args):
             print("Running sim for scheduler using job start times from data...")
             archer = run_sim(
                 df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
@@ -203,20 +197,14 @@ def main(args):
                     key = (size_weight, noise_params["weight"]) if noise_params else size_weight
                     archer[key] = run_sim(
                         df_jobs,
-                        Archer2(
-                            t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                            node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                        ),
+                        Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                         t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
                         verbose=args.verbose, min_step=MIN_STEP
                     )
             print("Running sim for scheduler using job start times from data...")
             archer[-1] = run_sim(
                 df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
@@ -224,10 +212,7 @@ def main(args):
                 print("Running sim for scheduler with priority small job size")
                 archer[999] = run_sim(
                     df_jobs,
-                    Archer2(
-                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                    ),
+                    Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                     t0, AgeSizeSorter(True, 1.0, age_weight=0.0), seed=0, verbose=args.verbose,
                     min_step=MIN_STEP
                 )
@@ -250,7 +235,7 @@ def main(args):
 
             archer = {}
             size_weight, noise_params = 2.25, None
-            small_queue_cuts = [0, 10, 50,  100, 500, 1000, float("inf")]
+            small_queue_cuts = [0, 10, 50, 100, 200, 300, 400, 500, 1000, float("inf")]
             for small_queue_cut in small_queue_cuts:
                 print(
                     "Running sim for scheduler with age and priority small job size with size" +
@@ -261,8 +246,7 @@ def main(args):
                 archer[small_queue_cut] = run_sim(
                     df_jobs,
                     Archer2(
-                        t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                        node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
+                        t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
                         low_freq_condition=lambda queue: len(queue.queue) < small_queue_cut,
                         low_freq_calc=low_freq_calc,
                         low_freq_reqtime_factor=low_freq_reqtime_factor
@@ -276,10 +260,7 @@ def main(args):
             )
             archer[-1] = run_sim(
                 df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
                 verbose=args.verbose, min_step=MIN_STEP
             )
@@ -288,20 +269,14 @@ def main(args):
             print("Running sim for scheduler low-high_power...")
             archer = run_sim(
                 df_jobs,
-                Archer2(
-                    t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                    node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-                ),
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0, SimpleLowHighPowerSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
         print("Running sim for scheduler fcfs...")
         archer_fcfs = run_sim(
             df_jobs,
-            Archer2(
-                t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
-                node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS
-            ),
+            Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
             t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
         )
 
