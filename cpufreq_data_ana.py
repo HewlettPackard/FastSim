@@ -8,6 +8,7 @@ from sklearn.neighbors import KernelDensity
 
 CPUFREQ_DIR = "/work/y02/y02/awilkins/archer2_jobdata/cpu_freq_tests"
 MODELS_DIR = "/work/y02/y02/awilkins/archer2_jobdata/models"
+PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
 
 for filepath in glob(os.path.join(CPUFREQ_DIR, "*perf_energy.csv")):
     df = pd.read_csv(filepath, delimiter=",", header=0)
@@ -73,6 +74,20 @@ df_cpuresponse_15 = pd.DataFrame.from_dict(cpuresponse[1500000])
 print(df_cpuresponse_2)
 print(df_cpuresponse_15)
 
+for app in df_cpuresponse_2.Application.unique():
+    print(app)
+    print("2GHz: {}".format(
+        df_cpuresponse_2.loc[
+            (df_cpuresponse_2.Application == app), ["PowerFactor", "TimeFactor"]
+        ].mean(axis=0)
+    ))
+    print("1.5: {}".format(
+        df_cpuresponse_15.loc[
+            (df_cpuresponse_15.Application == app), ["PowerFactor", "TimeFactor"]
+        ].mean(axis=0)
+    ))
+    print()
+
 cpuresponse_2_data = df_cpuresponse_2[["TimeFactor", "PowerFactor"]].to_numpy()
 cpuresponse_15_data = df_cpuresponse_15[["TimeFactor", "PowerFactor"]].to_numpy()
 
@@ -107,9 +122,10 @@ if False:
     fig.tight_layout()
     plt.show()
 
+# Makeing KDEs
 x, y = cpuresponse_2_data[:, 0], cpuresponse_2_data[:, 1]
 # xx, yy, = np.mgrid[1.0:1.3:500j, 0.65:1.0:500j]
-xx, yy, = np.mgrid[0.5:1.8:500j, 0.0:1.5:500j]
+xx, yy, = np.mgrid[0.8:1.8:500j, 0.4:1.2:500j]
 xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
 xy_train = np.vstack([y, x]).T
 
@@ -121,14 +137,15 @@ kde.fit(xy_train)
 z = np.exp(kde.score_samples(xy_sample))
 zz = np.reshape(z, xx.shape)
 
-plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-4, zz))
+plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-5, zz))
 plt.scatter(x, y, s=1, facecolor='white')
+plt.savefig(os.path.join(PLOT_DIR, "2Ghz_response_kde.pdf"))
 plt.show()
 
 joblib.dump(kde, os.path.join(MODELS_DIR, "cpufreq2ghz_kde.joblib"))
 
 x, y = cpuresponse_15_data[:, 0], cpuresponse_15_data[:, 1]
-xx, yy, = np.mgrid[1.0:1.6:500j, 0.60:1.0:500j]
+xx, yy, = np.mgrid[0.8:1.8:500j, 0.4:1.2:500j]
 xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
 xy_train = np.vstack([y, x]).T
 
@@ -140,8 +157,9 @@ kde.fit(xy_train)
 z = np.exp(kde.score_samples(xy_sample))
 zz = np.reshape(z, xx.shape)
 
-plt.pcolormesh(xx, yy, zz)
+plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-5, zz))
 plt.scatter(x, y, s=1, facecolor='white')
+plt.savefig(os.path.join(PLOT_DIR, "1_5Ghz_response_kde.pdf"))
 plt.show()
 
 joblib.dump(kde, os.path.join(MODELS_DIR, "cpufreq15ghz_kde.joblib"))
