@@ -248,7 +248,7 @@ class Archer2():
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             job = self.running_jobs.pop(0)
             self.nodes_free += job.nodes
-            self.power_usage -= (job.true_node_power * job.nodes / 1e+6
+            self.power_usage -= job.true_node_power * job.nodes / 1e+6
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
