@@ -218,8 +218,7 @@ def main(args):
                 )
 
         elif args.test_frequencies:
-            if args.low_freq_response_calc == "app_means":
-                # 2GHz responses
+            if args.low_freq_response_calc == "app_means_2ghz":
                 low_freq_calc = AppGroupMeanResponses(
                     {
                         0.25 : (0.808709, 1.178027), 0.25 : (0.763424, 1.049210),
@@ -227,11 +226,24 @@ def main(args):
                     }
                 )
                 low_freq_reqtime_factor = 1.125 # 2.25 / 2
-            elif args.low_freq_response_calc == "kde":
+            elif args.low_freq_response_calc == "app_means_1.5ghz":
+                low_freq_calc = AppGroupMeanResponses(
+                    {
+                        0.25 : (0.734774, 1.551513), 0.25 : (0.730868, 1.100771),
+                        0.25 : (0.805355, 1.130684), 0.25 : (0.752383, 1.084178)
+                    }
+                )
+                low_freq_reqtime_factor = 1.5 # 2.25 / 1.5
+            elif args.low_freq_response_calc == "kde_2ghz":
                 low_freq_calc = KDEResponses(
                     KDE_MODEL_2GHZ, minmax_time_factor=(1, 1.5), minmax_power_factor=(0.5, 1)
                 )
-                low_freq_reqtime_factor = 1.125 # 2.25 / 2
+                low_freq_reqtime_factor = 1.5 # 2.25 / 2
+            elif args.low_freq_response_calc == "kde_1.5ghz":
+                low_freq_calc = KDEResponses(
+                    KDE_MODEL_1_5GHZ, minmax_time_factor=(1, 1.5), minmax_power_factor=(0.5, 1)
+                )
+                low_freq_reqtime_factor = 1.5 # 2.25 / 1.5
 
             archer = {}
             size_weight, noise_params = 2.25, None
@@ -362,7 +374,8 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--low_freq_response_calc", type=str, default="app_means", help="(kde|app_means)"
+        "--low_freq_response_calc", type=str, default="app_means",
+        help="(kde_{2,1.5}ghz|app_means_{2,1.5}ghz)"
     )
 
     parser.add_argument(
