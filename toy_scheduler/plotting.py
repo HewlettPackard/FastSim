@@ -744,7 +744,8 @@ def plot_blob(
                     enumerate(archer_entry.power_history)
                 )
             ]
-            print(queue_cut, np.mean(archer_entry.bd_slowdowns), np.mean(archer_entry.power_history))
+            print(queue_cut, np.mean(archer_entry.bd_slowdowns), np.mean(power))
+
             fig = plt.figure(1, figsize=(12, 8))
             ax = fig.add_axes((.1, .3, .8, .6))
             ax.plot_date(
@@ -762,4 +763,45 @@ def plot_blob(
             ax2.axhline(queue_cut, c='r', linewidth=0.5)
             fig.tight_layout()
             plt.show()
+
+        # TODO Rather than mean power use show total energy usage as a fraction of the -1 option
+        # (all running at 2.25GHz) as lower frequencies may mean system takes longer to pass
+        # through workload
+        # TODO plot bd slowdowns with errors on bar chart
+        # x = np.arange(0, len(archer) + 1)
+        # x_labels, bd_slowdowns, bd_slowdowns_err = [], [], []
+        # for size_noise_weight, archer_entry in archer.items():
+        #     if size_noise_weight == -1:
+        #         x_labels.append("true data")
+        #     else:
+        #         x_labels.append(size_noise_weight)
+        #     bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns[1000:-1000]))
+        #     bd_slowdowns_err.append(np.std(archer_entry.bd_slowdowns[1000:-1000]))
+        # x_labels.append("fifo")
+        # bd_slowdowns.append(np.mean(archer_fcfs.bd_slowdowns[1000:-1000]))
+        # bd_slowdowns_err.append(np.std(archer_fcfs.bd_slowdowns[1000:-1000]))
+        # x_labels = [
+        #     label for label, _ in sorted(zip(x_labels, bd_slowdowns), key=lambda pair: pair[1])
+        # ]
+        # bd_slowdowns_err = [
+        #     err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
+        # ]
+        # bd_slowdowns.sort()
+        # print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
+
+        # ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
+        # ax.set_xticks(x)
+        # ax.set_xticklabels(x_labels)
+        # ax.grid(axis="y")
+        # ax.set_ylabel("Mean bounded slowdown")
+        # fig.tight_layout()
+        # fig.savefig(os.path.join(
+        #     PLOT_DIR,
+        #     "toyscheduler_priority_small_and_age_noise_bdslowdowns_scan{}.pdf".format(save_suffix)
+        # ))
+        # if batch:
+        #     plt.close()
+        # else:
+        #     plt.show()
+
 

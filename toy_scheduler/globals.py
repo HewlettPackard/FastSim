@@ -8,6 +8,7 @@ global NODEDOWN_MEAN
 global BD_THRESHOLD
 global MIN_STEP
 global BACKFILL_OPTS
+global KDE_MODEL_2GHZ
 
 CABS_DIR = "/home/y02/shared/power"
 PLOT_DIR = "/work/y02/y02/awilkins/archer2_jobdata/plots"
@@ -24,5 +25,5 @@ MIN_STEP = timedelta(seconds=10)
 
 BACKFILL_OPTS = { "min_block_width" : timedelta(minutes=10), "max_job_test" : 1000 }
 
-KDE_MODEL_2 = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
+KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 

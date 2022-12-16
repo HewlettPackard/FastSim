@@ -1,4 +1,5 @@
 import argparse, os, joblib, sys
+from collections import OrderedDict
 import dill as pickle
 from datetime import timedelta
 
@@ -77,7 +78,6 @@ class AgeSizeSorter():
         else:
             self.noise_factor_calc = lambda job: 0
 
-
     def sort(self, queue, time):
         sorted_queue = sorted(
             queue,
@@ -96,7 +96,35 @@ class AgeSizeSorter():
 """ Low Freq Response Calcs """
 
 class AppGroupMeanResponses():
-    pass
+    def __init__(self, group_weight_mean_power_time_factor):
+        self.group_interval_factors = OrderedDict()
+        low = 0
+        for weight, factors in group_weight_mean_power_time_factor.items():
+            self.group_interval_factors[(low, low + weight)] = factors
+            low = low + weight
+        if low > 1.0:
+            raise ValueError("Weights do not sum to {} (should be 1)".format(low))
+
+    def get_factors(self):
+        random_num = np.random.rand()
+        for interval in self.group_interval_factors.keys():
+            if random_num >= interval[0] and random_num < interval[1]:
+                break
+
+        return self.group_interval_factors[interval]
+
+
+class KDEResponses():
+    def __init__(self, model_loc, minmax_time_factor=(1, None), minmax_power_factor=(None, 1)):
+        self.kde = joblib.load(model_loc)
+        self.minmax_time_factor = minmax_time_factor
+        self.minmax_power_factor = minmax_power_factor
+
+    def get_factors(self):
+        power_factor, time_factor = self.kde.sample(1)[0]
+        power_factor = np.clip(power_factor, *self.minmax_power_factor)
+        time_factor = np.clip(time_factor, *self.minmax_time_factor)
+        return power_factor, time_factor
 
 """ End Low Freq Response Calcs"""
 
@@ -205,7 +233,21 @@ def main(args):
                 )
 
         elif args.test_frequencies:
-            kde = joblib.load(KDE_MODEL_2)
+            if args.low_freq_response_calc == "app_means":
+                # 2GHz responses
+                low_freq_calc = AppGroupMeanResponses(
+                    {
+                        0.25 : (0.808709, 1.178027), 0.25 : (0.763424, 1.049210),
+                        0.25 : (0.860554, 1.013500), 0.25 : (0.785378, 1.012437)
+                    }
+                )
+                low_freq_reqtime_factor = 1.125 # 2.25 / 2
+            elif args.low_freq_response_calc == "kde":
+                low_freq_calc = KDEResponses(
+                    KDE_MODEL_2GHZ, minmax_time_factor=(1, 1.5), minmax_power_factor=(0.5, 1)
+                )
+                low_freq_reqtime_factor = 1.125 # 2.25 / 2
+
             archer = {}
             size_weight, noise_params = 2.25, None
             small_queue_cuts = [0, 10, 50,  100, 500, 1000, float("inf")]
@@ -222,7 +264,8 @@ def main(args):
                         t0, baseline_power=BASELINE_POWER, slurmtocab_factor=SLURMTOCAB_FACTOR,
                         node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
                         low_freq_condition=lambda queue: len(queue.queue) < small_queue_cut,
-                        low_freq_kde=kde, max_time_factor=1.2
+                        low_freq_calc=low_freq_calc,
+                        low_freq_reqtime_factor=low_freq_reqtime_factor
                     ),
                     t0, AgeSizeSorter(True, size_weight, noise_params=noise_params), seed=0,
                     verbose=args.verbose, min_step=MIN_STEP
@@ -344,6 +387,10 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--low_freq_response_calc", type=str, default="app_means", help="(kde|app_means)"
+    )
+
+    parser.add_argument(
         "--use_power_preds", type=str, default="",
         help="Use PowerPerNode from a trained model"
     )
@@ -375,6 +422,7 @@ def parse_arguments():
 
     if args.rows and args.cache == "load":
         print("Note: rows cannot be set if loading data from cache")
+
 
     return args
 
