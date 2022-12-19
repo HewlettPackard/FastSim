@@ -200,22 +200,26 @@ class Archer2():
         low_freqs = self.low_freq_condition(queue)
         for job in list(queue.queue):
             if self.has_space(job):
+                job_ready = queue.queue.pop(0)
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
-                    queue.queue[0].runtime *= time_factor
-                    queue.queue[0].true_node_power *= power_factor
-                self.submit(queue.queue.pop(0).start_job(self.time))
+                    job_ready.runtime *= time_factor
+                    job_ready.reqtime *= self.low_freq_reqtime_factor
+                    job_ready.true_node_power *= power_factor
+                self.submit(job_ready.start_job(self.time))
             else:
                 break
 
         if queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
             for i in sorted(backfill_now, reverse=True):
+                job_ready = queue.queue.pop(i)
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
-                    queue.queue[i].runtime *= max(time_factor, 1)
-                    queue.queue[i].true_node_power *= min(power_factor, 1)
-                if not self.submit(queue.queue.pop(i).start_job(self.time)):
+                    job_ready.runtime *= time_factor
+                    job_ready.reqtime *= self.low_freq_reqtime_factor
+                    job_ready.true_node_power *= power_factor
+                if not self.submit(job_ready.start_job(self.time)):
                     print(self.available_nodes(), i, backfill_now)
 
         self.queue_size = len(queue.queue)

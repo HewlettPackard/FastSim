@@ -169,16 +169,15 @@ def main(args):
             print("Running sim for scheduler using job start times from data...")
             archer = run_sim(
                 df_jobs,
-                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
-                t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
-                no_retained=True
+                Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0, DataStartSorter(),
+                seed=0, verbose=args.verbose, min_step=MIN_STEP, no_retained=True
             )
 
         elif args.scan_job_size_weights or args.scan_job_size_weights_noise:
             archer = {}
             # size_weights = [0.01, 0.05, 0.1, 0.5, 1]
             # size_weights = [2, 2.25, 2.5, 3]
-            size_weights = [2.25]
+            size_weights = [2.0, 2.25, 2.5, 3.0]
             if args.scan_job_size_weights_noise:
                 noise_params_lst = [
                     { "mu" : 0.5, "sigma" : 0.5, "weight" : weight } for weight in (
@@ -203,9 +202,8 @@ def main(args):
                     )
             print("Running sim for scheduler using job start times from data...")
             archer[-1] = run_sim(
-                df_jobs,
-                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
-                t0, DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                df_jobs, Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0,
+                DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
             )
             if args.scan_job_size_weights:
@@ -246,7 +244,8 @@ def main(args):
                 low_freq_reqtime_factor = 1.5 # 2.25 / 1.5
 
             archer = {}
-            size_weight, noise_params = 2.25, None
+            # 2.25, None best for NODEDOWN_MEAN=0 2.5, None best for NODEDOWN_MEAN=100
+            size_weight, noise_params = 2.5, None
             small_queue_cuts = [0, 10, 50, 100, 200, 300, 400, 500, 1000, float("inf")]
             for small_queue_cut in small_queue_cuts:
                 print(
@@ -259,7 +258,7 @@ def main(args):
                     df_jobs,
                     Archer2(
                         t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
-                        low_freq_condition=lambda queue: len(queue.queue) < small_queue_cut,
+                        low_freq_condition=lambda queue: len(queue.queue) <= small_queue_cut,
                         low_freq_calc=low_freq_calc,
                         low_freq_reqtime_factor=low_freq_reqtime_factor
                     ),
@@ -303,11 +302,11 @@ def main(args):
         args.scan_job_size_weights_noise or args.test_frequencies
     ):
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
-        for interval, archer_entry in archer.items():
-            archer_times[interval] = archer_entry.times
-            start[interval], end[interval] = archer_entry.times[0], archer_entry.times[-1]
-            times[interval] = pd.DatetimeIndex(archer_times[interval])
-            dates[interval] = matplotlib.dates.date2num(times[interval])
+        for key, archer_entry in archer.items():
+            archer_times[key] = archer_entry.times
+            start[key], end[key] = archer_entry.times[0], archer_entry.times[-1]
+            times[key] = pd.DatetimeIndex(archer_times[key])
+            dates[key] = matplotlib.dates.date2num(times[key])
     else:
         archer_times = archer.times
         start, end = archer_times[0], archer_times[-1]

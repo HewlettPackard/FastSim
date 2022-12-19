@@ -50,12 +50,57 @@ def interval_shade(ax, start, end, interval):
         )
 
 
+def small_queue_shade(ax, queue_history, times, small_queue_cut):
+    small_queue_locs = np.array(queue_history) < small_queue_cut
+    at_small_queue = small_queue_locs[0]
+    small_queue_start, small_queue_end = times[0] if at_small_queue else None, None
+    first_low, first_high = True, True
+    for tick, at_small_queue in enumerate(small_queue_locs):
+        if small_queue_start and at_small_queue:
+            continue
+
+        if small_queue_start and not at_small_queue:
+            small_queue_end = times[tick - 1]
+            ax.axvspan(
+                matplotlib.dates.date2num(small_queue_start),
+                matplotlib.dates.date2num(small_queue_end),
+                label="low frequency" if first_low else "_", color="lightgray", alpha=0.3
+            )
+            first_low = False
+            small_queue_start = None
+            continue
+
+        if not small_queue_start and not at_small_queue:
+            continue
+
+        if not small_queue_start and at_small_queue:
+            small_queue_start = times[tick]
+            ax.axvspan(
+                matplotlib.dates.date2num(small_queue_end),
+                matplotlib.dates.date2num(small_queue_start),
+                label="low frequency" if first_high else "_", color="gray", alpha=0.3
+            )
+            first_high = False
+            small_queue_end = None
+
+
 # Treating slurm to cab as a scaling factor + baseline power of any nodes without jobs runnning
 # and so not reported by slurm
 def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
     baseline_power = 1.692
     full_slurm_to_cab = 1.185
     return slurm_power * full_slurm_to_cab + (1 - occupancy) * baseline_power
+
+
+def get_idle_node_energy(occupancies, times):
+    baseline_power = 1.692 * 1e-3 # GW
+
+    idle_energy = 0
+    t_deltas = np.diff(times)
+    for tick, occupancy in enumerate(occupancies[:-1]):
+        idle_energy += (1 - occupancy) * baseline_power  * t_deltas[tick].total_seconds()
+
+    return idle_energy
 
 
 def bdslowdowns_allocnodes_hist2d(
@@ -620,7 +665,7 @@ def plot_blob(
             err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
         ]
         bd_slowdowns.sort()
-        # print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
+        print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
 
         ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
         ax.set_xticks(x)
@@ -653,8 +698,10 @@ def plot_blob(
         else:
             plt.show()
 
+        weight_to_compare = 2.25
         fig, ax = bdslowdowns_allocnodes_hist2d(
-            archer[-1], archer[1], "Age and Priority Small (size weight 1)"
+            archer[-1], archer[weight_to_compare],
+            "Age and Priority Small (size weight {})".format(weight_to_compare)
         )
         fig.savefig(os.path.join(
             PLOT_DIR,
@@ -738,13 +785,24 @@ def plot_blob(
             plt.show()
 
     if "test_frequencies" in plots:
+        total_energy_nolowfreq = (
+            archer[-1].total_energy +
+            get_idle_node_energy(archer[-1].occupancy_history, archer[-1].times)
+        )
         for queue_cut, archer_entry in archer.items():
             power = [
                 slurm_to_cab(power, archer_entry.occupancy_history[tick]) for tick, power in (
                     enumerate(archer_entry.power_history)
                 )
             ]
-            print(queue_cut, np.mean(archer_entry.bd_slowdowns), np.mean(power))
+            total_energy = (
+                archer_entry.total_energy +
+                get_idle_node_energy(archer_entry.occupancy_history, archer_entry.times)
+            )
+            print(
+                queue_cut, np.mean(archer_entry.bd_slowdowns), np.mean(power), total_energy,
+                total_energy / total_energy_nolowfreq * 100, sep=" | "
+            )
 
             fig = plt.figure(1, figsize=(12, 8))
             ax = fig.add_axes((.1, .3, .8, .6))
@@ -752,56 +810,140 @@ def plot_blob(
                 dates[queue_cut], power, 'g', label="cab power (converted from slurm)",
                 linewidth=0.6
             )
+            # small_queue_shade(ax, archer_entry.queue_size_history, archer_entry.times, queue_cut)
             ax.set_ylabel("Power (MW)")
             ax.set_xticklabels([])
             ax.set_title("Power Usage with {} Queue Cut for Low Frequency Jobs".format(queue_cut))
+            plt.legend()
             ax2 = fig.add_axes((.1, .1, .8, .2))
             ax2.plot_date(
                 dates[queue_cut], archer_entry.queue_size_history, 'k', label="queue size",
                 linewidth=0.6
             )
             ax2.axhline(queue_cut, c='r', linewidth=0.5)
+            plt.legend()
             fig.tight_layout()
-            plt.show()
+            save_queue_cuts = [200]
+            if queue_cut in save_queue_cuts:
+                fig.savefig(os.path.join(
+                    PLOT_DIR,
+                    (
+                        "toyscheduler_priority_small_and_age_lowfreq_" +
+                        "queuecut{}_power_queue{}.pdf".format(queue_cut, save_suffix)
+                    )
+                ))
+            if batch:
+                plt.close()
+            else:
+                plt.close()
+                # plt.show()
 
-        # TODO Rather than mean power use show total energy usage as a fraction of the -1 option
-        # (all running at 2.25GHz) as lower frequencies may mean system takes longer to pass
-        # through workload
-        # TODO plot bd slowdowns with errors on bar chart
-        # x = np.arange(0, len(archer) + 1)
-        # x_labels, bd_slowdowns, bd_slowdowns_err = [], [], []
-        # for size_noise_weight, archer_entry in archer.items():
-        #     if size_noise_weight == -1:
-        #         x_labels.append("true data")
-        #     else:
-        #         x_labels.append(size_noise_weight)
-        #     bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns[1000:-1000]))
-        #     bd_slowdowns_err.append(np.std(archer_entry.bd_slowdowns[1000:-1000]))
-        # x_labels.append("fifo")
-        # bd_slowdowns.append(np.mean(archer_fcfs.bd_slowdowns[1000:-1000]))
-        # bd_slowdowns_err.append(np.std(archer_fcfs.bd_slowdowns[1000:-1000]))
-        # x_labels = [
-        #     label for label, _ in sorted(zip(x_labels, bd_slowdowns), key=lambda pair: pair[1])
-        # ]
-        # bd_slowdowns_err = [
-        #     err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
-        # ]
-        # bd_slowdowns.sort()
-        # print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+        x = np.arange(0, len(archer))
+        x_labels, bd_slowdowns, bd_slowdowns_err = [], [], []
+        for small_queue_cut, archer_entry in archer.items():
+            if small_queue_cut == -1:
+                x_labels.append("no low freq")
+            else:
+                x_labels.append(str(small_queue_cut))
+            bd_slowdowns.append(np.mean(archer_entry.bd_slowdowns))
+            bd_slowdowns_err.append(np.std(archer_entry.bd_slowdowns))
+        x_labels = [
+            label for label, _ in sorted(zip(x_labels, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns_err = [
+            err for err, _ in sorted(zip(bd_slowdowns_err, bd_slowdowns), key=lambda pair: pair[1])
+        ]
+        bd_slowdowns.sort()
+        print(x_labels, bd_slowdowns, bd_slowdowns_err, sep='\n')
 
-        # ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
-        # ax.set_xticks(x)
-        # ax.set_xticklabels(x_labels)
-        # ax.grid(axis="y")
-        # ax.set_ylabel("Mean bounded slowdown")
-        # fig.tight_layout()
-        # fig.savefig(os.path.join(
-        #     PLOT_DIR,
-        #     "toyscheduler_priority_small_and_age_noise_bdslowdowns_scan{}.pdf".format(save_suffix)
-        # ))
-        # if batch:
-        #     plt.close()
-        # else:
-        #     plt.show()
+        ax.bar(x, bd_slowdowns, yerr=bd_slowdowns_err)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels)
+        ax.grid(axis="y")
+        ax.set_ylabel("Mean bounded slowdown")
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_lowfreq_queuecut_bdslowdowns{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.close()
+            # plt.show()
 
+        # Consider 95th quantile start instead of max
+        baseline_energy = total_energy_nolowfreq
+        baseline_avg_slowdown = np.mean(archer[-1].bd_slowdowns)
+        wait_times = [
+            (job.start - job.submit).total_seconds() for job in archer[-1].job_history if (
+                job.submit >= start[-1]
+            )
+        ]
+        baseline_avg_wait, baseline_max_wait = np.mean(wait_times), max(wait_times)
+
+        spider_plot_data = {}
+        for queue_cut in [0, 100, 200, float("inf")]:
+            archer_entry = archer[queue_cut]
+            energy = (
+                (
+                    archer_entry.total_energy +
+                    get_idle_node_energy(archer_entry.occupancy_history, archer_entry.times)
+                ) /
+                baseline_energy
+            )
+            avg_slowdown = np.mean(archer_entry.bd_slowdowns) / baseline_avg_slowdown
+            wait_times = [
+                (job.start - job.submit).total_seconds() for job in archer_entry.job_history if (
+                    job.submit >= start[queue_cut]
+                )
+            ]
+            avg_wait = np.mean(wait_times) / baseline_avg_wait
+            max_wait = max(wait_times) / baseline_max_wait
+
+            spider_plot_data[queue_cut] = {
+                "energy" : energy, "avg_wait" : avg_wait, "max_wait" : max_wait,
+                "avg_slowdown" : avg_slowdown
+            }
+
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, polar=True)
+
+        categories = ["energy", "avg_slowdown", "avg_wait", "max_wait"]
+        angles = [ i / float(4) * 2 * np.pi for i in range(4) ]
+        angles += angles[:1]
+
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        plt.xticks(angles[:-1], [ "1/{}".format(category) for category in categories ])
+        ax.set_rlabel_position(0)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=7)
+        plt.ylim(0.7,1.3)
+
+        for queue_cut, perf_data in spider_plot_data.items():
+            vals = [ 1 / perf_data[metric] for metric in categories ]
+            vals += vals[:1]
+            colour = next(ax._get_lines.prop_cycler)["color"]
+            ax.plot(angles, vals, linewidth=1, linestyle='solid', c=colour, label=str(queue_cut))
+
+        ax.plot(
+            angles, [1] * len(angles), linewidth=2, linestyle='solid', c='k', label="no low freq"
+
+        )
+        plt.legend(loc='upper right', bbox_to_anchor=(0.1, 0.15))
+        plt.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            # plt.show()
+            plt.close()
 
