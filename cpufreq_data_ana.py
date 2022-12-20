@@ -125,7 +125,7 @@ if False:
 # Makeing KDEs
 x, y = cpuresponse_2_data[:, 0], cpuresponse_2_data[:, 1]
 # xx, yy, = np.mgrid[1.0:1.3:500j, 0.65:1.0:500j]
-xx, yy, = np.mgrid[0.8:1.8:500j, 0.4:1.2:500j]
+xx, yy, = np.mgrid[0.8:1.8:300j, 0.4:1.2:300j]
 xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
 xy_train = np.vstack([y, x]).T
 
@@ -139,13 +139,22 @@ zz = np.reshape(z, xx.shape)
 
 plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-5, zz))
 plt.scatter(x, y, s=1, facecolor='white')
+plt.plot([0.8, 1.8], [1 / 0.8, 1 / 1.8], c='r')
+# plt.plot([1.0, 1.0], [0.4, 1.2], c='k')
+# plt.plot([0.8, 1.8], [1.0, 1.0], c='k')
+plt.xlim(left=0.8, right=1.8)
+plt.ylim(bottom=0.4, top=1.2)
+plt.annotate("Constant Energy", c='r', xy=(1.4, 0.90))
+plt.xlabel("Runtime_2GHz / Runtime_2.25GHz", fontsize=10)
+plt.ylabel("Power_2GHz / Power_2.25GHz", fontsize=10)
+plt.title("Application Response at 2GHz", fontsize=14)
 plt.savefig(os.path.join(PLOT_DIR, "2Ghz_response_kde.pdf"))
 plt.show()
 
 joblib.dump(kde, os.path.join(MODELS_DIR, "cpufreq2ghz_kde.joblib"))
 
 x, y = cpuresponse_15_data[:, 0], cpuresponse_15_data[:, 1]
-xx, yy, = np.mgrid[0.8:1.8:500j, 0.4:1.2:500j]
+xx, yy, = np.mgrid[0.8:1.8:300j, 0.4:1.2:300j]
 xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
 xy_train = np.vstack([y, x]).T
 
@@ -159,6 +168,15 @@ zz = np.reshape(z, xx.shape)
 
 plt.pcolormesh(xx, yy, np.ma.masked_where(zz < 1e-5, zz))
 plt.scatter(x, y, s=1, facecolor='white')
+plt.plot([0.8, 1.8], [1 / 0.8, 1 / 1.8], c='r')
+# plt.plot([1.0, 1.0], [0.4, 1.2], c='k')
+# plt.plot([0.8, 1.8], [1.0, 1.0], c='k')
+plt.xlim(left=0.8, right=1.8)
+plt.ylim(bottom=0.4, top=1.2)
+plt.annotate("Constant Energy", c='r', xy=(1.25, 0.95))
+plt.xlabel("Runtime_1.5GHz / Runtime_2.25GHz", fontsize=10)
+plt.ylabel("Power_1.5GHz / Power_2.25GHz", fontsize=10)
+plt.title("Application Response at 1.5GHz", fontsize=14)
 plt.savefig(os.path.join(PLOT_DIR, "1_5Ghz_response_kde.pdf"))
 plt.show()
 
