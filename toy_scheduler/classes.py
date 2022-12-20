@@ -197,7 +197,7 @@ class Archer2():
         return backfill_now
 
     def submit_jobs(self, queue : Queue):
-        low_freqs = self.low_freq_condition(queue)
+        low_freqs = self.low_freq_condition(self.queue_size)
         for job in list(queue.queue):
             if self.has_space(job):
                 job_ready = queue.queue.pop(0)

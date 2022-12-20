@@ -128,6 +128,20 @@ class KDEResponses():
 
 """ End Low Freq Response Calcs"""
 
+""" Low Freq Conditions """
+
+# class SmallQueue():
+#     def __init__(self, queue_cut):
+#         self.queue_cut = queue_cut
+#         self.queue_size = 0
+
+#     def __call__(self, queue):
+#         small_queue = self.queue_size <= self.queue_cut
+#         self.queue_size = len(queue.queue)
+#         return small_queue
+
+""" End Low Freq Conditions """
+
 
 def main(args):
     df_jobs = prep_job_data(
@@ -250,7 +264,7 @@ def main(args):
             for small_queue_cut in small_queue_cuts:
                 print(
                     "Running sim for scheduler with age and priority small job size with size" +
-                    "weight {} and noise params {}. Setting jobs to 2GHz when quene < {}".format(
+                    "weight {} and noise params {}. Setting jobs to 2GHz when quene <= {}".format(
                         size_weight, noise_params, small_queue_cut
                     )
                 )
@@ -258,7 +272,7 @@ def main(args):
                     df_jobs,
                     Archer2(
                         t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS,
-                        low_freq_condition=lambda queue: len(queue.queue) <= small_queue_cut,
+                        low_freq_condition=lambda queue_size: queue_size <= small_queue_cut,
                         low_freq_calc=low_freq_calc,
                         low_freq_reqtime_factor=low_freq_reqtime_factor
                     ),

@@ -872,8 +872,8 @@ def plot_blob(
         if batch:
             plt.close()
         else:
-            plt.close()
             # plt.show()
+            plt.close()
 
         # Consider 95th quantile start instead of max
         baseline_energy = total_energy_nolowfreq
@@ -884,6 +884,12 @@ def plot_blob(
             )
         ]
         baseline_avg_wait, baseline_max_wait = np.mean(wait_times), max(wait_times)
+        responses = [
+            (job.end - job.submit).total_seconds() for job in archer[-1].job_history if (
+                job.submit >= start[-1]
+            )
+        ]
+        baseline_avg_response = np.mean(responses)
 
         spider_plot_data = {}
         for queue_cut in [0, 100, 200, float("inf")]:
@@ -903,24 +909,30 @@ def plot_blob(
             ]
             avg_wait = np.mean(wait_times) / baseline_avg_wait
             max_wait = max(wait_times) / baseline_max_wait
+            responses = [
+                (job.end - job.submit).total_seconds() for job in archer_entry.job_history if (
+                    job.submit >= start[-1]
+                )
+            ]
+            avg_response = np.mean(responses) / baseline_avg_response
 
             spider_plot_data[queue_cut] = {
                 "energy" : energy, "avg_wait" : avg_wait, "max_wait" : max_wait,
-                "avg_slowdown" : avg_slowdown
+                "avg_slowdown" : avg_slowdown, "avg_response" : avg_response
             }
 
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, polar=True)
 
-        categories = ["energy", "avg_slowdown", "avg_wait", "max_wait"]
-        angles = [ i / float(4) * 2 * np.pi for i in range(4) ]
+        categories = ["energy", "avg_slowdown", "avg_wait", "max_wait", "avg_response"]
+        angles = [ i / float(len(categories)) * 2 * np.pi for i in range(len(categories)) ]
         angles += angles[:1]
 
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
-        plt.xticks(angles[:-1], [ "1/{}".format(category) for category in categories ])
+        plt.xticks(angles[:-1], [ "1/{}".format(category) for category in categories ], size=12)
         ax.set_rlabel_position(0)
-        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=7)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=10)
         plt.ylim(0.7,1.3)
 
         for queue_cut, perf_data in spider_plot_data.items():
@@ -944,6 +956,5 @@ def plot_blob(
         if batch:
             plt.close()
         else:
-            # plt.show()
-            plt.close()
+            plt.show()
 
