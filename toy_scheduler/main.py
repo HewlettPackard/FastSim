@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.dates
 
 from classes import Archer2
+from fairshare import FairTree
 from simulation_funcs import prep_job_data, run_sim
 from plotting import plot_blob
 from globals import * # TODO: dont do this
@@ -90,6 +91,43 @@ class AgeSizeSorter():
             reverse=True
         )
         return sorted_queue
+
+class MFPrioritySorter():
+    def __init__(
+        self, assoc_file, calc_period, decay_halflife, simulation_length, init_time, size_weight,
+        age_weight, fairshare_weight, max_age
+    ):
+        self.size_weight = size_weight
+        self.age_weight = age_weight
+        self.fairshare_weight = fairshare_weight
+        self.max_age = max_age
+
+        self.fairtree = FairTree(
+            assoc_file, calc_period, decay_halflife, simulation_length, init_time
+        )
+
+    def sort(self, queue, time):
+        sorted_queue = sorted(
+            queue,
+            key=(
+                lambda job: (
+                    (
+                        min((time - job.submit).total_seconds() / self.max_age.total_seconds(), 1)
+                        * self.age_weight
+                    ) +
+                    (
+                        (job.nodes / 5860) * self.size_weight
+                    ) +
+                    (
+                        self.fairtree.uniq_users[job.account][job.user].fairshare_factor
+                        * self.fairshare_weight
+                    )
+                )
+            ),
+            reverse=True
+        )
+        return sorted_queue
+
 
 """ End Priority Sorters """
 
@@ -290,6 +328,20 @@ def main(args):
                 verbose=args.verbose, min_step=MIN_STEP
             )
 
+        elif args.test_mf_priority:
+            archer = {}
+            # ARCHER2 defaults
+            archer[0] = run_sim(
+                df_jobs,
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
+                t0,
+                MFPrioritySorter(
+                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), df_jobs.End.max() - t0,
+                    t0, 100, 500, 300, timedelta(days=14)
+                ),
+                verbose=args.verbose, min_step=0, mf_priority_calc_step=True, no_retained=True
+            )
+
         else:
             print("Running sim for scheduler low-high_power...")
             archer = run_sim(
@@ -384,6 +436,10 @@ def parse_arguments():
     scheduler_group.add_argument(
         "--test_frequencies", action="store_true",
         help="Test setting lower job cpu frequency at different times"
+    )
+    scheduler_group.add_argument(
+        "--test_mf_priority", action="store_true",
+        help="Test of the mf priority implementation (mainly testing that fairshare is working)"
     )
 
     parser.add_argument(

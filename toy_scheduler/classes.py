@@ -9,7 +9,7 @@ from globals import *
 class Job():
     def __init__(
         self, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
-        true_node_power, true_job_start
+        true_node_power, true_job_start, user, account
     ):
         self.nodes = nodes
         self.runtime = runtime
@@ -18,6 +18,8 @@ class Job():
         self.true_node_power = true_node_power
         self.submit = submit
         self.true_job_start = true_job_start
+        self.user = user
+        self.account = account
 
         self.start = None
         self.end = None
@@ -37,7 +39,8 @@ class Queue():
         self.all_jobs = [
             Job(
                 job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
-                job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start
+                job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start, job_row.User,
+                job_row.Account
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self.queue = []

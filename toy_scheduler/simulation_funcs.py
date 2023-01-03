@@ -38,7 +38,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         data, cache, ".".join(os.path.basename(data).split(".")[:-1]), df_name,
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
-            "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"
+            "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account"
         ],
         nrows=rows
     )
@@ -62,12 +62,18 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
     df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"], axis=1)
 
+    # Some error in slurm accounting, can correct for case of one other user in account
+    for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
+        acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
+        if len(acc_users) == 2:
+            df_jobs.at[i, "User"] = acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
+
     return df_jobs
 
 
 def run_sim(
     df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10),
-    no_retained=False
+    no_retained=False, mf_priority_calc_step=False
 ):
     queue = Queue(df_jobs, t0, priority_sorter)
 
@@ -90,9 +96,15 @@ def run_sim(
                 t_step = system.next_event() - time
             else:
                 t_step = queue.next_newjob() - time
-        # Enforce minimum step to reduce simulation time
-        if t_step < min_step:
-            t_step = min_step
+        # # Enforce minimum step to reduce simulation time NOTE Isnt the max above already doing this?
+        # if t_step < min_step:
+        #     t_step = min_step
+        if mf_priority_calc_step:
+            next_calc = priority_sorter.fairtree.next_calc() - time < t_step
+            if next_calc < t_step:
+                t_step = next_calc
+                priority_sorter.fairshare_calc(self, queue, time + t_step)
+
         time += t_step
 
         system.step(t_step)
