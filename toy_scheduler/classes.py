@@ -252,10 +252,11 @@ class Archer2():
             self.running_jobs.sort(key=lambda job: job.end)
             self.sorted = True
 
+        finished_jobs = []
         while self.running_jobs and self.running_jobs[0].end <= self.time:
-            job = self.running_jobs.pop(0)
-            self.nodes_free += job.nodes
-            self.power_usage -= job.true_node_power * job.nodes / 1e+6
+            finished_jobs.append(self.running_jobs.pop(0))
+            self.nodes_free += finished_jobs[-1].nodes
+            self.power_usage -= finished_jobs[-1].true_node_power * finished_jobs[-1].nodes / 1e+6
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
@@ -279,3 +280,5 @@ class Archer2():
         self.power_history.append(self.power_usage)
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)
+
+        return finished_jobs # Need this for fair share usage accounting

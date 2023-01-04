@@ -4,13 +4,12 @@ import pandas as pd
 import numpy as np
 
 # TODO define a base class and make this neater, _ infront of add_parent to indicate private
-# NOTE if decay multiplcation operations are slow, could put all usages in a 2d array then give each class an index to their row
 
 
 class Root():
-    def __init__(self, initial_usages, name="root"):
+    def __init__(self, initial_usage, name="root"):
         self.name = name
-        self.usages = initial_usages
+        self.usage = initial_usage
 
         self.children = []
 
@@ -21,13 +20,6 @@ class Root():
         self.children.append(child)
         child.add_parent(self)
 
-    def update_usage(self, usage):
-        self.usages[0] += usage
-
-    def next_time_period(self):
-        self.usage.pop(0)
-        self.usage.appendleft(0)
-
     def __str__(self):
         ret = "root\n"
         for child in self.children:
@@ -37,11 +29,12 @@ class Root():
 
 # NOTE children can be projects or accounts
 class Partition():
-    def __init__(self, name, shares, initial_usages):
+    def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
-        self.norm_shares = shares
-        self.usages = initial_usages
+        self.usage = initial_usage
+
+        self.new_child_usage = False
 
         self.children = []
         self.parent = None
@@ -49,7 +42,7 @@ class Partition():
         self.is_root = False
         self.is_leaf = False
 
-        self.levelfs = 0.0
+        self.levelfs = np.inf
 
     def add_parent(self, parent):
         if self.parent:
@@ -59,13 +52,6 @@ class Partition():
     def add_child(self, child):
         self.children.append(child)
         child.add_parent(self)
-
-    def update_usage(self, usage):
-        self.usages[0] += usage
-
-    def next_time_period(self):
-        self.usage.pop(0)
-        self.usage.appendleft(0)
 
     def __str__(self, level=0):
         ret = "\t"*level + self.name + "\n"
@@ -76,11 +62,12 @@ class Partition():
 
 # There can be any number of project levels including 0
 class Project():
-    def __init__(self, name, shares, initial_usages):
+    def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
-        self.norm_shares = shares
-        self.usages = initial_usages
+        self.usage = initial_usage
+
+        self.new_child_usage = False
 
         self.children = []
         self.parent = None
@@ -88,7 +75,7 @@ class Project():
         self.is_root = False
         self.is_leaf = False
 
-        self.levelfs = 0.0
+        self.levelfs = np.inf
 
     def add_parent(self, parent):
         if self.parent:
@@ -98,13 +85,6 @@ class Project():
     def add_child(self, child):
         self.children.append(child)
         child.add_parent(self)
-
-    def update_usage(self, usage):
-        self.usages[0] += usage
-
-    def next_time_period(self):
-        self.usage.pop(0)
-        self.usage.appendleft(0)
 
     def __str__(self, level=0):
         ret = "\t"*level + self.name + "\n"
@@ -117,11 +97,12 @@ class Project():
 # (which may belong to multiple accounts). This account and user will have there usages updated
 # then the usage will be propagated up the tree.
 class Account():
-    def __init__(self, name, shares, initial_usages):
+    def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
-        self.norm_shares = shares
-        self.usages = initial_usages
+        self.usage = initial_usage
+
+        self.new_child_usage = False
 
         self.children = []
         self.parent = None
@@ -129,7 +110,7 @@ class Account():
         self.is_root = False
         self.is_leaf = False
 
-        self.levelfs = 0.0
+        self.levelfs = np.inf
 
     def add_parent(self, parent):
         if self.parent:
@@ -140,13 +121,6 @@ class Account():
         self.children.append(child)
         child.add_parent(self)
 
-    def update_usage(self, usage):
-        self.usages[0] += usage
-
-    def next_time_period(self):
-        self.usage.pop(0)
-        self.usage.appendleft(0)
-
     def __str__(self, level=0):
         ret = "\t"*level + self.name + "\n"
         for child in self.children:
@@ -156,31 +130,23 @@ class Account():
 
 # Users with the same name may coexist under different accounts
 class User():
-    def __init__(self, name, shares, initial_usages):
+    def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
-        self.norm_shares = shares
-        self.usages = initial_usages
+        self.usage = initial_usage
 
         self.parent = None
 
         self.is_root = False
         self.is_leaf = True
 
-        self.levelfs = 0.0
+        self.levelfs = np.inf
         self.fairshare_factor = 1.0
 
     def add_parent(self, parent):
         if self.parent:
             raise ValueError("Already assigned a parent!")
         self.parent = parent
-
-    def update_usage(self, usage):
-        self.usages[0] += usage
-
-    def next_time_period(self):
-        self.usage.pop(0)
-        self.usage.appendleft(0)
 
     def __str__(self, level=0):
         ret = "\t"*level + self.name + "\n"
@@ -191,13 +157,15 @@ class FairTree():
     def __init__(self, assoc_file, calc_period, decay_halflife, simulation_length, init_time):
         self.last_calc_time = init_time
         self.calc_period = calc_period
-        self.decay_constant = (1 - np.log(1/2) / decay_halflife) ** calc_period.total_seconds() # decay constant for 1 second applied for the duration of a calc interval
+        # decay constant for 1 second applied for the duration of a calc interval
+        self.decay_constant = (
+            (1 - np.log(1/2) / decay_halflife.total_seconds()) ** calc_period.total_seconds()
+        )
 
         self.current_period_num = 0
 
-        num_usage_periods = int(simulation_length / calc_period) + 1
-        self.root_node = self._load_tree_slurm(assoc_file, num_usage_periods)
-        self.levels = [[self.root_node]] # NOTE What am I doing with levels?
+        self.root_node = self._load_tree_slurm(assoc_file)
+        self.levels = [[self.root_node]] # NOTE Don't think I actually need this
 
         current_level = 0
         while(len(self.levels) > current_level):
@@ -209,9 +177,6 @@ class FairTree():
                     all_level_children.append(child_node)
 
             if all_level_children:
-                tot_level_shares = sum([ child.shares for child in all_level_children ])
-                for child_node in all_level_children:
-                    child_node.norm_shares /= tot_level_shares
                 self.levels.append(all_level_children)
 
             current_level += 1
@@ -239,82 +204,107 @@ class FairTree():
     # (not bothering with ties since they should be extremely rare except for account that submit
     # one job in a blue moon in which case who cares)
     # TODO Some kind of flag to avoid recomputing levelfs and re-sorting sequences that have not changed
-    def fairshare_calc(self, queue, time):
+    def fairshare_calc(self, running_jobs, time):
         # Collect usages from running jobs
-        for job in queue.queue:
+        for job in running_jobs:
             node = self.uniq_users[job.account][job.user]
             usage = job.nodes * (time - max(self.last_calc_time, job.start)).total_seconds() # TODO node->cpu seconds
             self._update_usages(node, usage)
 
-        self.current_time_period += 1
-        self.last_calc_time += self.calc_period
+        self.current_period_num += 1
+        self.last_calc_time = time
 
         # Compute levelFS and sort (decay past usages as we go)
-        # TODO do a clever loop thing
-        rank = 0
-        for partition_node in self.root_node.children:
-            partition_node.usage[:self.current_time_period] *= self.decay_constant
-            partition_node.levelfs = partition_node.norm_shares / partition_node.usages.sum() # NOTE realise I can just use raw shares here
-        self.root_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+        self._tree_traversal(self.root_node)
 
-        for partition_node in self.root_node.children:
-            for proj_node in partition_node.children:
-                proj_node.usage[:self.current_time_period] *= self.decay_constant
-                proj_node.levelfs = proj_node.norm_shares / proj_node.usages.sum()
-            partition_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+        # rank = 0
+        # for partition_node in self.root_node.children:
+        #     partition_node.usage *= self.decay_constant
+        #     partition_node.levelfs = partition_node.shares / partition_node.usage
+        # self.root_node.children.sort(key=lambda node: node.levelfs, reverse=True)
 
-            for proj_node in partition_node.children:
-                for acc_node in proj_node.children:
-                    acc_node.usage[:self.current_time_period] *= self.decay_constant
-                    acc_node.levelfs = acc_node.norm_shares / acc_node.usages.sum()
-                proj_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+        # for partition_node in self.root_node.children:
+        #     for proj_node in partition_node.children:
+        #         proj_node.usage *= self.decay_constant
+        #         proj_node.levelfs = proj_node.shares / proj_node.usage
+        #     partition_node.children.sort(key=lambda node: node.levelfs, reverse=True)
 
-                for acc_node in proj_node.children:
-                    for user_node in acc_node.children:
-                        user_node.usage[:self.current_time_period] *= self.decay_constant
-                        user_node.levelfs = user_node.norm_shares / user_node.usages.sum()
-                    acc_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+        #     for proj_node in partition_node.children:
+        #         for acc_node in proj_node.children:
+        #             acc_node.usage *= self.decay_constant
+        #             acc_node.levelfs = acc_node.shares / acc_node.usage
+        #         proj_node.children.sort(key=lambda node: node.levelfs, reverse=True)
 
-                    for user_node in acc_node.children:
-                        user_node.fairshare_factor = 1.0 - rank / self.tot_num_assocs
-                        rank += 1
+        #         for acc_node in proj_node.children:
+        #             for user_node in acc_node.children:
+        #                 user_node.usage *= self.decay_constant
+        #                 user_node.levelfs = user_node.shares / user_node.usage
+        #             acc_node.children.sort(key=lambda node: node.levelfs, reverse=True)
 
-    # Collect the remaining usage from finished jobs
+        #             for user_node in acc_node.children:
+        #                 user_node.fairshare_factor = 1.0 - rank / self.tot_num_assocs
+        #                 rank += 1
+        #                 if rank > self.tot_num_assocs - 10:
+        #                     print(user_node.name, user_node.parent.name, user_node.usage, sep=":", end=", ")
+        # print()
+
+    def _tree_traversal(self, current_node, rank=0):
+        if current_node.is_leaf:
+            current_node.fairshare_factor = 1.0 - rank / self.tot_num_assocs
+            rank += 1
+            return rank
+
+        if not current_node.new_child_usage: # Avoid resorting when order is unchanged
+            for child_node in current_node.children:
+                child_node.usage *= self.decay_constant
+        else:
+            for child_node in current_node.children:
+                child_node.usage *= self.decay_constant
+                child_node.levelfs = child_node.shares / child_node.usage
+            current_node.new_child_usage = False
+            current_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+
+        for child_node in current_node.children:
+            rank = self._tree_traversal(child_node, rank)
+
+        return rank
+
     def job_finish_usage_update(self, job):
         node = self.uniq_users[job.account][job.user]
-        usage = job.nodes * (job.end - self.last_calc_time).total_seconds() # TODO node->cpu seconds
+        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds() # TODO node->cpu seconds
         self._update_usages(node, usage)
 
-    def _update_usages(self, node, usages):
-        node.usages[self.current_period_num] += usage
+    def _update_usages(self, node, usage):
+        node.usage += usage
         while not node.is_root:
             node = node.parent
-            node.usages[self.current_period_num] += usage
+            node.usage += usage
+            node.new_child_usage = True
 
     # Specifically for archer2 slurm data root->partition->proj->acc->user
-    def _load_tree_slurm(self, assoc_file, num_usage_periods):
+    def _load_tree_slurm(self, assoc_file):
         df = pd.read_csv(assoc_file, delimiter='|', lineterminator='\n', header=0)
         df = df.drop([ col for col in df.columns if "Unnamed" in col ], axis=1)
 
-        root_node = Root()
+        root_node = Root(0.0)
         for _, partition_row in df.loc[(df.ParentName == root_node.name)].iterrows():
-            partition = Partition(partition_row.Account, 1)
-            root_node.add_child(partition, initial_usages=np.zeros(num_usage_periods))
+            partition = Partition(partition_row.Account, 1, 0.0)
+            root_node.add_child(partition)
 
         for partition_node in root_node.children:
             for _, proj_row in df.loc[(df.ParentName == partition_node.name)].iterrows():
-                proj = Project(proj_row.Account, 1)
-                partition_node.add_child(proj, initial_usages=np.zeros(num_usage_periods))
+                proj = Project(proj_row.Account, 1, 0.0)
+                partition_node.add_child(proj)
 
             for proj_node in partition_node.children:
                 for _, acc_row in df.loc[(df.ParentName == proj_node.name)].iterrows():
-                    acc = Account(acc_row.Account, 1)
-                    proj_node.add_child(acc, initial_usages=np.zeros(num_usage_periods))
+                    acc = Account(acc_row.Account, 1, 0.0)
+                    proj_node.add_child(acc)
 
                 for acc_node in proj_node.children:
                     for _, user_row in df.loc[(df.Account == acc_node.name) & (df.User.notna())].iterrows():
-                        user = User(user_row.User, 1)
-                        acc_node.add_child(user, initial_usages=np.zeros(num_usage_periods))
+                        user = User(user_row.User, 1, 0.0)
+                        acc_node.add_child(user)
 
         return root_node
 

@@ -339,7 +339,24 @@ def main(args):
                     ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), df_jobs.End.max() - t0,
                     t0, 100, 500, 300, timedelta(days=14)
                 ),
-                verbose=args.verbose, min_step=0, mf_priority_calc_step=True, no_retained=True
+                verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
+                no_retained=True
+            )
+            archer[1] = run_sim(
+                df_jobs,
+                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
+                t0,
+                MFPrioritySorter(
+                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), df_jobs.End.max() - t0,
+                    t0, 100, 500, 0, timedelta(days=14)
+                ),
+                verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
+                no_retained=True
+            )
+            archer[-1] = run_sim(
+                df_jobs, Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0,
+                DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                no_retained=True
             )
 
         else:

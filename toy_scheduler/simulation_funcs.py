@@ -93,21 +93,24 @@ def run_sim(
             t_step = max(min(queue.next_newjob() - time, system.next_event() - time), min_step)
         except pd._libs.tslibs.np_datetime.OutOfBoundsTimedelta:
             if queue.next_newjob() == datetime.max:
-                t_step = system.next_event() - time
+                t_step = max(system.next_event() - time, min_step)
             else:
-                t_step = queue.next_newjob() - time
-        # # Enforce minimum step to reduce simulation time NOTE Isnt the max above already doing this?
-        # if t_step < min_step:
-        #     t_step = min_step
+                t_step = max(queue.next_newjob() - time, min_step)
+
+        # Fair tree can ignore min step
         if mf_priority_calc_step:
-            next_calc = priority_sorter.fairtree.next_calc() - time < t_step
-            if next_calc < t_step:
+            next_calc = priority_sorter.fairtree.next_calc() - time
+            if next_calc <= t_step:
                 t_step = next_calc
-                priority_sorter.fairshare_calc(self, queue, time + t_step)
+                priority_sorter.fairtree.fairshare_calc(system.running_jobs, time + t_step)
 
         time += t_step
 
-        system.step(t_step)
+        finished_jobs = system.step(t_step)
+        if mf_priority_calc_step:
+            for job in finished_jobs:
+                priority_sorter.fairtree.job_finish_usage_update(job)
+
         queue.step(t_step, num_retained(queue))
 
         system.submit_jobs(queue)
