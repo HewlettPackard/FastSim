@@ -28,5 +28,5 @@ BACKFILL_OPTS = { "min_block_width" : timedelta(minutes=10), "max_job_test" : 10
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 
-ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_030123.csv"
+ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_050123.csv"
 
