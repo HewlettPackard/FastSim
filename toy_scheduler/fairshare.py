@@ -154,7 +154,7 @@ class User():
 
 
 class FairTree():
-    def __init__(self, assoc_file, calc_period, decay_halflife, simulation_length, init_time):
+    def __init__(self, assoc_file, calc_period, decay_halflife, init_time):
         self.last_calc_time = init_time
         self.calc_period = calc_period
         # decay constant for 1 second applied for the duration of a calc interval

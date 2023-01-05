@@ -94,17 +94,15 @@ class AgeSizeSorter():
 
 class MFPrioritySorter():
     def __init__(
-        self, assoc_file, calc_period, decay_halflife, simulation_length, init_time, size_weight,
-        age_weight, fairshare_weight, max_age
+        self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
+        fairshare_weight, max_age
     ):
         self.size_weight = size_weight
         self.age_weight = age_weight
         self.fairshare_weight = fairshare_weight
         self.max_age = max_age
 
-        self.fairtree = FairTree(
-            assoc_file, calc_period, decay_halflife, simulation_length, init_time
-        )
+        self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
 
     def sort(self, queue, time):
         sorted_queue = sorted(
@@ -330,14 +328,14 @@ def main(args):
 
         elif args.test_mf_priority:
             archer = {}
-            # ARCHER2 defaults
+            # ARCHER2 priority weight defaults
             archer[0] = run_sim(
                 df_jobs,
                 Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0,
                 MFPrioritySorter(
-                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), df_jobs.End.max() - t0,
-                    t0, 100, 500, 300, timedelta(days=14)
+                    ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 300,
+                    timedelta(days=14)
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
@@ -347,8 +345,8 @@ def main(args):
                 Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
                 t0,
                 MFPrioritySorter(
-                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), df_jobs.End.max() - t0,
-                    t0, 100, 500, 0, timedelta(days=14)
+                    ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 0,
+                    timedelta(days=14)
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
@@ -382,7 +380,7 @@ def main(args):
 
     if (
         args.scan_low_high_power or args.scan_job_size_weights or
-        args.scan_job_size_weights_noise or args.test_frequencies
+        args.scan_job_size_weights_noise or args.test_frequencies or args.test_mf_priority
     ):
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
         for key, archer_entry in archer.items():
@@ -413,6 +411,8 @@ def main(args):
         plots.append("scan_size_weights_noise_plots")
     if args.test_frequencies:
         plots.append("test_frequencies")
+    if args.test_mf_priority:
+        plots.append("test_mf_priority")
 
     if plots:
         plot_blob(
