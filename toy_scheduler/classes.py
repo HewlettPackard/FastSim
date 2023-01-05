@@ -8,9 +8,10 @@ from globals import *
 
 class Job():
     def __init__(
-        self, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
+        self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account
     ):
+        self.id = id
         self.nodes = nodes
         self.runtime = runtime
         self.reqtime = reqtime
@@ -38,9 +39,9 @@ class Queue():
 
         self.all_jobs = [
             Job(
-                job_row.Submit, job_row.AllocNodes, job_row.Elapsed, job_row.Timelimit,
-                job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start, job_row.User,
-                job_row.Account
+                job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
+                job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
+                job_row.User, job_row.Account
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self.queue = []
@@ -116,9 +117,33 @@ class Archer2():
 
         return self.running_jobs[0].end
 
+    # NOTE: make low_freq_reqtime_factor and general reqtime scaling factor as it may be
+    # interesting to know if it can be tuned to a systems workload eg. users tend to overestimate 
+    # time so might be beneficial to reduce the reqtimes
     def get_backfill_jobs(self, queue : Queue):
         backfill_now = []
 
+        if self.backfill_opts["EASY"]:
+            free_nodes = self.available_nodes()
+            for job in sorted(self.running_jobs, key=lambda job: job.endlimit):
+                free_nodes += job.nodes
+                if free_nodes >= queue.queue[0].nodes:
+                    shadow_time = job.endlimit
+                    extra_nodes = free_nodes - queue.queue[0].nodes
+                    break
+
+            for i_job, job in enumerate(
+                list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
+            ):
+                # Shadow time too short and no extra nodes -> not possible to backfill anymore
+                if shadow_time <= self.time + self.backfill_opts["min_block_width"] and not extra_nodes:
+                    return backfill_now
+
+                pass
+
+            return backfill_now
+
+        # Conservative backfilling
         free_blocks = defaultdict(int)
         free_blocks[(self.time, datetime.max)] = self.available_nodes()
         for job in self.running_jobs:
