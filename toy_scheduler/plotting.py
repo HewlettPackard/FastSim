@@ -1,5 +1,6 @@
 import os
 from glob import glob
+from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
@@ -104,19 +105,19 @@ def get_idle_node_energy(occupancies, times):
 
 
 def bdslowdowns_allocnodes_hist2d(
-    archer_true, archer, archer_title, allocnodes_true=[], bd_slowdowns_true=[]
+    archer_true, archer, archer_title, allocnodes_true=[], bd_slowdowns_true=[], clip=1000
 ):
     bd_slowdowns_true = bd_slowdowns_true if bd_slowdowns_true else (
-        archer_true.bd_slowdowns[1000:-1000]
+        archer_true.bd_slowdowns[clip:-clip - 1]
     )
-    bd_slowdowns = archer.bd_slowdowns[1000:-1000]
+    bd_slowdowns = archer.bd_slowdowns[clip:-clip - 1]
 
     fig, ax = plt.subplots(1, 2, figsize=(14, 8))
 
     allocnodes_true = allocnodes_true if allocnodes_true else [
-        job.nodes for job in archer_true.job_history[1000:-1000]
+        job.nodes for job in archer_true.job_history[clip:-clip - 1]
     ]
-    allocnodes = [ job.nodes for job in archer.job_history[1000:-1000] ]
+    allocnodes = [ job.nodes for job in archer.job_history[clip:-clip - 1] ]
     bins_allocnodes = np.array(
         list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
         list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
@@ -632,9 +633,7 @@ def plot_blob(
         fig, ax = bdslowdowns_allocnodes_hist2d(archer, archer_fcfs, "FIFO")
         fig.savefig(os.path.join(
             PLOT_DIR,
-            "toyscheduler_test_true_starts_bdslowdowns_allocnodes_{}.pdf".format(
-                save_suffix
-            )
+            "toyscheduler_test_true_starts_bdslowdowns_allocnodes_{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -957,4 +956,172 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
+    if "test_mf_priority" in plots:
+        print(
+            "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
+                np.mean(archer[0].bd_slowdowns), np.std(archer[0].bd_slowdowns)
+            ) +
+            "true start mean bd slowdown={}+-{}".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            )
+        )
+        print(
+            "MF priority w/o fairshare mean bd slowdown={}+-{}".format(
+                np.mean(archer[1].bd_slowdowns), np.std(archer[1].bd_slowdowns)
+            ) +
+            "true start mean bd slowdown={}+-{}".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            )
+        )
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(
+            archer[-1], archer[0], "MF Priority w/ Fairshare", clip=0
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_mf_priority_fairshare_bdslowdowns_allocnodes{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(
+            archer[-1], archer[1], "MF Priority w/o Fairshare", clip=0
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_mf_priority_nofairshare_bdslowdowns_allocnodes{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        wait_times_true = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[-1].job_history
+        }
+        wait_times_fairshare = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[0].job_history
+        }
+        wait_times_nofairshare = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[1].job_history
+        }
+        print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
+            np.sqrt(sum([
+                (wait_times_true[id] - wait_times_fairshare[id])**2 for id in (
+                    wait_times_true.keys()
+                )
+            ])) /
+            60**2
+        ))
+        print("MF priority w/o fairshare wait time distance with true start times={}hrs".format(
+            np.sqrt(sum([
+                (wait_times_true[id] - wait_times_nofairshare[id])**2 for id in (
+                    wait_times_true.keys()
+                )
+            ])) /
+            60**2
+        ))
+
+        print(
+            "===Repeating but now cutting out first 28 days of jobs in order to somewhat clear" +
+            "any effect from unkown initial usages==="
+        )
+
+        start_time = archer[0].init_time + timedelta(days=28)
+        archer[-1].job_history = [
+            job for job in archer[-1].job_history if job.Submit > start_time
+        ]
+        archer[0].job_history = [ job for job in archer[0].job_history if job.Submit > start_time ]
+        archer[1].job_history = [ job for job in archer[1].job_history if job.Submit > start_time ]
+        archer[-1].bd_slowdowns = [
+            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                archer[-1].job_history
+            )
+        ]
+        archer[0].bd_slowdowns = [
+            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                archer[0].job_history
+            )
+        ]
+        archer[1].bd_slowdowns = [
+            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                archer[1].job_history
+            )
+        ]
+
+        print(
+            "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
+                np.mean(archer[0].bd_slowdowns), np.std(archer[0].bd_slowdowns)
+            ) +
+            "true start mean bd slowdown={}+-{}".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            )
+        )
+        print(
+            "MF priority w/o fairshare mean bd slowdown={}+-{}".format(
+                np.mean(archer[1].bd_slowdowns), np.std(archer[1].bd_slowdowns)
+            ) +
+            "true start mean bd slowdown={}+-{}".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            )
+        )
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(archer[-1], archer[0], "MF Priority w/ Fairshare")
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_mf_priority_fairshare_bdslowdowns_allocnodes_skip28days" +
+            "{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = bdslowdowns_allocnodes_hist2d(archer[-1], archer[1], "MF Priority w/o Fairshare")
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_mf_priority_nofairshare_bdslowdowns_allocnodes_skip28days" +
+            "{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        wait_times_true = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[-1].job_history
+        }
+        wait_times_fairshare = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[0].job_history
+        }
+        wait_times_nofairshare = {
+            job.id : (job.start - job.submit).total_seconds for job in archer[1].job_history
+        }
+        print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
+            np.sqrt(sum([
+                (wait_times_true[id] - wait_times_fairshare[id])**2 for id in (
+                    wait_times_true.keys()
+                )
+            ])) /
+            60**2
+        ))
+        print("MF priority w/o fairshare wait time distance with true start times={}hrs".format(
+            np.sqrt(sum([
+                (wait_times_true[id] - wait_times_nofairshare[id])**2 for id in (
+                    wait_times_true.keys()
+                )
+            ])) /
+            60**2
+        ))
 
