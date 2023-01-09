@@ -169,7 +169,7 @@ def bdslowdowns_allocnodes_hist2d(
 
 
 def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_mf):
-    fig, ax = plt.subplots(1, 3, figsize=(24, 8))
+    fig, ax = plt.subplots(1, 3, figsize=(32, 8))
 
     bins_allocnodes = np.array(
         list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
@@ -206,25 +206,25 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
             allocnodes_true, archer_true.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
             cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
     )
-    ax[0].set_title("ARCHER2 Data", fontsize=20)
-    ax[0].set_ylabel("Job Bounded Slowdown", fontsize=18)
+    ax[0].set_title("ARCHER2 Data", fontsize=22)
+    ax[0].set_ylabel("Job Bounded Slowdown", fontsize=20)
 
     h = ax[1].hist2d(
         allocnodes_fifo, archer_fifo.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
         cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
     )
-    ax[1].set_title("FIFO", fontsize=20)
+    ax[1].set_title("FIFO", fontsize=22)
 
     h = ax[2].hist2d(
         allocnodes_mf, archer_mf.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
         norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
     )
-    ax[2].set_title("Our Simulation", fontsize=20)
+    ax[2].set_title("Our Simulation", fontsize=22)
 
     for a in ax:
         a.set_xscale("log")
         a.set_yscale("log")
-    ax[1].set_xlabel("Job Num Nodes", fontsize=18)
+    ax[1].set_xlabel("Job Num Nodes", fontsize=20)
 
     fig.tight_layout()
 
@@ -643,7 +643,7 @@ def plot_blob(
                 end_tick, end_time = tick, time
                 break
         dates_crop = dates[interval][start_tick:end_tick]
-        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        fig, ax = plt.subplots(1, 1, figsize=(18, 8))
         ax.plot_date(dates_crop, archer[interval].power_history[start_tick:end_tick], 'g', linewidth=0.6)
         interval_shade(ax, start_time, end_time, interval)
         ax.set_ylabel("Power (MW)", fontsize=18)
@@ -1073,7 +1073,7 @@ def plot_blob(
 
         )
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=18, ncol=5)
-        plt.subplots_adjust(left=0.1, top=0.9, right=0.90, bottom=0.1)
+        plt.subplots_adjust(left=0.05, top=0.9, right=0.95, bottom=0.1)
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt{}.pdf".format(
