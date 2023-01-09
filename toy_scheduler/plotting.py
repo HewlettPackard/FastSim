@@ -1,6 +1,7 @@
 import os
 from glob import glob
 from datetime import datetime, timedelta
+import dill as pickle
 
 import pandas as pd
 import numpy as np
@@ -157,6 +158,73 @@ def bdslowdowns_allocnodes_hist2d(
         a.set_xlabel("AllocNodes")
         a.set_xscale("log")
         a.set_yscale("log")
+
+    fig.tight_layout()
+
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.03, 0.7])
+    fig.colorbar(h[3], cax=cbar_ax)
+
+    return fig, ax
+
+
+def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_mf):
+    fig, ax = plt.subplots(1, 3, figsize=(24, 8))
+
+    bins_allocnodes = np.array(
+        list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+        list(range(200, 1001, 100)) + list(range(1500, 3001, 500))
+    )
+    bins_bd_slowdowns = np.array(
+        [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
+        list(range(150, 301, 50))
+    )
+
+    allocnodes_true = [ job.nodes for job in archer_true.job_history ]
+    allocnodes_fifo = [ job.nodes for job in archer_fifo.job_history ]
+    allocnodes_mf = [ job.nodes for job in archer_mf.job_history ]
+
+    vmax = max(
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(allocnodes_true, archer_true.bd_slowdowns)
+            )
+        ]),
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(allocnodes_fifo, archer_fifo.bd_slowdowns)
+            )
+        ]),
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(allocnodes_mf, archer_mf.bd_slowdowns)
+            )
+        ])
+    )
+
+    ax[0].hist2d(
+            allocnodes_true, archer_true.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
+            cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[0].set_title("ARCHER2 Data", fontsize=20)
+    ax[0].set_ylabel("Job Bounded Slowdown", fontsize=18)
+
+    h = ax[1].hist2d(
+        allocnodes_fifo, archer_fifo.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
+        cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[1].set_title("FIFO", fontsize=20)
+
+    h = ax[2].hist2d(
+        allocnodes_mf, archer_mf.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+        norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[2].set_title("Our Simulation", fontsize=20)
+
+    for a in ax:
+        a.set_xscale("log")
+        a.set_yscale("log")
+    ax[1].set_xlabel("Job Num Nodes", fontsize=18)
 
     fig.tight_layout()
 
@@ -551,12 +619,50 @@ def plot_blob(
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
         ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
         interval_shade(ax, start[interval], end[interval], interval)
-        ax.set_ylabel("Power (MW)")
+        ax.set_ylim(1.8, 3.2)
+        ax.set_ylabel("Power (MW)", fontsize=20)
+        ax.xaxis.label.set_size(18)
+        ax.yaxis.label.set_size(18)
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(
             PLOT_DIR, "toyscheduler_low-high_power_0242448_scan{}.pdf".format(save_suffix)
         ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        interval = ((0,24),(24,48)) # This looks the clearest
+        for tick, time in enumerate(times[interval]):
+            if time.month == 11 and time.day == 22:
+                start_tick, start_time = tick, time
+                break
+        for tick, time in enumerate(times[interval]):
+            if time.month == 12 and time.day == 2:
+                end_tick, end_time = tick, time
+                break
+        dates_crop = dates[interval][start_tick:end_tick]
+        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        ax.plot_date(dates_crop, archer[interval].power_history[start_tick:end_tick], 'g', linewidth=0.6)
+        interval_shade(ax, start_time, end_time, interval)
+        ax.set_ylabel("Power (MW)", fontsize=18)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.tick_params(axis='both', which='minor', labelsize=14)
+        plt.legend(fontsize=18)
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_0242448_zoomedin_scan{}.pdf".format(save_suffix)
+        ))
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                "toyscheduler_low-high_power_0242448_zoomedin_scan_fuckppt{}.png".format(
+                    save_suffix
+                ),
+            ),
+            dpi=600
+        )
         if batch:
             plt.close()
         else:
@@ -680,6 +786,7 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 10))
         ax.bar(x, bd_slowdowns)
@@ -929,29 +1036,60 @@ def plot_blob(
 
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
-        plt.xticks(angles[:-1], [ "1/{}".format(category) for category in categories ], size=12)
+        category_labels = [
+            r"$(\mathrm{energy})^{-1}$", r"$(\mathrm{avg\_slowdown})^{-1}$",
+            r"$(\mathrm{avg\_wait})^{-1}$", r"$(\mathrm{max\_wait})^{-1}$",
+            r"$(\mathrm{avg\_response})^{-1}$"
+        ]
+        plt.xticks(angles[:-1], category_labels, size=18)
+        for label in ax.get_xticklabels():
+            if label.get_text() == r"$(\mathrm{energy})^{-1}$":
+                label.set_verticalalignment("bottom")
+            if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
+                label.set_verticalalignment("bottom")
+                label.set_horizontalalignment("left")
+            elif label.get_text() == r"$(\mathrm{avg\_wait})^{-1}$":
+                label.set_verticalalignment("top")
+                label.set_horizontalalignment("left")
+            elif label.get_text() == r"$(\mathrm{max\_wait})^{-1}$":
+                label.set_verticalalignment("top")
+                label.set_horizontalalignment("right")
+            elif label.get_text() == r"$(\mathrm{avg\_response})^{-1}$":
+                label.set_verticalalignment("bottom")
+                label.set_horizontalalignment("right")
+        ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
-        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=10)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=16)
         plt.ylim(0.7,1.3)
 
         for queue_cut, perf_data in spider_plot_data.items():
             vals = [ 1 / perf_data[metric] for metric in categories ]
             vals += vals[:1]
             colour = next(ax._get_lines.prop_cycler)["color"]
-            ax.plot(angles, vals, linewidth=1, linestyle='solid', c=colour, label=str(queue_cut))
+            ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=str(queue_cut))
 
         ax.plot(
-            angles, [1] * len(angles), linewidth=2, linestyle='solid', c='k', label="no low freq"
+            angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="no low freq"
 
         )
-        plt.legend(loc='upper right', bbox_to_anchor=(0.1, 0.15))
-        plt.tight_layout()
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=18, ncol=5)
+        plt.subplots_adjust(left=0.1, top=0.9, right=0.90, bottom=0.1)
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt{}.pdf".format(
                 save_suffix
             )
         ))
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                (
+                    "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt_" +
+                    "fuckppt{}.png".format(save_suffix)
+                )
+            ),
+            dpi=600
+        )
         if batch:
             plt.close()
         else:
@@ -1003,14 +1141,52 @@ def plot_blob(
         else:
             plt.show()
 
+        print("Reading baseline fifo sim results")
+        with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as f:
+            data = pickle.load(f)
+        archer_fifo = data["archer"][0]
+
+        print(
+            "Baseline FIFO mean bd slowdown={}+-{}".format(
+                np.mean(archer_fifo.bd_slowdowns), np.std(archer_fifo.bd_slowdowns)
+            )
+        )
+
+        fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer[-1], archer_fifo, archer[0])
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            (
+                "toyscheduler_test_mf_priority_fairshare_withfifobaseline_bdslowdowns_" +
+                "allocnodes{}.pdf".format(
+                    save_suffix
+                )
+            )
+        ))
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                (
+                    "toyscheduler_test_mf_priority_fairshare_withfifobaseline_bdslowdowns_" +
+                    "allocnodes_fuckppt{}.png".format(
+                        save_suffix
+                    )
+                )
+            ),
+            dpi=600
+        )
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
         wait_times_true = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[-1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[0].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
@@ -1035,26 +1211,15 @@ def plot_blob(
         )
 
         start_time = archer[0].init_time + timedelta(days=28)
-        archer[-1].job_history = [
-            job for job in archer[-1].job_history if job.Submit > start_time
-        ]
-        archer[0].job_history = [ job for job in archer[0].job_history if job.Submit > start_time ]
-        archer[1].job_history = [ job for job in archer[1].job_history if job.Submit > start_time ]
-        archer[-1].bd_slowdowns = [
-            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
-                archer[-1].job_history
-            )
-        ]
-        archer[0].bd_slowdowns = [
-            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
-                archer[0].job_history
-            )
-        ]
-        archer[1].bd_slowdowns = [
-            max(job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
-                archer[1].job_history
-            )
-        ]
+        for key in archer.keys():
+            archer[key].job_history = [
+                job for job in archer[key].job_history if job.submit > start_time
+            ]
+            archer[key].bd_slowdowns = [
+                max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                    archer[key].job_history
+                )
+            ]
 
         print(
             "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
@@ -1099,14 +1264,50 @@ def plot_blob(
         else:
             plt.show()
 
+        archer_fifo.job_history = [
+            job for job in archer_fifo.job_history if job.submit > start_time
+        ]
+        archer_fifo.bd_slowdowns = [
+            max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                archer_fifo.job_history
+            )
+        ]
+
+        fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer[-1], archer_fifo, archer[0])
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            (
+                "toyscheduler_test_mf_priority_fairshare_withfifobaseline_bdslowdowns_" +
+                "allocnodes_skip28days{}.pdf".format(
+                    save_suffix
+                )
+            )
+        ))
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                (
+                    "toyscheduler_test_mf_priority_fairshare_withfifobaseline_bdslowdowns_" +
+                    "allocnodes_skip28ays_fuckppt{}.png".format(
+                        save_suffix
+                    )
+                )
+            ),
+            dpi=600
+        )
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
         wait_times_true = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[-1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[0].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.submit).total_seconds for job in archer[1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
