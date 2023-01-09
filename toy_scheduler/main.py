@@ -14,6 +14,7 @@ from plotting import plot_blob
 from globals import * # TODO: dont do this
 sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import hour_to_timeofday
+from toy_scheduler import ARCHER2 # legacy reasons
 
 
 """ Priority Sorters """
@@ -95,36 +96,102 @@ class AgeSizeSorter():
 class MFPrioritySorter():
     def __init__(
         self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
-        fairshare_weight, max_age
+        fairshare_weight, max_age, partition_weight
     ):
         self.size_weight = size_weight
         self.age_weight = age_weight
         self.fairshare_weight = fairshare_weight
-        self.max_age = max_age
+        self.max_age = max_age.total_seconds()
+        self.partition_weight = partition_weight
+        self.time = init_time
 
         self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
 
+        # NOTE Hardcoded for now - sort this out
+        from classes import Partition
+        self.partitions = {
+            "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
+        }
+
+        self.no_partition_priority_tiers = (
+            len({ partition.priority_tier for partition in self.partitions.values() }) == 1
+        )
+        self.priority_factors = []
+        if size_weight:
+            self.priority_factors.append(self._size_priority)
+        if age_weight:
+            self.priority_factors.append(self._age_priority)
+        if fairshare_weight:
+            self.priority_factors.append(self._fairshare_priority)
+        if partition_weight:
+            self.priority_factors.append(self._partition_priority)
+
     def sort(self, queue, time):
+        # The key means first sort by partition priority tier, them sort my MF priority
+        # Should probably sort this out -_-
+        self.time = time
+        if self.no_partition_priority_tiers:
+            sorted_queue = sorted(
+                queue,
+                key=lambda job: sum(priority_calc(job) for priority_calc in self.priority_factors),
+                reverse=True
+            )
+            return sorted_queue
+
         sorted_queue = sorted(
             queue,
-            key=(
-                lambda job: (
-                    (
-                        min((time - job.submit).total_seconds() / self.max_age.total_seconds(), 1)
-                        * self.age_weight
-                    ) +
-                    (
-                        (job.nodes / 5860) * self.size_weight
-                    ) +
-                    (
-                        self.fairtree.uniq_users[job.account][job.user].fairshare_factor
-                        * self.fairshare_weight
-                    )
-                )
+            key=lambda job: (
+                self._partition_priority_tier(job),
+                sum(priority_calc(job) for priority_calc in self.priority_factors)
             ),
             reverse=True
         )
         return sorted_queue
+
+        # sorted_queue = sorted(
+        #     queue,
+        #     key=(
+        #         lambda job: (
+        #             self.partitions[job.partition].priority_tier, (
+        #                 (
+        #                     min((time - job.submit).total_seconds() /
+        #                     self.max_age.total_seconds(), 1) *
+        #                     self.age_weight
+        #                 ) +
+        #                 (
+        #                     (job.nodes / 5860) * self.size_weight
+        #                 ) +
+        #                 (
+        #                     self.fairtree.uniq_users[job.account][job.user].fairshare_factor *
+        #                     self.fairshare_weight
+        #                 ) +
+        #                 (
+        #                     self.partitions[job.partition].priority_weight * self.partition_weight
+        #                 )
+        #             )
+        #         )
+        #     ),
+        #     reverse=True
+        # )
+        # return sorted_queue
+
+    def _partition_priority_tier(self, job):
+        return self.partitions[job.partition].priority_tier
+
+    def _age_priority(self, job):
+        return min((self.time - job.submit).total_seconds() / self.max_age, 1) * self.age_weight
+
+    def _size_priority(self, job):
+        return (job.nodes / 5860) * self.size_weight
+
+    def _fairshare_priority(self, job):
+        return (
+            self.fairtree.uniq_users[job.account][job.user].fairshare_factor *
+            self.fairshare_weight
+        )
+
+    def _partition_priority(self, job):
+        return self.partitions[job.partition].priority_weight * self.partition_weight
 
 
 """ End Priority Sorters """
@@ -331,22 +398,22 @@ def main(args):
             # ARCHER2 priority weight defaults
             archer[0] = run_sim(
                 df_jobs,
-                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
+                Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS),
                 t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 300,
-                    timedelta(days=14)
+                    timedelta(days=14), 0
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
             )
             archer[1] = run_sim(
                 df_jobs,
-                Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
+                Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS),
                 t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 0,
-                    timedelta(days=14)
+                    timedelta(days=14), 0
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
@@ -355,6 +422,15 @@ def main(args):
                 df_jobs, Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0,
                 DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
                 no_retained=True
+            )
+
+        elif args.fifo_baseline:
+            archer = {}
+            df_jobs = df_jobs.assign(Partition="standard")
+            archer[0] = run_sim(
+                df_jobs,
+                Archer2(t0, node_down_mean=0, backfill_opts={ "max_jobs_test" : 0 }),
+                t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
         else:
@@ -457,6 +533,10 @@ def parse_arguments():
     scheduler_group.add_argument(
         "--test_mf_priority", action="store_true",
         help="Test of the mf priority implementation (mainly testing that fairshare is working)"
+    )
+    scheduler_group.add_argument(
+        "--fifo_baseline", action="store_true",
+        help="Run a basic (no partitions or backfilling) FIFO run as a baseline"
     )
 
     parser.add_argument(
