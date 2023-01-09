@@ -9,7 +9,7 @@ from globals import *
 class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
-        true_node_power, true_job_start, user, account
+        true_node_power, true_job_start, user, account, qos, partition
     ):
         self.id = id
         self.nodes = nodes
@@ -21,9 +21,12 @@ class Job():
         self.true_job_start = true_job_start
         self.user = user
         self.account = account
+        self.qos = qos
+        self.partition = partition
 
         self.start = None
         self.end = None
+        self.assigned_nodes = []
 
     def start_job(self, time : datetime):
         self.start = time
@@ -41,7 +44,7 @@ class Queue():
             Job(
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
-                job_row.User, job_row.Account
+                job_row.User, job_row.Account, job_row.QOS, job_row.Partition
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self.queue = []
@@ -67,6 +70,45 @@ class Queue():
             return datetime.max
 
 
+class Partition():
+    def __init__(self, name, priority_tier, priority_weight):
+        self.name = name
+        self.priority_tier = priority_tier
+        self.priority_weight = priority_weight
+
+        self.nodes = []
+
+        self.num_available = 0
+
+    def add_node(self, node):
+        node.partitions.append(self)
+        self.nodes.append(node)
+        self.nodes.sort(key=lambda node: node.weight) # Small weights get priority
+        self.num_available += node.free
+
+    def available_nodes(self):
+        return self.num_available
+
+
+class Node():
+    def __init__(self, num, weight=0):
+        self.id = num
+        self.weight = weight
+        self.free = True
+
+        self.partitions = []
+
+    def set_free(self):
+        self.free = True
+        for partition in self.partitions:
+            partition.num_available += 1
+
+    def set_busy(self):
+        self.free = False
+        for partition in self.partitions:
+            partition.num_available -= 1
+
+
 class Archer2():
     def __init__(
         self, init_time : datetime, node_down_mean=0, backfill_opts={},
@@ -78,7 +120,7 @@ class Archer2():
         self.time = init_time
         self.backfill_opts = backfill_opts
         if "min_block_width" not in self.backfill_opts:
-            self.backfill_opts["min_block_width"] = timedelta(minutes=5) # 1min for Archer2
+            self.backfill_opts["min_block_width"] = timedelta(minutes=1) # 1min for Archer2
         if "max_job_test" not in self.backfill_opts:
             self.backfill_opts["max_job_test"] = 1000 # 1000 for Archer2
         self.low_freq_condition = low_freq_condition
@@ -96,34 +138,49 @@ class Archer2():
         self.job_history = []
         self.total_energy = 0.0 # GJ
 
+        self.partitions = {
+            "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
+        }
+        self.nodes = []
+        for i in range(5276):
+            self.nodes.append(Node(i, 0))
+            self.partitions["standard"].add_node(self.nodes[-1])
+        for i in range(5276, 5860):
+            self.nodes.append(Node(i, 1000))
+            self.partitions["standard"].add_node(self.nodes[-1])
+            self.partitions["highmem"].add_node(self.nodes[-1])
+
         self.nodes_free = 5860
         self.nodes_drained = 0
         self.nodes_drained_carryover = 0
-        self.sorted = False
 
     def has_space(self, job : Job):
-        return True if self.available_nodes() >= job.nodes else False
+        return True if self.available_nodes(job.partition) >= job.nodes else False
 
-    def available_nodes(self):
-        return self.nodes_free - self.nodes_drained
+    def available_nodes(self, partition=""):
+        if partition:
+            return self.partitions[partition].available_nodes()
+
+        return self.nodes_free
+
+        # return self.nodes_free - self.nodes_drained
 
     def next_event(self):
         if not self.running_jobs:
             return datetime.max
 
-        if not self.sorted:
-            self.running_jobs.sort(key=lambda job: job.end)
-            self.sorted = True
+        self.running_jobs.sort(key=lambda job: job.end)
 
         return self.running_jobs[0].end
 
     # NOTE: make low_freq_reqtime_factor and general reqtime scaling factor as it may be
-    # interesting to know if it can be tuned to a systems workload eg. users tend to overestimate 
+    # interesting to know if it can be tuned to a systems workload eg. users tend to overestimate
     # time so might be beneficial to reduce the reqtimes
     def get_backfill_jobs(self, queue : Queue):
         backfill_now = []
 
-        if self.backfill_opts["EASY"]:
+        # if self.backfill_opts["EASY"]:
+        if False:
             free_nodes = self.available_nodes()
             for job in sorted(self.running_jobs, key=lambda job: job.endlimit):
                 free_nodes += job.nodes
@@ -143,16 +200,15 @@ class Archer2():
 
             return backfill_now
 
-        # Conservative backfilling
-        free_blocks = defaultdict(int)
-        free_blocks[(self.time, datetime.max)] = self.available_nodes()
+        free_blocks = defaultdict(set)
+        free_blocks[(self.time, datetime.max)] = { node for node in self.nodes if node.free }
         for job in self.running_jobs:
             # Some jobs exceeding timelimit and some with zero reqtime
             if job.endlimit <= self.time:
                 job.endlimit = self.time + 0.1 * job.reqtime + timedelta(minutes=1)
-            free_blocks[(job.endlimit, datetime.max)] += job.nodes
+            free_blocks[(job.endlimit, datetime.max)].update(job.assigned_nodes)
 
-        min_required_block_time = min(
+        min_required_block_time = max( # min
             self.time + self.backfill_opts["min_block_width"],
             self.time + (
                 min(queue.queue, key=lambda job: job.reqtime).reqtime *
@@ -160,14 +216,29 @@ class Archer2():
             )
         )
 
-        # max_block_time = datetime.max
         free_blocks_ready_intervals = (
             { (self.time, datetime.max) } if self.available_nodes() else set()
         )
         max_block_time = datetime.max
-        for i_job, job in enumerate(
-            list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
-        ):
+        partition_num_tested = defaultdict(int)
+        # Dont consider jobs that require partitions with no available nodes
+        partition_maxes = {
+            partition : (
+                self.backfill_opts["max_job_test"] if self.available_nodes(partition) else 0
+            ) for partition in self.partitions.keys()
+        }
+        for i_job, job in enumerate(queue.queue):
+            # break if no blocks or only <= min blocks available for immediate backfill
+            if not free_blocks_ready_intervals:
+                break
+            max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
+            if max_block_time < min_required_block_time:
+                break
+
+            if partition_num_tested[job.partition] >= partition_maxes[job.partition]:
+                continue
+            partition_num_tested[job.partition] += 1
+
             reqtime = job.reqtime * self.low_freq_reqtime_factor
             # Only need to plan nodes for jobs that may be relevant to immediate scheduling
             if self.time + reqtime > max_block_time:
@@ -176,16 +247,13 @@ class Archer2():
             free_nodes = 0
             selected_intervals = {}
 
-            # break if no blocks or only <= min blocks available for immediate backfill
-            if not free_blocks_ready_intervals:
-                break
-            max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
-            if max_block_time < min_required_block_time:
-                break
-
             for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
-                selected_intervals[interval] = nodes
-                free_nodes += nodes
+                valid_nodes = {
+                    node for node in nodes if self.partitions[job.partition] in node.partitions
+                }
+                if valid_nodes:
+                    selected_intervals[interval] = valid_nodes
+                    free_nodes += len(valid_nodes)
 
                 if job.nodes <= free_nodes:
                     usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
@@ -202,53 +270,153 @@ class Archer2():
                     if usage_block_start == self.time:
                         backfill_now.append(i_job)
 
-                    for key in selected_intervals.keys():
+                    for key, nodes in selected_intervals.items():
+                        free_blocks[key] -= nodes
+
+                        # The original ready now block has been broken and the interval needs
+                        # redefining
                         if key[0] == self.time:
-                            free_blocks_ready_intervals.remove((key[0], key[1]))
+                            if not free_blocks[key]:
+                                free_blocks_ready_intervals.remove((key[0], key[1]))
                             if key[0] != usage_block_start:
                                 free_blocks_ready_intervals.add((key[0], usage_block_start))
 
                         if key[0] != usage_block_start:
-                            free_blocks[(key[0], usage_block_start)] += free_blocks[key]
+                            free_blocks[(key[0], usage_block_start)].update(nodes)
                         if key[1] != usage_block_end:
-                            free_blocks[(usage_block_end, key[1])] += free_blocks[key]
+                            free_blocks[(usage_block_end, key[1])].update(nodes)
 
-                        free_blocks.pop(key)
-
-                    if free_nodes - job.nodes:
-                        free_blocks[(usage_block_start, usage_block_end)] += free_nodes - job.nodes
-                        if usage_block_start == self.time:
-                            free_blocks_ready_intervals.add((key[0], usage_block_end))
+                        # These nodes are now reserved, delete block if this leaves nothing left
+                        if not free_blocks[key]:
+                            free_blocks.pop(key)
 
                     break
+
+        # Conservative backfilling
+        # free_blocks = defaultdict(int)
+        # free_blocks[(self.time, datetime.max)] = self.available_nodes()
+        # for job in self.running_jobs:
+        #     # Some jobs exceeding timelimit and some with zero reqtime
+        #     if job.endlimit <= self.time:
+        #         job.endlimit = self.time + 0.1 * job.reqtime + timedelta(minutes=1)
+        #     free_blocks[(job.endlimit, datetime.max)] += job.nodes
+
+        # min_required_block_time = min( # NOTE should this be max?
+        #     self.time + self.backfill_opts["min_block_width"],
+        #     self.time + (
+        #         min(queue.queue, key=lambda job: job.reqtime).reqtime *
+        #         self.low_freq_reqtime_factor
+        #     )
+        # )
+
+        # # max_block_time = datetime.max
+        # free_blocks_ready_intervals = (
+        #     { (self.time, datetime.max) } if self.available_nodes() else set()
+        # )
+        # max_block_time = datetime.max
+        # for i_job, job in enumerate(
+        #     list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
+        # ):
+        #     reqtime = job.reqtime * self.low_freq_reqtime_factor
+        #     # Only need to plan nodes for jobs that may be relevant to immediate scheduling
+        #     if self.time + reqtime > max_block_time:
+        #         continue
+
+        #     free_nodes = 0
+        #     selected_intervals = {}
+
+        #     # break if no blocks or only <= min blocks available for immediate backfill
+        #     if not free_blocks_ready_intervals:
+        #         break
+        #     max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
+        #     if max_block_time < min_required_block_time:
+        #         break
+
+        #     for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
+        #         selected_intervals[interval] = nodes
+        #         free_nodes += nodes
+
+        #         if job.nodes <= free_nodes:
+        #             usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
+        #             usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
+
+        #             # Nodes do not remain available for this jobs runtime, find new block
+        #             if usage_block_start + reqtime > usage_block_end:
+        #                 selected_intervals = {}
+        #                 free_nodes = 0
+        #                 continue
+
+        #             usage_block_end = usage_block_start + reqtime
+
+        #             if usage_block_start == self.time:
+        #                 backfill_now.append(i_job)
+
+        #             for key in selected_intervals.keys():
+        #                 if key[0] == self.time:
+        #                     free_blocks_ready_intervals.remove((key[0], key[1]))
+        #                     if key[0] != usage_block_start:
+        #                         free_blocks_ready_intervals.add((key[0], usage_block_start))
+
+        #                 if key[0] != usage_block_start:
+        #                     free_blocks[(key[0], usage_block_start)] += free_blocks[key]
+        #                 if key[1] != usage_block_end:
+        #                     free_blocks[(usage_block_end, key[1])] += free_blocks[key]
+
+        #                 free_blocks.pop(key)
+
+        #             if free_nodes - job.nodes:
+        #                 free_blocks[(usage_block_start, usage_block_end)] += free_nodes - job.nodes
+        #                 if usage_block_start == self.time:
+        #                     # NOTE what is the key[0] doing here? should it be self.time?
+        #                     free_blocks_ready_intervals.add((key[0], usage_block_end))
+
+        #             break
 
         return backfill_now
 
     def submit_jobs(self, queue : Queue):
+        partitions_full = set()
         low_freqs = self.low_freq_condition(self.queue_size)
-        for job in list(queue.queue):
+
+        jobs_submitted = []
+        for i_job, job in enumerate(queue.queue):
+            if job.partition in partitions_full:
+                continue
+
             if self.has_space(job):
-                job_ready = queue.queue.pop(0)
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
                     job_ready.runtime *= time_factor
                     job_ready.reqtime *= self.low_freq_reqtime_factor
                     job_ready.true_node_power *= power_factor
-                self.submit(job_ready.start_job(self.time))
+                self.submit(job.start_job(self.time))
+                jobs_submitted.append(i_job)
             else:
-                break
+                partitions_full.add(job.partition)
+                if len(partitions_full) == len(self.partitions):
+                    break
+
+        for i in sorted(jobs_submitted, reverse=True):
+            queue.queue.pop(i)
 
         if queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
-            for i in sorted(backfill_now, reverse=True):
-                job_ready = queue.queue.pop(i)
+            problemo = False
+            for i in backfill_now:
+                job_ready = queue.queue[i]
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
                     job_ready.runtime *= time_factor
                     job_ready.reqtime *= self.low_freq_reqtime_factor
                     job_ready.true_node_power *= power_factor
-                if not self.submit(job_ready.start_job(self.time)):
+                problemo = not self.submit(job_ready.start_job(self.time))
+                if problemo:
                     print(self.available_nodes(), i, backfill_now)
+            if problemo:
+                print("=====")
+
+            for i in sorted(backfill_now, reverse=True):
+               queue.queue.pop(i)
 
         self.queue_size = len(queue.queue)
 
@@ -264,24 +432,48 @@ class Archer2():
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
             )
             self.job_history.append(job)
-            self.sorted = False
+
+            for node in self.partitions[job.partition].nodes:
+                if node.free:
+                    node.set_busy()
+                    job.assigned_nodes.append(node)
+                    if len(job.assigned_nodes) >= job.nodes:
+                        break
+
             return True
-        else:
-            print("No free nodes, job not submitted")
-            return False
+
+        print("No free nodes, job not submitted")
+        return False
+
+        # if self.has_space(job):
+        #     self.running_jobs.append(job)
+        #     self.nodes_free -= job.nodes
+        #     self.power_usage += job.true_node_power * job.nodes / 1e+6
+        #     self.bd_slowdowns.append(
+        #         max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+        #     )
+        #     self.total_energy += (
+        #         job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
+        #     )
+        #     self.job_history.append(job)
+        #     return True
+        # else:
+        #     print("No free nodes, job not submitted")
+        #     return False
 
     def step(self, t_step : timedelta):
         self.time += t_step
 
-        if not self.sorted:
-            self.running_jobs.sort(key=lambda job: job.end)
-            self.sorted = True
+        self.running_jobs.sort(key=lambda job: job.end)
 
         finished_jobs = []
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             finished_jobs.append(self.running_jobs.pop(0))
             self.nodes_free += finished_jobs[-1].nodes
             self.power_usage -= finished_jobs[-1].true_node_power * finished_jobs[-1].nodes / 1e+6
+            for node in finished_jobs[-1].assigned_nodes:
+                node.set_free()
+
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
@@ -307,3 +499,4 @@ class Archer2():
         self.times.append(self.time)
 
         return finished_jobs # Need this for fair share usage accounting
+
