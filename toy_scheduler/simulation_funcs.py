@@ -38,7 +38,8 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         data, cache, ".".join(os.path.basename(data).split(".")[:-1]), df_name,
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
-            "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account"
+            "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
+            "Partition"
         ],
         nrows=rows
     )
@@ -60,7 +61,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
-    df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem"], axis=1)
+    df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem"], axis=1)
 
     # Some error in slurm accounting, can correct for case of one other user in account
     for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
