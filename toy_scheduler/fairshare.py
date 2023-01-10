@@ -11,6 +11,8 @@ class Root():
         self.name = name
         self.usage = initial_usage
 
+        self.new_child_usage = False
+
         self.children = []
 
         self.is_root = True
@@ -217,44 +219,13 @@ class FairTree():
         # Compute levelFS and sort (decay past usages as we go)
         self._tree_traversal(self.root_node)
 
-        # rank = 0
-        # for partition_node in self.root_node.children:
-        #     partition_node.usage *= self.decay_constant
-        #     partition_node.levelfs = partition_node.shares / partition_node.usage
-        # self.root_node.children.sort(key=lambda node: node.levelfs, reverse=True)
-
-        # for partition_node in self.root_node.children:
-        #     for proj_node in partition_node.children:
-        #         proj_node.usage *= self.decay_constant
-        #         proj_node.levelfs = proj_node.shares / proj_node.usage
-        #     partition_node.children.sort(key=lambda node: node.levelfs, reverse=True)
-
-        #     for proj_node in partition_node.children:
-        #         for acc_node in proj_node.children:
-        #             acc_node.usage *= self.decay_constant
-        #             acc_node.levelfs = acc_node.shares / acc_node.usage
-        #         proj_node.children.sort(key=lambda node: node.levelfs, reverse=True)
-
-        #         for acc_node in proj_node.children:
-        #             for user_node in acc_node.children:
-        #                 user_node.usage *= self.decay_constant
-        #                 user_node.levelfs = user_node.shares / user_node.usage
-        #             acc_node.children.sort(key=lambda node: node.levelfs, reverse=True)
-
-        #             for user_node in acc_node.children:
-        #                 user_node.fairshare_factor = 1.0 - rank / self.tot_num_assocs
-        #                 rank += 1
-        #                 if rank > self.tot_num_assocs - 10:
-        #                     print(user_node.name, user_node.parent.name, user_node.usage, sep=":", end=", ")
-        # print()
-
     def _tree_traversal(self, current_node, rank=0):
         if current_node.is_leaf:
             current_node.fairshare_factor = 1.0 - rank / self.tot_num_assocs
             rank += 1
             return rank
 
-        if not current_node.new_child_usage: # Avoid resorting when order is unchanged
+        if not current_node.new_child_usage: # Avoid re-sorting when order is unchanged
             for child_node in current_node.children:
                 child_node.usage *= self.decay_constant
         else:
