@@ -32,6 +32,14 @@ class Job():
         self.start = time
         self.end = time + self.runtime
         self.endlimit = time + self.reqtime
+
+        self.qos.job_started(self.user, self.nodes)
+        return self
+
+    def end_job(self):
+        for node in self.assigned_nodes:
+            node.set_free()
+        self.qos.job_ended(self.user, self.nodes)
         return self
 
 
@@ -40,11 +48,25 @@ class Queue():
         self.priority_sorter = priority_sorter
         self.time = init_time
 
+        # hardcoded for now
+        # Don't have a proper way to simulate reservations as I can't see a history of deleted ones
+        self.qoss = {
+            "normal" : QOS("normal", 0, -1, -1, -1, -1),
+            "reservation" : QOS("reservation", 1, -1, -1, -1, -1),
+            "taskfarm" : QOS("taskfarm", 1, -1, 128, 512, 32),
+            "standard" : QOS("standard", 1, -1, -1, 1024, 16),
+            "short" : QOS("short", 1, -1, -1, 32, 4),
+            "long" : QOS("long", 1, 2048, -1, 512, 16),
+            "largescale" : QOS("largescale", 1, -1, -1, -1, 1),
+            "highmem" : QOS("highmem", 1, -1, -1, 256, 16),
+            "lowpriority" : QOS("lowpriority", 0.002, -1, -1, 2048, 16)
+        }
+
         self.all_jobs = [
             Job(
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
-                job_row.User, job_row.Account, job_row.QOS, job_row.Partition
+                job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self.queue = []
@@ -57,8 +79,9 @@ class Queue():
 
         try:
             while self.all_jobs[0].submit <= self.time:
-                self.queue.append(self.all_jobs.pop(0))
-        except IndexError:
+                new_job = self.all_jobs.pop(0)
+                self.queue.append(new_job)
+        except IndexError: # No more new jobs
             pass
 
         self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
@@ -74,7 +97,7 @@ class Partition():
     def __init__(self, name, priority_tier, priority_weight):
         self.name = name
         self.priority_tier = priority_tier
-        self.priority_weight = priority_weight
+        self.priority_weight = priority_weight # Normalised s.t. partition with greatest has 1
 
         self.nodes = []
 
@@ -88,6 +111,43 @@ class Partition():
 
     def available_nodes(self):
         return self.num_available
+
+
+class QOS():
+    def __init__(self, name, priority, grp_nodes, grp_jobs, usr_nodes, usr_jobs):
+        self.name = name
+        self.priority = priority
+
+        # TODO This is dumb, implement in a way that means in these cases the quota is just not tracked
+        grp_jobs = 1000000000000 if grp_jobs == -1 else grp_jobs
+        grp_nodes = 1000000000000 if grp_nodes == -1 else grp_nodes
+        usr_jobs = 1000000000000 if usr_jobs == -1 else usr_jobs
+        usr_nodes = 1000000000000 if usr_nodes == -1 else usr_nodes
+
+        self.grp_quotas = []
+        self.job_quota_remaining = grp_jobs
+        self.node_quota_remaining = grp_nodes
+
+        self.usr_job_quota_remaining = defaultdict(lambda: usr_jobs)
+        self.usr_node_quota_remaining = defaultdict(lambda: usr_nodes)
+
+    def job_started(self, user, nodes):
+        self.job_quota_remaining -= 1
+        self.node_quota_remaining -= nodes
+        self.usr_job_quota_remaining[user] -= 1
+        self.usr_node_quota_remaining[user] -= nodes
+
+    def job_ended(self, user, nodes):
+        self.job_quota_remaining += 1
+        self.node_quota_remaining += nodes
+        self.usr_job_quota_remaining[user] += 1
+        self.usr_node_quota_remaining[user] += nodes
+
+    def hold_job(self, user, nodes):
+        return (
+            not self.job_quota_remaining or nodes > self.node_quota_remaining or
+            not self.usr_job_quota_remaining[user] or nodes > self.usr_node_quota_remaining[user]
+        )
 
 
 class Node():
@@ -228,6 +288,8 @@ class Archer2():
             ) for partition in self.partitions.keys()
         }
         for i_job, job in enumerate(queue.queue):
+            if job.qos.hold_job(job.user, job.nodes):
+                continue
             # break if no blocks or only <= min blocks available for immediate backfill
             if not free_blocks_ready_intervals:
                 break
@@ -384,6 +446,8 @@ class Archer2():
                 continue
 
             if self.has_space(job):
+                if job.qos.hold_job(job.user, job.nodes):
+                    continue
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
                     job_ready.runtime *= time_factor
@@ -469,11 +533,9 @@ class Archer2():
         finished_jobs = []
         while self.running_jobs and self.running_jobs[0].end <= self.time:
             finished_jobs.append(self.running_jobs.pop(0))
+            finished_jobs[-1].end_job()
             self.nodes_free += finished_jobs[-1].nodes
             self.power_usage -= finished_jobs[-1].true_node_power * finished_jobs[-1].nodes / 1e+6
-            for node in finished_jobs[-1].assigned_nodes:
-                node.set_free()
-
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:

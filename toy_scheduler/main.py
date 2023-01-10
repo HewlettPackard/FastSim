@@ -16,7 +16,6 @@ sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import hour_to_timeofday
 from toy_scheduler import ARCHER2 # legacy reasons
 
-
 """ Priority Sorters """
 
 class FIFOSorter():
@@ -93,16 +92,19 @@ class AgeSizeSorter():
         )
         return sorted_queue
 
+# TODO Implement partitions as objects attached to the nodes rather than having to got through this
+# dictionary using the name
 class MFPrioritySorter():
     def __init__(
         self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
-        fairshare_weight, max_age, partition_weight
+        fairshare_weight, max_age, partition_weight, qos_weight
     ):
-        self.size_weight = size_weight
+        self.size_weight = size_weight / 5860
         self.age_weight = age_weight
         self.fairshare_weight = fairshare_weight
         self.max_age = max_age.total_seconds()
         self.partition_weight = partition_weight
+        self.qos_weight = qos_weight
         self.time = init_time
 
         self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
@@ -125,6 +127,8 @@ class MFPrioritySorter():
             self.priority_factors.append(self._fairshare_priority)
         if partition_weight:
             self.priority_factors.append(self._partition_priority)
+        if qos_weight:
+            self.priority_factors.append(self._qos_priority)
 
     def sort(self, queue, time):
         # The key means first sort by partition priority tier, them sort my MF priority
@@ -148,32 +152,24 @@ class MFPrioritySorter():
         )
         return sorted_queue
 
-        # sorted_queue = sorted(
-        #     queue,
-        #     key=(
-        #         lambda job: (
-        #             self.partitions[job.partition].priority_tier, (
-        #                 (
-        #                     min((time - job.submit).total_seconds() /
-        #                     self.max_age.total_seconds(), 1) *
-        #                     self.age_weight
-        #                 ) +
-        #                 (
-        #                     (job.nodes / 5860) * self.size_weight
-        #                 ) +
-        #                 (
-        #                     self.fairtree.uniq_users[job.account][job.user].fairshare_factor *
-        #                     self.fairshare_weight
-        #                 ) +
-        #                 (
-        #                     self.partitions[job.partition].priority_weight * self.partition_weight
-        #                 )
-        #             )
-        #         )
-        #     ),
-        #     reverse=True
-        # )
-        # return sorted_queue
+    def sort_inplace(self, queue, time):
+        self.time = time
+        if self.no_partition_priority_tiers:
+            queue.sort(
+                queue,
+                key=lambda job: sum(priority_calc(job) for priority_calc in self.priority_factors),
+                reverse=True
+            )
+            return sorted_queue
+
+        queue.sort(
+            queue,
+            key=lambda job: (
+                self._partition_priority_tier(job),
+                sum(priority_calc(job) for priority_calc in self.priority_factors)
+            ),
+            reverse=True
+        )
 
     def _partition_priority_tier(self, job):
         return self.partitions[job.partition].priority_tier
@@ -182,7 +178,7 @@ class MFPrioritySorter():
         return min((self.time - job.submit).total_seconds() / self.max_age, 1) * self.age_weight
 
     def _size_priority(self, job):
-        return (job.nodes / 5860) * self.size_weight
+        return job.nodes * self.size_weight
 
     def _fairshare_priority(self, job):
         return (
@@ -193,6 +189,8 @@ class MFPrioritySorter():
     def _partition_priority(self, job):
         return self.partitions[job.partition].priority_weight * self.partition_weight
 
+    def _qos_priority(self, job):
+        return job.qos.priority * self.qos_weight
 
 """ End Priority Sorters """
 
@@ -230,21 +228,6 @@ class KDEResponses():
         return power_factor, time_factor
 
 """ End Low Freq Response Calcs"""
-
-""" Low Freq Conditions """
-
-# class SmallQueue():
-#     def __init__(self, queue_cut):
-#         self.queue_cut = queue_cut
-#         self.queue_size = 0
-
-#     def __call__(self, queue):
-#         small_queue = self.queue_size <= self.queue_cut
-#         self.queue_size = len(queue.queue)
-#         return small_queue
-
-""" End Low Freq Conditions """
-
 
 def main(args):
     df_jobs = prep_job_data(
@@ -402,7 +385,7 @@ def main(args):
                 t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 300,
-                    timedelta(days=14), 0
+                    timedelta(days=14), 0, 10000
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
@@ -413,7 +396,7 @@ def main(args):
                 t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 0,
-                    timedelta(days=14), 0
+                    timedelta(days=14), 0, 10000
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
                 no_retained=True
