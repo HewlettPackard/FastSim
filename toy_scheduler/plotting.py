@@ -1041,7 +1041,7 @@ def plot_blob(
             r"$(\mathrm{avg\_wait})^{-1}$", r"$(\mathrm{max\_wait})^{-1}$",
             r"$(\mathrm{avg\_response})^{-1}$"
         ]
-        plt.xticks(angles[:-1], category_labels, size=18)
+        plt.xticks(angles[:-1], category_labels, size=16)
         for label in ax.get_xticklabels():
             if label.get_text() == r"$(\mathrm{energy})^{-1}$":
                 label.set_verticalalignment("bottom")
@@ -1073,7 +1073,7 @@ def plot_blob(
 
         )
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=18, ncol=5)
-        plt.subplots_adjust(left=0.05, top=0.9, right=0.95, bottom=0.1)
+        plt.subplots_adjust(left=0.1, top=0.9, right=0.9, bottom=0.1)
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt{}.pdf".format(
