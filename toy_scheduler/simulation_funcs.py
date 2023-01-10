@@ -1,4 +1,5 @@
 import os, sys
+from collections import defaultdict
 from typing import Union
 from datetime import datetime, timedelta
 
@@ -118,14 +119,27 @@ def run_sim(
 
         # Print every 3 hours at most
         if verbose and (time.hour != (time - t_step).hour and not time.hour % 3):
+            qos_holds = defaultdict(int)
+            for job in queue.queue:
+                qos_holds[job.qos.name] += job.qos.hold_job(job.user, job.nodes)
             print(
                 "{} (step {}):\n".format(time, cnt) +
-                "Utilisation = {:.2f}%\tNodesDrained = {}({})\tPower = {:.4f} MW\tQueueSize = {}\t\
-                 RunningJobs = {}".format(
-                    system.occupancy_history[-1] * 100, system.nodes_drained,
-                    system.nodes_drained_carryover, system.power_usage, len(queue.queue),
-                    len(system.running_jobs)
-                )
+                "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesDrained = {}({})\t\
+                 Power = {:.4f} MW\n".format(
+                    system.occupancy_history[-1] * 100,
+                    sum(
+                        1 / 584 for job in system.running_jobs for node in job.assigned_nodes if (
+                            "highmem" in [ partition.name for partition in node.partitions ]
+                        )
+                    ) * 100,
+                    system.nodes_drained, system.nodes_drained_carryover, system.power_usage
+                ) +
+                "QueueSize = {} (highmem {}) (held by qos {} : ".format(
+                    len(queue.queue), sum(1 for job in queue.queue if job.partition == "highmem"),
+                    sum(qos_holds.values())
+                ) +
+                " ".join("{}={}".format(name, num) for name, num in qos_holds.items()) +
+                ")\tRunningJobs = {}\n".format(len(system.running_jobs))
             )
 
         cnt += 1
