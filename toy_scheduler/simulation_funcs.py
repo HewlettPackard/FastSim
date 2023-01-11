@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
-from classes import Queue
+from classes import Queue, Dependency
 
 sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
@@ -31,6 +31,22 @@ def model_power_predictions(model, df):
     )
     return model.predict(df) # NOTE: ColumnTransformer ignores columns it wasn't fit with
 
+def get_dependency_arg(submit_line):
+    words = submit_line.split(" ")
+    dep_arg = None
+    for i_last_word, word in enumerate(words[1:]):
+        # Batch script or executable marks end of options
+        if word[0] != "-" and (words[i_last_word][0] != "-" or "=" in words[i_last_word]):
+            break
+        if "--dependency=" in word:
+            dep_arg = word.split("--dependency=")[1]
+            break
+        if word == "-d":
+            dep_arg = words[i_last_word + 2]
+            break
+
+    return dep_arg
+
 """ End Helpers """
 
 
@@ -40,7 +56,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition"
+            "Partition", "SubmitLine"
         ],
         nrows=rows
     )
@@ -62,13 +78,17 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
-    df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem"], axis=1)
+    df_jobs.["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
+
+    df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem", "SubmitLine"], axis=1)
 
     # Some error in slurm accounting, can correct for case of one other user in account
     for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
         acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
         if len(acc_users) == 2:
             df_jobs.at[i, "User"] = acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
+
+    
 
     return df_jobs
 

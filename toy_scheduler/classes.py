@@ -9,7 +9,7 @@ from globals import *
 class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
-        true_node_power, true_job_start, user, account, qos, partition
+        true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name
     ):
         self.id = id
         self.nodes = nodes
@@ -23,7 +23,11 @@ class Job():
         self.account = account
         self.qos = qos
         self.partition = partition
+        self.name = name
 
+        self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
+
+        self.launch_time = submit
         self.start = None
         self.end = None
         self.assigned_nodes = []
@@ -42,11 +46,16 @@ class Job():
         self.qos.job_ended(self.user, self.nodes)
         return self
 
+    def relaunch(self, self.time):
+        self.launch_time = self.time
+
 
 class Queue():
     def __init__(self, df_jobs, init_time, priority_sorter):
         self.priority_sorter = priority_sorter
         self.time = init_time
+
+        self.system = None
 
         # hardcoded for now
         # Don't have a proper way to simulate reservations as I can't see a history of deleted ones
@@ -71,6 +80,11 @@ class Queue():
         ]
         self.queue = []
 
+        self.waiting_dependency = []
+
+    def set_system(self, system):
+        self.system = system
+
     def step(self, t_step, retained):
         self.time += t_step
 
@@ -80,6 +94,9 @@ class Queue():
         try:
             while self.all_jobs[0].submit <= self.time:
                 new_job = self.all_jobs.pop(0)
+                if new_job.dependency:
+                    new_job.dependency.update_finished(system
+                    
                 self.queue.append(new_job)
         except IndexError: # No more new jobs
             pass
@@ -91,6 +108,74 @@ class Queue():
             return self.all_jobs[0].submit
         except IndexError:
             return datetime.max
+
+
+class Dependency():
+    def __init__(self, dependency_args, user, name):
+        self.job_user_name = (user, name)
+        self.delimiter = "?" if "?" in dependency_args else ","
+
+        self.conditions = {}
+        self.singleton = False
+        for condition in dependency_args.split(self.delimiter):
+            if condition == "singleton":
+                self.singleton = True
+                continue
+
+            type = condition.split(":")[0]
+            job_ids = { int(job_id) for job_id in condition.split(":")[1:] }
+            # Jobs in trace all ran so can assume these conditions are met and treat all the same
+            if type == "afterok" or type == "afternotok" or type == "afterany":
+                self.conditions["afterany"] = job_ids
+                continue
+
+            if type == "after":
+                self.conditions[type] = job_ids
+           
+            raise NotImplementedError("Unrecognised type {}".format(type))
+
+        self.submitted_relevant = "after" in self.conditions.keys()
+        self.finished_relevant = set(self.conditions.keys()) & {"afterany", "singleton"}
+
+        self.conditions_met = not any(self.conditions.values())
+
+    def update_finished(self, jobs):
+        if not self.finished_relevant or self.conditions_met:
+            return
+
+        for job in jobs:
+            if job.id in self.conditions["afterany"]:
+                self.conditions["afterany"].remove(job.id)
+                if self.delimiter == "?":
+                    self.conditions_met = True
+                    return
+
+    def update_submitted(self, jobs):
+        if not self.submitted_relevant or self.conditions_met:
+            return
+
+        for job in jobs:
+            if job.id in self.conditions["after"]:
+                self.conditions["after"].remove(job.id)
+                if self.delimiter == "?":
+                    self.conditions_met = True
+                    return
+
+    def can_release(self, launched_jobs):
+        if not self.conditions_met:
+            self.conditions_met = not any(self.conditions.values())
+            if not conditions_met:
+                return False
+
+        if self.conditions_met and not self.singleton:
+            return True
+
+        if self.conditions_met and self.singleton:
+            if self.job_user_name in { (job.user, job.name) for job in launched_jobs }:
+                return False
+            return True
+
+        return False
 
 
 class Partition():
@@ -490,7 +575,7 @@ class Archer2():
             self.nodes_free -= job.nodes
             self.power_usage += job.true_node_power * job.nodes / 1e+6
             self.bd_slowdowns.append(
-                max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+                max((job.end - job.launch_time)/max(job.runtime, BD_THRESHOLD), 1)
             )
             self.total_energy += (
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9

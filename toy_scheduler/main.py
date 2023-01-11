@@ -23,7 +23,7 @@ class FIFOSorter():
         pass
 
     def sort(self, queue, time):
-        return sorted(queue, key=lambda job: job.submit)
+        return sorted(queue, key=lambda job: job.launch_time)
 
 
 class SimpleLowHighPowerSorter():
@@ -84,7 +84,7 @@ class AgeSizeSorter():
             queue,
             key=(
                 lambda job: (
-                    min((time - job.submit).total_seconds() / (24 * (60**2)) / 14, 1) *
+                    min((time - job.launch_time).total_seconds() / (24 * (60**2)) / 14, 1) *
                     self.age_weight + self.size_factor_calc(job) + self.noise_factor_calc(job)
                 )
             ),
@@ -152,30 +152,11 @@ class MFPrioritySorter():
         )
         return sorted_queue
 
-    def sort_inplace(self, queue, time):
-        self.time = time
-        if self.no_partition_priority_tiers:
-            queue.sort(
-                queue,
-                key=lambda job: sum(priority_calc(job) for priority_calc in self.priority_factors),
-                reverse=True
-            )
-            return sorted_queue
-
-        queue.sort(
-            queue,
-            key=lambda job: (
-                self._partition_priority_tier(job),
-                sum(priority_calc(job) for priority_calc in self.priority_factors)
-            ),
-            reverse=True
-        )
-
     def _partition_priority_tier(self, job):
         return self.partitions[job.partition].priority_tier
 
     def _age_priority(self, job):
-        return min((self.time - job.submit).total_seconds() / self.max_age, 1) * self.age_weight
+        return min((self.time - job.launch_time).total_seconds() / self.max_age, 1) * self.age_weight
 
     def _size_priority(self, job):
         return job.nodes * self.size_weight

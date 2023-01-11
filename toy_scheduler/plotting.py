@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.dates
 from matplotlib import pyplot as plt
 
-from classes import Archer2
+from classes import Archer2, Job
 from globals import *
 
 
@@ -234,6 +234,30 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
 
     return fig, ax
 
+def update_job_class_as_required(archer, archer_fcfs):
+    for system in archer.values():
+        if not hasattr(system.running_jobs[0], "launch_time"):
+            system.running_jobs = [
+                Job(
+                    job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
+                    job.true_node_power, job.true_job_start,
+                    job.user if hasattr(job, "user") else "None",
+                    job.qos if hasattr(job, "qos") else "None",
+                    job.partition if hasattr(job, "partition") else "None", "None", "None"
+                ) for job in system.running_jobs 
+            ]
+
+    if not hasattr(arhcer_fcfs.running_jobs[0], "launch_time"):
+        archer_fcfs.running_jobs = [
+            Job(
+                job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
+                job.true_node_power, job.true_job_start,
+                job.user if hasattr(job, "user") else "None",
+                job.qos if hasattr(job, "qos") else "None",
+                job.partition if hasattr(job, "partition") else "None", "None", "None"
+            ) for job in archer_fcfs.running_jobs 
+        ]
+
 """ End Helper Plotting Thingys """
 
 
@@ -241,6 +265,9 @@ def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
     save_suffix="", batch=False, df_jobs=None
 ):
+    # For legacy experiments
+    update_job_class_as_required(archer, archer_fcfs)
+
     if "cab_power_plot" in plots:
         cabs = {
             datetime.strptime(os.path.basename(path), "system_%y%m%d") : path
@@ -985,14 +1012,14 @@ def plot_blob(
         baseline_energy = total_energy_nolowfreq
         baseline_avg_slowdown = np.mean(archer[-1].bd_slowdowns)
         wait_times = [
-            (job.start - job.submit).total_seconds() for job in archer[-1].job_history if (
-                job.submit >= start[-1]
+            (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history if (
+                job.launch_time >= start[-1]
             )
         ]
         baseline_avg_wait, baseline_max_wait = np.mean(wait_times), max(wait_times)
         responses = [
-            (job.end - job.submit).total_seconds() for job in archer[-1].job_history if (
-                job.submit >= start[-1]
+            (job.end - job.launch_time).total_seconds() for job in archer[-1].job_history if (
+                job.launch_time >= start[-1]
             )
         ]
         baseline_avg_response = np.mean(responses)
@@ -1009,15 +1036,15 @@ def plot_blob(
             )
             avg_slowdown = np.mean(archer_entry.bd_slowdowns) / baseline_avg_slowdown
             wait_times = [
-                (job.start - job.submit).total_seconds() for job in archer_entry.job_history if (
-                    job.submit >= start[queue_cut]
+                (job.start - job.launch_time).total_seconds() for job in archer_entry.job_history if (
+                    job.launch_time >= start[queue_cut]
                 )
             ]
             avg_wait = np.mean(wait_times) / baseline_avg_wait
             max_wait = max(wait_times) / baseline_max_wait
             responses = [
-                (job.end - job.submit).total_seconds() for job in archer_entry.job_history if (
-                    job.submit >= start[-1]
+                (job.end - job.launch_time).total_seconds() for job in archer_entry.job_history if (
+                    job.launch_time >= start[-1]
                 )
             ]
             avg_response = np.mean(responses) / baseline_avg_response
@@ -1100,7 +1127,7 @@ def plot_blob(
             "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
                 np.mean(archer[0].bd_slowdowns), np.std(archer[0].bd_slowdowns)
             ) +
-            "true start mean bd slowdown={}+-{}".format(
+            " true start mean bd slowdown={}+-{}".format(
                 np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
             )
         )
@@ -1108,7 +1135,7 @@ def plot_blob(
             "MF priority w/o fairshare mean bd slowdown={}+-{}".format(
                 np.mean(archer[1].bd_slowdowns), np.std(archer[1].bd_slowdowns)
             ) +
-            "true start mean bd slowdown={}+-{}".format(
+            " true start mean bd slowdown={}+-{}".format(
                 np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
             )
         )
@@ -1180,13 +1207,13 @@ def plot_blob(
             plt.show()
 
         wait_times_true = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
@@ -1207,16 +1234,16 @@ def plot_blob(
 
         print(
             "===Repeating but now cutting out first 28 days of jobs in order to somewhat clear" +
-            "any effect from unkown initial usages==="
+            " any effect from unkown initial usages==="
         )
 
         start_time = archer[0].init_time + timedelta(days=28)
         for key in archer.keys():
             archer[key].job_history = [
-                job for job in archer[key].job_history if job.submit > start_time
+                job for job in archer[key].job_history if job.launch_time > start_time
             ]
             archer[key].bd_slowdowns = [
-                max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                max((job.end - job.launch_time) / max(job.runtime, BD_THRESHOLD), 1) for job in (
                     archer[key].job_history
                 )
             ]
@@ -1265,10 +1292,10 @@ def plot_blob(
             plt.show()
 
         archer_fifo.job_history = [
-            job for job in archer_fifo.job_history if job.submit > start_time
+            job for job in archer_fifo.job_history if job.launch_time > start_time
         ]
         archer_fifo.bd_slowdowns = [
-            max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+            max((job.end - job.launch_time) / max(job.runtime, BD_THRESHOLD), 1) for job in (
                 archer_fifo.job_history
             )
         ]
@@ -1301,13 +1328,13 @@ def plot_blob(
             plt.show()
 
         wait_times_true = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
+            job.id : (job.start - job.launch_time).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
