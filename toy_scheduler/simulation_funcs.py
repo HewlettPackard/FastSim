@@ -153,8 +153,15 @@ def run_sim(
                     ) * 100,
                     system.nodes_drained, system.nodes_drained_carryover, system.power_usage
                 ) +
-                "QueueSize = {} (highmem {}) (held by dependency {} qos {} : ".format(
-                    len(queue.queue), sum(1 for job in queue.queue if job.partition == "highmem"),
+                "QueueSize = {} (held by priority {} (highmem {}) dependency {} qos {} : ".format(
+                    len(queue.queue + queue.waiting_dependency),
+                    len(queue.queue) - sum(qos_holds.values()),
+                    sum(
+                        1 for job in queue.queue if (
+                            job.partition == "highmem" and
+                            not job.qos.hold_job(job.user, job.nodes)
+                        )
+                    ),
                     len(queue.waiting_dependency), sum(qos_holds.values())
                 ) +
                 " ".join("{}={}".format(name, num) for name, num in qos_holds.items()) +

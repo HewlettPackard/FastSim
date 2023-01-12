@@ -236,8 +236,8 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
 
 def update_job_class_as_required(archer, archer_fcfs):
     for system in archer.values():
-        if not hasattr(system.running_jobs[0], "launch_time"):
-            system.running_jobs = [
+        if not hasattr(system.job_history[0], "launch_time"):
+            system.job_history = [
                 Job(
                     job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
                     job.true_node_power, job.true_job_start,
@@ -247,8 +247,8 @@ def update_job_class_as_required(archer, archer_fcfs):
                 ) for job in system.running_jobs 
             ]
 
-    if not hasattr(arhcer_fcfs.running_jobs[0], "launch_time"):
-        archer_fcfs.running_jobs = [
+    if not hasattr(archer_fcfs.job_history[0], "launch_time"):
+        archer_fcfs.job_history = [
             Job(
                 job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
                 job.true_node_power, job.true_job_start,

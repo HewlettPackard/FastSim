@@ -92,12 +92,11 @@ class Queue():
                 continue
 
             for dep_type, ids in job.dependency.conditions.items():
-                job.dependency.conditions[dep_type] = ids - all_ids
+                job.dependency.conditions[dep_type] = ids.intersection(all_ids)
 
             job.dependency.conditions_met = not any(job.dependency.conditions.values())
             if job.dependency.conditions_met and not job.dependency.singleton:
                 job.dependency = None
-                print("removed")
 
     def set_system(self, system):
         self.system = system
@@ -108,7 +107,9 @@ class Queue():
             job.dependency.update_submitted(self.system.submitted_jobs_step)
             if job.dependency.can_release(self.queue, self.system.running_jobs):
                 self.queue.append(self.waiting_dependency.pop(i_job).relaunch(self.time))
-                print("released")
+
+            if job.submit < self.time - timedelta(days=10):
+                print(job.dependency.conditions, job.dependency.singleton)
 
     def step(self, t_step, retained):
         self.check_dependencies()
@@ -128,6 +129,7 @@ class Queue():
                     )
                     if not new_job.dependency.can_release(self.queue, self.system.running_jobs):
                         self.waiting_dependency.append(new_job)
+                        continue
                 self.queue.append(new_job)
         except IndexError: # No more new jobs
             pass
@@ -154,7 +156,7 @@ class Dependency():
                 continue
 
             dep_type = condition.split(":")[0]
-            job_ids = { int(job_id) for job_id in condition.split(":")[1:] }
+            job_ids = { job_id for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
             if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":
                 self.conditions["afterany"] = job_ids
@@ -172,6 +174,7 @@ class Dependency():
         self.conditions_met = not any(self.conditions.values())
 
     def update_finished(self, jobs):
+        # return 
         if not self.finished_relevant or self.conditions_met:
             return
 
@@ -183,6 +186,7 @@ class Dependency():
                     return
 
     def update_submitted(self, jobs):
+        # return
         if not self.submitted_relevant or self.conditions_met:
             return
 
@@ -194,6 +198,7 @@ class Dependency():
                     return
 
     def can_release(self, queued_jobs, running_jobs):
+        # return True if np.random.rand() < 0.1 else False
         if not self.conditions_met:
             self.conditions_met = not any(self.conditions.values())
             if not self.conditions_met:
@@ -342,8 +347,6 @@ class Archer2():
             return self.partitions[partition].available_nodes()
 
         return self.nodes_free
-
-        # return self.nodes_free - self.nodes_drained
 
     def next_event(self):
         if not self.running_jobs:
@@ -505,8 +508,6 @@ class Archer2():
         for i in sorted(jobs_submitted, reverse=True):
             self.submitted_jobs_step.append(queue.queue.pop(i))
 
-        queue.check_dependencies()
-
         if queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
             problemo = False
@@ -517,14 +518,11 @@ class Archer2():
                     job_ready.runtime *= time_factor
                     job_ready.reqtime *= self.low_freq_reqtime_factor
                     job_ready.true_node_power *= power_factor
-                problemo = not self.submit(job_ready.start_job(self.time))
-                if problemo:
+                if not self.submit(job_ready.start_job(self.time)):
                     print(self.available_nodes(), i, backfill_now)
-            if problemo:
-                print("=====")
 
             for i in sorted(backfill_now, reverse=True):
-               self.submitted_jobs_step.append((queue.queue.pop(i)))
+               self.submitted_jobs_step.append(queue.queue.pop(i))
 
         self.queue_size = len(queue.queue)
 
@@ -570,22 +568,23 @@ class Archer2():
             )
 
         # Resample drained nodes every 12 hour at most
-        if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
-            num_drain = max(
-                (
-                    round(np.random.normal(
-                        loc=self.node_down_mean, scale=self.node_down_mean / 2
-                    )) +
-                    self.nodes_drained_carryover
-                ),
-                0
-            )
-            if num_drain <= self.nodes_free:
-                self.nodes_drained = num_drain
-                self.nodes_drained_carryover = 0
-            else:
-                self.nodes_drained = self.nodes_free
-                self.nodes_drained_carryover = num_drain - self.nodes_free
+        if self.node_down_mean:
+            if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
+                num_drain = max(
+                    (
+                        round(np.random.normal(
+                            loc=self.node_down_mean, scale=self.node_down_mean / 2
+                        )) +
+                        self.nodes_drained_carryover
+                    ),
+                    0
+                )
+                if num_drain <= self.nodes_free:
+                    self.nodes_drained = num_drain
+                    self.nodes_drained_carryover = 0
+                else:
+                    self.nodes_drained = self.nodes_free
+                    self.nodes_drained_carryover = num_drain - self.nodes_free
 
         self.occupancy_history.append(1 - (self.available_nodes()/(5860 - self.nodes_drained)))
         self.power_history.append(self.power_usage)

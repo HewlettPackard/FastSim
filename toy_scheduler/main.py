@@ -19,7 +19,8 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # TODO Think it would be better to link everything with the ARCHER class so i dont have to pass
 # information between them manually
 
-# TODO Resort if dependency is released between submit and backfilling step. Currently the way
+# TODO Consider how frequenlty I want to check QOS and dependency queues eg. between submit
+# and backfill? If i do will need to resort if in the event anything is relases. Currently the way
 # retained is implemented makes this difficult, should probably remove this and just have the
 # retained be a thing in the priority sorter
 
