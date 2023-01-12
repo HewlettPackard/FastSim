@@ -56,7 +56,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition", "SubmitLine"
+            "Partition", "SubmitLine", "JobName"
         ],
         nrows=rows
     )
@@ -78,7 +78,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
-    df_jobs.["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
+    df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
 
     df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem", "SubmitLine"], axis=1)
 
@@ -88,8 +88,6 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         if len(acc_users) == 2:
             df_jobs.at[i, "User"] = acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
 
-    
-
     return df_jobs
 
 
@@ -98,6 +96,7 @@ def run_sim(
     no_retained=False, mf_priority_calc_step=False
 ):
     queue = Queue(df_jobs, t0, priority_sorter)
+    queue.set_system(system)
 
     np.random.seed(seed)
 
@@ -154,9 +153,9 @@ def run_sim(
                     ) * 100,
                     system.nodes_drained, system.nodes_drained_carryover, system.power_usage
                 ) +
-                "QueueSize = {} (highmem {}) (held by qos {} : ".format(
+                "QueueSize = {} (highmem {}) (held by dependency {} qos {} : ".format(
                     len(queue.queue), sum(1 for job in queue.queue if job.partition == "highmem"),
-                    sum(qos_holds.values())
+                    len(queue.waiting_dependency), sum(qos_holds.values())
                 ) +
                 " ".join("{}={}".format(name, num) for name, num in qos_holds.items()) +
                 ")\tRunningJobs = {}\n".format(len(system.running_jobs))

@@ -46,8 +46,9 @@ class Job():
         self.qos.job_ended(self.user, self.nodes)
         return self
 
-    def relaunch(self, self.time):
-        self.launch_time = self.time
+    def relaunch(self, time):
+        self.launch_time = time
+        return self
 
 
 class Queue():
@@ -75,17 +76,43 @@ class Queue():
             Job(
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
-                job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition
+                job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
+                job_row.DependencyArg, job_row.JobName
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
+        self._verify_dependencies()
         self.queue = []
 
         self.waiting_dependency = []
 
+    def _verify_dependencies(self):
+        all_ids = { job.id for job in self.all_jobs }
+        for job in self.all_jobs:
+            if not job.dependency:
+                continue
+
+            for dep_type, ids in job.dependency.conditions.items():
+                job.dependency.conditions[dep_type] = ids - all_ids
+
+            job.dependency.conditions_met = not any(job.dependency.conditions.values())
+            if job.dependency.conditions_met and not job.dependency.singleton:
+                job.dependency = None
+                print("removed")
+
     def set_system(self, system):
         self.system = system
 
+    def check_dependencies(self):
+        for i_job, job in enumerate(self.waiting_dependency):
+            job.dependency.update_finished(self.system.finished_jobs_step)
+            job.dependency.update_submitted(self.system.submitted_jobs_step)
+            if job.dependency.can_release(self.queue, self.system.running_jobs):
+                self.queue.append(self.waiting_dependency.pop(i_job).relaunch(self.time))
+                print("released")
+
     def step(self, t_step, retained):
+        self.check_dependencies()
+
         self.time += t_step
 
         if self.time < self.next_newjob():
@@ -95,8 +122,12 @@ class Queue():
             while self.all_jobs[0].submit <= self.time:
                 new_job = self.all_jobs.pop(0)
                 if new_job.dependency:
-                    new_job.dependency.update_finished(system
-                    
+                    new_job.dependency.update_finished(self.system.job_history)
+                    new_job.dependency.update_submitted(
+                        self.system.running_jobs + self.system.job_history
+                    )
+                    if not new_job.dependency.can_release(self.queue, self.system.running_jobs):
+                        self.waiting_dependency.append(new_job)
                 self.queue.append(new_job)
         except IndexError: # No more new jobs
             pass
@@ -122,20 +153,21 @@ class Dependency():
                 self.singleton = True
                 continue
 
-            type = condition.split(":")[0]
+            dep_type = condition.split(":")[0]
             job_ids = { int(job_id) for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
-            if type == "afterok" or type == "afternotok" or type == "afterany":
+            if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":
                 self.conditions["afterany"] = job_ids
                 continue
 
-            if type == "after":
-                self.conditions[type] = job_ids
-           
-            raise NotImplementedError("Unrecognised type {}".format(type))
+            if dep_type == "after":
+                self.conditions[dep_type] = job_ids
+                continue
+
+            raise NotImplementedError("Unrecognised dep_type {}".format(dep_type))
 
         self.submitted_relevant = "after" in self.conditions.keys()
-        self.finished_relevant = set(self.conditions.keys()) & {"afterany", "singleton"}
+        self.finished_relevant = "afterany" in self.conditions.keys()
 
         self.conditions_met = not any(self.conditions.values())
 
@@ -161,16 +193,17 @@ class Dependency():
                     self.conditions_met = True
                     return
 
-    def can_release(self, launched_jobs):
+    def can_release(self, queued_jobs, running_jobs):
         if not self.conditions_met:
             self.conditions_met = not any(self.conditions.values())
-            if not conditions_met:
+            if not self.conditions_met:
                 return False
 
         if self.conditions_met and not self.singleton:
             return True
 
         if self.conditions_met and self.singleton:
+            launched_jobs = running_jobs + queued_jobs
             if self.job_user_name in { (job.user, job.name) for job in launched_jobs }:
                 return False
             return True
@@ -281,6 +314,8 @@ class Archer2():
         self.times = [self.time]
         self.bd_slowdowns = []
         self.job_history = []
+        self.finished_jobs_step = []
+        self.submitted_jobs_step = []
         self.total_energy = 0.0 # GJ
 
         self.partitions = {
@@ -439,91 +474,13 @@ class Archer2():
 
                     break
 
-        # Conservative backfilling
-        # free_blocks = defaultdict(int)
-        # free_blocks[(self.time, datetime.max)] = self.available_nodes()
-        # for job in self.running_jobs:
-        #     # Some jobs exceeding timelimit and some with zero reqtime
-        #     if job.endlimit <= self.time:
-        #         job.endlimit = self.time + 0.1 * job.reqtime + timedelta(minutes=1)
-        #     free_blocks[(job.endlimit, datetime.max)] += job.nodes
-
-        # min_required_block_time = min( # NOTE should this be max?
-        #     self.time + self.backfill_opts["min_block_width"],
-        #     self.time + (
-        #         min(queue.queue, key=lambda job: job.reqtime).reqtime *
-        #         self.low_freq_reqtime_factor
-        #     )
-        # )
-
-        # # max_block_time = datetime.max
-        # free_blocks_ready_intervals = (
-        #     { (self.time, datetime.max) } if self.available_nodes() else set()
-        # )
-        # max_block_time = datetime.max
-        # for i_job, job in enumerate(
-        #     list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
-        # ):
-        #     reqtime = job.reqtime * self.low_freq_reqtime_factor
-        #     # Only need to plan nodes for jobs that may be relevant to immediate scheduling
-        #     if self.time + reqtime > max_block_time:
-        #         continue
-
-        #     free_nodes = 0
-        #     selected_intervals = {}
-
-        #     # break if no blocks or only <= min blocks available for immediate backfill
-        #     if not free_blocks_ready_intervals:
-        #         break
-        #     max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
-        #     if max_block_time < min_required_block_time:
-        #         break
-
-        #     for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
-        #         selected_intervals[interval] = nodes
-        #         free_nodes += nodes
-
-        #         if job.nodes <= free_nodes:
-        #             usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
-        #             usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
-
-        #             # Nodes do not remain available for this jobs runtime, find new block
-        #             if usage_block_start + reqtime > usage_block_end:
-        #                 selected_intervals = {}
-        #                 free_nodes = 0
-        #                 continue
-
-        #             usage_block_end = usage_block_start + reqtime
-
-        #             if usage_block_start == self.time:
-        #                 backfill_now.append(i_job)
-
-        #             for key in selected_intervals.keys():
-        #                 if key[0] == self.time:
-        #                     free_blocks_ready_intervals.remove((key[0], key[1]))
-        #                     if key[0] != usage_block_start:
-        #                         free_blocks_ready_intervals.add((key[0], usage_block_start))
-
-        #                 if key[0] != usage_block_start:
-        #                     free_blocks[(key[0], usage_block_start)] += free_blocks[key]
-        #                 if key[1] != usage_block_end:
-        #                     free_blocks[(usage_block_end, key[1])] += free_blocks[key]
-
-        #                 free_blocks.pop(key)
-
-        #             if free_nodes - job.nodes:
-        #                 free_blocks[(usage_block_start, usage_block_end)] += free_nodes - job.nodes
-        #                 if usage_block_start == self.time:
-        #                     # NOTE what is the key[0] doing here? should it be self.time?
-        #                     free_blocks_ready_intervals.add((key[0], usage_block_end))
-
-        #             break
-
         return backfill_now
 
     def submit_jobs(self, queue : Queue):
         partitions_full = set()
         low_freqs = self.low_freq_condition(self.queue_size)
+
+        self.submitted_jobs_step = []
 
         jobs_submitted = []
         for i_job, job in enumerate(queue.queue):
@@ -546,7 +503,9 @@ class Archer2():
                     break
 
         for i in sorted(jobs_submitted, reverse=True):
-            queue.queue.pop(i)
+            self.submitted_jobs_step.append(queue.queue.pop(i))
+
+        queue.check_dependencies()
 
         if queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
@@ -565,7 +524,7 @@ class Archer2():
                 print("=====")
 
             for i in sorted(backfill_now, reverse=True):
-               queue.queue.pop(i)
+               self.submitted_jobs_step.append((queue.queue.pop(i)))
 
         self.queue_size = len(queue.queue)
 
@@ -580,7 +539,6 @@ class Archer2():
             self.total_energy += (
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
             )
-            self.job_history.append(job)
 
             for node in self.partitions[job.partition].nodes:
                 if node.free:
@@ -594,33 +552,22 @@ class Archer2():
         print("No free nodes, job not submitted")
         return False
 
-        # if self.has_space(job):
-        #     self.running_jobs.append(job)
-        #     self.nodes_free -= job.nodes
-        #     self.power_usage += job.true_node_power * job.nodes / 1e+6
-        #     self.bd_slowdowns.append(
-        #         max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
-        #     )
-        #     self.total_energy += (
-        #         job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
-        #     )
-        #     self.job_history.append(job)
-        #     return True
-        # else:
-        #     print("No free nodes, job not submitted")
-        #     return False
-
     def step(self, t_step : timedelta):
         self.time += t_step
 
         self.running_jobs.sort(key=lambda job: job.end)
 
-        finished_jobs = []
+        self.finished_jobs_step = []
         while self.running_jobs and self.running_jobs[0].end <= self.time:
-            finished_jobs.append(self.running_jobs.pop(0))
-            finished_jobs[-1].end_job()
-            self.nodes_free += finished_jobs[-1].nodes
-            self.power_usage -= finished_jobs[-1].true_node_power * finished_jobs[-1].nodes / 1e+6
+            self.finished_jobs_step.append(self.running_jobs.pop(0))
+            self.finished_jobs_step[-1].end_job()
+            self.job_history.append(self.finished_jobs_step[-1])
+            self.nodes_free += self.finished_jobs_step[-1].nodes
+            self.power_usage -= (
+                self.finished_jobs_step[-1].true_node_power *
+                self.finished_jobs_step[-1].nodes /
+                1e+6
+            )
 
         # Resample drained nodes every 12 hour at most
         if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
@@ -645,5 +592,5 @@ class Archer2():
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)
 
-        return finished_jobs # Need this for fair share usage accounting
+        return self.finished_jobs_step # Need this for fair share usage accounting
 

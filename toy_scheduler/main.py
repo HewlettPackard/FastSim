@@ -16,6 +16,13 @@ sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import hour_to_timeofday
 from toy_scheduler import ARCHER2 # legacy reasons
 
+# TODO Think it would be better to link everything with the ARCHER class so i dont have to pass
+# information between them manually
+
+# TODO Resort if dependency is released between submit and backfilling step. Currently the way
+# retained is implemented makes this difficult, should probably remove this and just have the
+# retained be a thing in the priority sorter
+
 """ Priority Sorters """
 
 class FIFOSorter():
