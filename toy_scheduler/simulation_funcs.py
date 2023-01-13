@@ -108,7 +108,7 @@ def run_sim(
     else:
         num_retained = lambda queue: None
 
-    while queue.all_jobs or queue.queue or system.running_jobs:
+    while queue.all_jobs or queue.queue or system.running_jobs or queue.waiting_dependency:
         # Not enough precision to compute timedeltas with datetime.max
         try:
             t_step = max(min(queue.next_newjob() - time, system.next_event() - time), min_step)
@@ -136,11 +136,8 @@ def run_sim(
 
         system.submit_jobs(queue)
 
-        # Print every 3 hours at most
+        # Print every third hour
         if verbose and (time.hour != (time - t_step).hour and not time.hour % 3):
-            qos_holds = defaultdict(int)
-            for job in queue.queue:
-                qos_holds[job.qos.name] += job.qos.hold_job(job.user, job.nodes)
             print(
                 "{} (step {}):\n".format(time, cnt) +
                 "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesDrained = {}({})\t\
@@ -153,19 +150,24 @@ def run_sim(
                     ) * 100,
                     system.nodes_drained, system.nodes_drained_carryover, system.power_usage
                 ) +
-                "QueueSize = {} (held by priority {} (highmem {}) dependency {} qos {} : ".format(
-                    len(queue.queue + queue.waiting_dependency),
-                    len(queue.queue) - sum(qos_holds.values()),
-                    sum(
-                        1 for job in queue.queue if (
-                            job.partition == "highmem" and
-                            not job.qos.hold_job(job.user, job.nodes)
-                        )
+                "QueueSize = {} (held by priority {} (highmem {}) ".format(
+                    (
+                        len(queue.queue) +
+                        len(queue.waiting_dependency) +
+                        sum(len(jobs) for jobs in queue.qos_held.values())
                     ),
-                    len(queue.waiting_dependency), sum(qos_holds.values())
+                    len(queue.queue), sum(1 for job in queue.queue if job.partition == "highmem")
                 ) +
-                " ".join("{}={}".format(name, num) for name, num in qos_holds.items()) +
-                ")\tRunningJobs = {}\n".format(len(system.running_jobs))
+                "dependency {} qos {} (".format(
+                    len(queue.waiting_dependency),
+                    sum(len(jobs) for jobs in queue.qos_held.values())
+                ) +
+                " ".join(
+                    "{}={}".format(
+                        qos.name, len(jobs)
+                    ) for qos, jobs in queue.qos_held.items() if len(jobs)
+                ) +
+                "))\tRunningJobs = {}\n".format(len(system.running_jobs))
             )
 
         cnt += 1

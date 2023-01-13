@@ -36,8 +36,6 @@ class Job():
         self.start = time
         self.end = time + self.runtime
         self.endlimit = time + self.reqtime
-
-        self.qos.job_started(self.user, self.nodes)
         return self
 
     def end_job(self):
@@ -46,7 +44,12 @@ class Job():
         self.qos.job_ended(self.user, self.nodes)
         return self
 
-    def relaunch(self, time):
+    def launch(self, time):
+        self.launch_time = time
+        self.qos.job_launched(self.user, self.nodes)
+        return self
+
+    def launch_into_hold(self, time):
         self.launch_time = time
         return self
 
@@ -85,7 +88,10 @@ class Queue():
 
         self.waiting_dependency = []
 
+        self.qos_held = { qos : [] for qos in self.qoss.values() }
+
     def _verify_dependencies(self):
+        cnt = 0
         all_ids = { job.id for job in self.all_jobs }
         for job in self.all_jobs:
             if not job.dependency:
@@ -96,25 +102,66 @@ class Queue():
 
             job.dependency.conditions_met = not any(job.dependency.conditions.values())
             if job.dependency.conditions_met and not job.dependency.singleton:
+                cnt += 1
                 job.dependency = None
+
+        print("Removed {} dependencies that cannot be satisfied from workload trace".format(cnt))
+
 
     def set_system(self, system):
         self.system = system
 
-    def check_dependencies(self):
+    def _check_dependencies(self):
+        released = []
         for i_job, job in enumerate(self.waiting_dependency):
             job.dependency.update_finished(self.system.finished_jobs_step)
             job.dependency.update_submitted(self.system.submitted_jobs_step)
-            if job.dependency.can_release(self.queue, self.system.running_jobs):
-                self.queue.append(self.waiting_dependency.pop(i_job).relaunch(self.time))
 
-            if job.submit < self.time - timedelta(days=10):
-                print(job.dependency.conditions, job.dependency.singleton)
+            if not job.dependency.can_release(self.queue, self.system.running_jobs):
+                continue
+
+            released_job = self.waiting_dependency[i_job]
+            if released_job.qos.hold_job(released_job):
+                self.qos_held[released_job.qos].append(released_job.launch_into_hold(self.time))
+            else:
+                self.queue.append(released_job.launch(self.time))
+            released.append(i_job)
+
+        for i_job in sorted(released, reverse=True):
+            self.waiting_dependency.pop(i_job)
+
+    def _check_qos_holds(self):
+        for qos in self.qos_held.keys():
+            # Dont need to check if we know nothing will be released
+            if (
+                not self.qos_held[qos] or
+                not qos.job_quota_remaining or
+                not qos.node_quota_remaining
+            ):
+                continue
+            self.qos_held[qos] = self.priority_sorter.sort(self.qos_held[qos], self.time)
+
+            released = []
+            for i_job, job in enumerate(self.qos_held[qos]):
+                if job.qos.hold_job_grp(job):
+                    break
+
+                # Lower priority jobs can be released if the job infront is only held by a per user
+                # limit
+                if job.qos.hold_job_usr(job):
+                    continue
+
+                self.queue.append(job.launch(self.time))
+                released.append(i_job)
+
+            for i_job in sorted(released, reverse=True):
+                self.qos_held[qos].pop(i_job)
 
     def step(self, t_step, retained):
-        self.check_dependencies()
-
         self.time += t_step
+
+        self._check_dependencies()
+        self._check_qos_holds()
 
         if self.time < self.next_newjob():
             return
@@ -122,6 +169,7 @@ class Queue():
         try:
             while self.all_jobs[0].submit <= self.time:
                 new_job = self.all_jobs.pop(0)
+
                 if new_job.dependency:
                     new_job.dependency.update_finished(self.system.job_history)
                     new_job.dependency.update_submitted(
@@ -130,7 +178,12 @@ class Queue():
                     if not new_job.dependency.can_release(self.queue, self.system.running_jobs):
                         self.waiting_dependency.append(new_job)
                         continue
-                self.queue.append(new_job)
+
+                if new_job.qos.hold_job(new_job):
+                    self.qos_held[new_job.qos].append(new_job)
+                    continue
+
+                self.queue.append(new_job.launch(self.time))
         except IndexError: # No more new jobs
             pass
 
@@ -156,7 +209,8 @@ class Dependency():
                 continue
 
             dep_type = condition.split(":")[0]
-            job_ids = { job_id for job_id in condition.split(":")[1:] }
+            # NOTE after can can take a +time after job_id, just going to ignore these for now
+            job_ids = { job_id.split("+")[0] for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
             if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":
                 self.conditions["afterany"] = job_ids
@@ -174,7 +228,7 @@ class Dependency():
         self.conditions_met = not any(self.conditions.values())
 
     def update_finished(self, jobs):
-        # return 
+        # return
         if not self.finished_relevant or self.conditions_met:
             return
 
@@ -254,7 +308,7 @@ class QOS():
         self.usr_job_quota_remaining = defaultdict(lambda: usr_jobs)
         self.usr_node_quota_remaining = defaultdict(lambda: usr_nodes)
 
-    def job_started(self, user, nodes):
+    def job_launched(self, user, nodes):
         self.job_quota_remaining -= 1
         self.node_quota_remaining -= nodes
         self.usr_job_quota_remaining[user] -= 1
@@ -265,12 +319,25 @@ class QOS():
         self.node_quota_remaining += nodes
         self.usr_job_quota_remaining[user] += 1
         self.usr_node_quota_remaining[user] += nodes
+        self.possible_to_release = True
 
-    def hold_job(self, user, nodes):
+    def hold_job(self, job):
         return (
-            not self.job_quota_remaining or nodes > self.node_quota_remaining or
-            not self.usr_job_quota_remaining[user] or nodes > self.usr_node_quota_remaining[user]
+            not self.job_quota_remaining or
+            job.nodes > self.node_quota_remaining or
+            not self.usr_job_quota_remaining[job.user] or
+            job.nodes > self.usr_node_quota_remaining[job.user]
         )
+
+    def hold_job_grp(self, job):
+        return not self.job_quota_remaining or job.nodes > self.node_quota_remaining
+
+    def hold_job_usr(self, job):
+        return (
+            not self.usr_job_quota_remaining[job.user] or
+            job.nodes > self.usr_node_quota_remaining[job.user]
+        )
+
 
 
 class Node():
@@ -411,8 +478,6 @@ class Archer2():
             ) for partition in self.partitions.keys()
         }
         for i_job, job in enumerate(queue.queue):
-            if job.qos.hold_job(job.user, job.nodes):
-                continue
             # break if no blocks or only <= min blocks available for immediate backfill
             if not free_blocks_ready_intervals:
                 break
@@ -491,8 +556,6 @@ class Archer2():
                 continue
 
             if self.has_space(job):
-                if job.qos.hold_job(job.user, job.nodes):
-                    continue
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
                     job_ready.runtime *= time_factor
@@ -532,7 +595,7 @@ class Archer2():
             self.nodes_free -= job.nodes
             self.power_usage += job.true_node_power * job.nodes / 1e+6
             self.bd_slowdowns.append(
-                max((job.end - job.launch_time)/max(job.runtime, BD_THRESHOLD), 1)
+                max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
             )
             self.total_energy += (
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9

@@ -11,18 +11,42 @@ from classes import Archer2
 from fairshare import FairTree
 from simulation_funcs import prep_job_data, run_sim
 from plotting import plot_blob
-from globals import * # TODO: dont do this
+from globals import * # TODO: dont do this NOTE globals is a builtin, change name
 sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import hour_to_timeofday
 from toy_scheduler import ARCHER2 # legacy reasons
 
-# TODO Think it would be better to link everything with the ARCHER class so i dont have to pass
-# information between them manually
+# === Refactoring Plans ===
 
-# TODO Consider how frequenlty I want to check QOS and dependency queues eg. between submit
-# and backfill? If i do will need to resort if in the event anything is relases. Currently the way
-# retained is implemented makes this difficult, should probably remove this and just have the
-# retained be a thing in the priority sorter
+# TODO Job dependencies should include references to other Job objects, Job objects should have a
+# launched | running | finished status that Dependency can check to know if the Job is free to
+# run. Might not even need the Dependency class, but refactor Dependency first then think if it
+# is redundant
+
+# TODO Incorporate retained into the priority sorter as an option, remove it from the queue step
+
+# TODO Consider a controller class that has a single step method that can do the event loop.
+# Information could be passes between classes with this controller, see how it looks
+
+# TODO Put a lot of the hardcoding into globals and rename globals config as globals is a builtin
+
+# TODO Link fairtree to Archer so i it can access the finished_jobs_step rather than explicitly
+# having it passed
+
+# === ===
+
+# === Features remaining ===
+
+# TODO Node down history
+
+# TODO EASY backfilling
+
+# TODO Performance improvements:
+# - implement some of the scheduling options (particularly backfill window and interval,
+#   sched_interval)
+# - Check if pypy can help
+
+# === ===
 
 """ Priority Sorters """
 
@@ -164,7 +188,9 @@ class MFPrioritySorter():
         return self.partitions[job.partition].priority_tier
 
     def _age_priority(self, job):
-        return min((self.time - job.launch_time).total_seconds() / self.max_age, 1) * self.age_weight
+        return (
+            min((self.time - job.launch_time).total_seconds() / self.max_age, 1) * self.age_weight
+        )
 
     def _size_priority(self, job):
         return job.nodes * self.size_weight
@@ -392,7 +418,7 @@ def main(args):
             )
             archer[-1] = run_sim(
                 df_jobs, Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0,
-                DataStartSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP,
+                DataStartSorter(), seed=0, verbose=args.verbose, min_step=timedelta(seconds=0),
                 no_retained=True
             )
 
@@ -402,7 +428,7 @@ def main(args):
             archer[0] = run_sim(
                 df_jobs,
                 Archer2(t0, node_down_mean=0, backfill_opts={ "max_jobs_test" : 0 }),
-                t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
+                t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=timedelta(seconds=0)
             )
 
         else:

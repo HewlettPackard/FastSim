@@ -279,31 +279,3 @@ class FairTree():
 
         return root_node
 
-
-""" Tests """
-
-"""
-root = Root()
-
-proj1, proj2 = Project("proj1", 1), Project("proj2", 1)
-for proj in [proj1, proj2]:
-    root.add_partition(proj)
-
-acc1, acc2, acc3 = Account("acc1", 1), Account("acc2", 1), Account("acc3", 1)
-for acc in [acc1, acc2]:
-    proj1.add_child(acc)
-proj2.add_child(acc3)
-
-user1, user2, user3, user4, user5 = User("u1", 1), User("u3", 1), User("u3", 1), User("u4", 1), User("u5", 1),
-for user in [user1, user2]:
-    acc1.add_child(user)
-for user in [user3, user5]:
-    acc2.add_child(user)
-acc3.add_child(user4)
-
-tree = FairTree(root)
-print(tree)
-"""
-
-# load_tree_slurm("/work/y02/y02/awilkins/sacct_archer2_assocs_030123.csv")
-

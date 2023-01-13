@@ -244,7 +244,7 @@ def update_job_class_as_required(archer, archer_fcfs):
                     job.user if hasattr(job, "user") else "None",
                     job.qos if hasattr(job, "qos") else "None",
                     job.partition if hasattr(job, "partition") else "None", "None", "None"
-                ) for job in system.running_jobs 
+                ) for job in system.running_jobs
             ]
 
     if not hasattr(archer_fcfs.job_history[0], "launch_time"):
@@ -255,7 +255,7 @@ def update_job_class_as_required(archer, archer_fcfs):
                 job.user if hasattr(job, "user") else "None",
                 job.qos if hasattr(job, "qos") else "None",
                 job.partition if hasattr(job, "partition") else "None", "None", "None"
-            ) for job in archer_fcfs.running_jobs 
+            ) for job in archer_fcfs.running_jobs
         ]
 
 """ End Helper Plotting Thingys """
@@ -1012,14 +1012,14 @@ def plot_blob(
         baseline_energy = total_energy_nolowfreq
         baseline_avg_slowdown = np.mean(archer[-1].bd_slowdowns)
         wait_times = [
-            (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history if (
-                job.launch_time >= start[-1]
+            (job.start - job.submit).total_seconds() for job in archer[-1].job_history if (
+                job.submit >= start[-1]
             )
         ]
         baseline_avg_wait, baseline_max_wait = np.mean(wait_times), max(wait_times)
         responses = [
-            (job.end - job.launch_time).total_seconds() for job in archer[-1].job_history if (
-                job.launch_time >= start[-1]
+            (job.end - job.submit).total_seconds() for job in archer[-1].job_history if (
+                job.submit >= start[-1]
             )
         ]
         baseline_avg_response = np.mean(responses)
@@ -1036,15 +1036,15 @@ def plot_blob(
             )
             avg_slowdown = np.mean(archer_entry.bd_slowdowns) / baseline_avg_slowdown
             wait_times = [
-                (job.start - job.launch_time).total_seconds() for job in archer_entry.job_history if (
-                    job.launch_time >= start[queue_cut]
+                (job.start - job.submit).total_seconds() for job in archer_entry.job_history if (
+                    job.submit >= start[queue_cut]
                 )
             ]
             avg_wait = np.mean(wait_times) / baseline_avg_wait
             max_wait = max(wait_times) / baseline_max_wait
             responses = [
-                (job.end - job.launch_time).total_seconds() for job in archer_entry.job_history if (
-                    job.launch_time >= start[-1]
+                (job.end - job.submit).total_seconds() for job in archer_entry.job_history if (
+                    job.submit >= start[-1]
                 )
             ]
             avg_response = np.mean(responses) / baseline_avg_response
@@ -1207,13 +1207,13 @@ def plot_blob(
             plt.show()
 
         wait_times_true = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[0].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
@@ -1240,10 +1240,10 @@ def plot_blob(
         start_time = archer[0].init_time + timedelta(days=28)
         for key in archer.keys():
             archer[key].job_history = [
-                job for job in archer[key].job_history if job.launch_time > start_time
+                job for job in archer[key].job_history if job.submit > start_time
             ]
             archer[key].bd_slowdowns = [
-                max((job.end - job.launch_time) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+                max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
                     archer[key].job_history
                 )
             ]
@@ -1292,10 +1292,10 @@ def plot_blob(
             plt.show()
 
         archer_fifo.job_history = [
-            job for job in archer_fifo.job_history if job.launch_time > start_time
+            job for job in archer_fifo.job_history if job.submit > start_time
         ]
         archer_fifo.bd_slowdowns = [
-            max((job.end - job.launch_time) / max(job.runtime, BD_THRESHOLD), 1) for job in (
+            max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1) for job in (
                 archer_fifo.job_history
             )
         ]
@@ -1328,13 +1328,13 @@ def plot_blob(
             plt.show()
 
         wait_times_true = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[-1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[0].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[0].job_history
         }
         wait_times_nofairshare = {
-            job.id : (job.start - job.launch_time).total_seconds() for job in archer[1].job_history
+            job.id : (job.start - job.submit).total_seconds() for job in archer[1].job_history
         }
         print("MF priority w/ fairshare wait time distance with true start times={}hrs".format(
             np.sqrt(sum([
