@@ -239,23 +239,25 @@ def update_job_class_as_required(archer, archer_fcfs):
         if not hasattr(system.job_history[0], "launch_time"):
             system.job_history = [
                 Job(
-                    job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
-                    job.true_node_power, job.true_job_start,
+                    job.id if hasattr(job, "id") else "None", job.submit, job.nodes, job.runtime,
+                    job.reqtime, job.node_power, job.true_node_power, job.true_job_start,
                     job.user if hasattr(job, "user") else "None",
+                    job.account if hasattr(job, "account") else "None",
                     job.qos if hasattr(job, "qos") else "None",
                     job.partition if hasattr(job, "partition") else "None", "None", "None"
-                ) for job in system.running_jobs
+                ) for job in system.job_history
             ]
 
     if not hasattr(archer_fcfs.job_history[0], "launch_time"):
         archer_fcfs.job_history = [
             Job(
-                job.id, job.submit, job.nodes, job.runtime, job.reqtime, job.node_power,
-                job.true_node_power, job.true_job_start,
+                job.id if hasattr(job, "id") else "None", job.submit, job.nodes, job.runtime,
+                job.reqtime, job.node_power, job.true_node_power, job.true_job_start,
                 job.user if hasattr(job, "user") else "None",
+                job.account if hasattr(job, "account") else "None",
                 job.qos if hasattr(job, "qos") else "None",
-                job.partition if hasattr(job, "partition") else "None", "None", "None"
-            ) for job in archer_fcfs.running_jobs
+                job.partition if hasattr(job, "partition") else "None", "", "None"
+            ) for job in archer_fcfs.job_history
         ]
 
 """ End Helper Plotting Thingys """
@@ -265,8 +267,9 @@ def plot_blob(
     plots, archer, start, end, times, dates, archer_fcfs=None, times_fcfs=None, dates_fcfs=None,
     save_suffix="", batch=False, df_jobs=None
 ):
-    # For legacy experiments
-    update_job_class_as_required(archer, archer_fcfs)
+    # For legacy experiments - I ballsed this up and don't need it anymore since not using launch
+    # time for slowdown calculations
+    # update_job_class_as_required(archer, archer_fcfs)
 
     if "cab_power_plot" in plots:
         cabs = {
@@ -1068,7 +1071,7 @@ def plot_blob(
             r"$(\mathrm{avg\_wait})^{-1}$", r"$(\mathrm{max\_wait})^{-1}$",
             r"$(\mathrm{avg\_response})^{-1}$"
         ]
-        plt.xticks(angles[:-1], category_labels, size=16)
+        plt.xticks(angles[:-1], category_labels, size=14)
         for label in ax.get_xticklabels():
             if label.get_text() == r"$(\mathrm{energy})^{-1}$":
                 label.set_verticalalignment("bottom")
@@ -1086,7 +1089,7 @@ def plot_blob(
                 label.set_horizontalalignment("right")
         ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
-        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=16)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
         plt.ylim(0.7,1.3)
 
         for queue_cut, perf_data in spider_plot_data.items():
@@ -1099,8 +1102,8 @@ def plot_blob(
             angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="no low freq"
 
         )
-        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=18, ncol=5)
-        plt.subplots_adjust(left=0.1, top=0.9, right=0.9, bottom=0.1)
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
+        plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         fig.savefig(os.path.join(
             PLOT_DIR,
             "toyscheduler_priority_small_and_age_lowfreq_queuecut_perfspiderplt{}.pdf".format(

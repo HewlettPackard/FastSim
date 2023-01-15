@@ -23,6 +23,10 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # run. Might not even need the Dependency class, but refactor Dependency first then think if it
 # is redundant
 
+# TODO Refactor Partitions so that direct references to the objects are used rather than going
+# through the names. This is a small change but may find a larger refactoring of the way Partitions
+# is implemented when thinking about it (or maybe not, its ok as it is)
+
 # TODO Incorporate retained into the priority sorter as an option, remove it from the queue step
 
 # TODO Consider a controller class that has a single step method that can do the event loop.
