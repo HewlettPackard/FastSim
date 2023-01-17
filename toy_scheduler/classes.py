@@ -9,7 +9,8 @@ from globals import *
 class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
-        true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name
+        true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
+        ignore_in_eval=False
     ):
         self.id = id
         self.nodes = nodes
@@ -24,6 +25,12 @@ class Job():
         self.qos = qos
         self.partition = partition
         self.name = name
+        # Some features are not relevant for scheduluing (AssocMaxCpuMinutesPerJobLimit means for
+        # archer that the user hasnt been allocated time yet, reservations, jobs held by user, ...)
+        # and some I cant implemented with available data (JobArrayTaskLimit is usually specified
+        # in batch script). Want to have these jobs in simulation but don't want to include them in
+        # evaluation stage
+        self.ignore_in_eval = ignore_in_eval
 
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
 
@@ -89,7 +96,14 @@ class Queue():
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
                 job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
-                job_row.DependencyArg, job_row.JobName
+                job_row.DependencyArg, job_row.JobName,
+                (
+                    job_row.Reason in [
+                        "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "Reservation",
+                        "BeginTime", "JobHeldUser", "DependencyNeverSatisfied",
+                        "JobArrayTaskLimit"
+                    ]
+                )
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self._verify_dependencies()
@@ -349,14 +363,14 @@ class QOS():
 
 
 class Node():
-    def __init__(self, num, weight=0, node_down_schedule=[]):
+    def __init__(self, num, weight=0, down_schedule=[]):
         self.id = num
         self.weight = weight
 
         self.free = True
         self.running_job = None
 
-        self.node_down_schedule = node_down_schedule
+        self.down_schedule = down_schedule
         self.down = False
         self.up_time = None
 
@@ -424,8 +438,8 @@ class Archer2():
         self.partitions = partitions
         self.nodes = nodes
         # self.node_down_order = [
-        #     node for node in nodes if node.node_down_schedule
-        # ].sort(key=lambda node: node.node_down_schedule[0])
+        #     node for node in nodes if node.down_schedule
+        # ].sort(key=lambda node: node.down_schedule[0])
         self.node_down_order = None
         self.down_nodes = []
 
@@ -435,8 +449,8 @@ class Archer2():
         self.nodes = nodes
         self.partitions = partitions
         self.node_down_order = sorted(
-            [ node for node in nodes if node.node_down_schedule],
-            key=lambda node: node.node_down_schedule[0][0]
+            [ node for node in nodes if node.down_schedule],
+            key=lambda node: node.down_schedule[0][0]
         )
 
     def has_space(self, job : Job):
@@ -645,33 +659,43 @@ class Archer2():
         return False
 
     def _check_down_nodes(self):
-        while self.down_nodes and self.down_nodes[0].uptime <= self.time:
-            node = self.down_nodes.pop(0)
-            node.set_up()
+        try:
+            while self.down_nodes and self.down_nodes[0].up_time <= self.time:
+                node = self.down_nodes.pop(0)
+                self.nodes_free += 1
+                node.set_up()
+        except:
+            print(self.down_nodes[0].id, self.down_nodes, self.down_nodes[0].up_time, self.time)
+            raise TypeError
 
-        while (
-            self.node_down_order and self.node_down_order[0].node_down_schedule[0][0] <= self.time
-        ):
+        while self.node_down_order and self.node_down_order[0].down_schedule[0][0] <= self.time:
             node = self.node_down_order[0]
-            up_time = self.time + node.node_down_schedule[0][1]
+            # If already down delay this new downtime until the next day to not interfere (this
+            # happens because my DOWN implementation waits for current running job to finish)
+            if node.down:
+                node.down_schedule[0][0] = node.up_time
+                continue
+
+            down_schedule = node.down_schedule.pop(0)
+            if not len(node.down_schedule):
+                self.node_down_order.pop(0)
+            else:
+                self.node_down_order.sort(key=lambda node: node.down_schedule[0][0])
+
+            up_time = self.time + down_schedule[1]
 
             if node.running_job:
-                if node.node_down_schedule[0][2] == "DOWN":
-                    up_time += node.running_job.end
+                if down_schedule[2] == "DOWN":
+                    up_time += node.running_job.runtime
                 if up_time <= node.running_job.end:
                     continue
+            else:
+                self.nodes_free -= 1
 
             node.set_down(up_time)
 
             self.down_nodes.append(node)
-            self.down_nodes.sort(key=lambda node: up_time)
-
-            node.node_down_schedule.pop(0)
-            if not len(node.node_down_schedule):
-                self.node_down_order.pop(0)
-            else:
-                self.node_down_order.sort(key=lambda node: node.node_down_schedule[0][0])
-
+            self.down_nodes.sort(key=lambda node: node.up_time)
 
     def step(self, t_step : timedelta):
         self.time += t_step
@@ -685,7 +709,9 @@ class Archer2():
             self.finished_jobs_step.append(self.running_jobs.pop(0))
             self.finished_jobs_step[-1].end_job()
             self.job_history.append(self.finished_jobs_step[-1])
-            self.nodes_free += self.finished_jobs_step[-1].nodes
+            self.nodes_free += sum(
+                1 for node in self.finished_jobs_step[-1].assigned_nodes if not node.down
+            )
             self.power_usage -= (
                 self.finished_jobs_step[-1].true_node_power *
                 self.finished_jobs_step[-1].nodes /
@@ -693,8 +719,12 @@ class Archer2():
             )
 
         self.occupancy_history.append(
-            1 - (self.available_nodes()/(5860 - sum(1 for node in self.down_nodes if not node.free
-        ))))
+            1 -
+            (
+                self.available_nodes() /
+                (5860 - sum(1 for node in self.down_nodes if not node.free))
+            )
+        )
         self.power_history.append(self.power_usage)
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)
