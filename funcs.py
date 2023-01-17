@@ -82,7 +82,9 @@ def power_print_dump(df_power):
     ))
 
 
-def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=None):
+def parse_cache(
+    df, cache, data_name, df_name, cols, remove_steps=True, nrows=None, fix_anomalous_powers=False
+):
     # Ew
     has_partition = "Partition" in cols
     cols += ["Partition"] if not has_partition else []
@@ -99,7 +101,9 @@ def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=No
 
     mkdir_p("/work/y02/y02/awilkins/pandas_cache/{}".format(data_name))
     if cache == "save":
-        df_power = process_power(df, cols=cols, remove_steps=remove_steps)
+        df_power = process_power(
+            df, cols=cols, remove_steps=remove_steps, fix_anomalous_powers=fix_anomalous_powers
+        )
         df_power.to_pickle(
             "/work/y02/y02/awilkins/pandas_cache/{}/{}.pkl".format(data_name, df_name)
         )
@@ -109,12 +113,14 @@ def parse_cache(df, cache, data_name, df_name, cols, remove_steps=True, nrows=No
         )
         return df_power
     else:
-        df_power = process_power(df, cols=cols, remove_steps=remove_steps)
+        df_power = process_power(
+            df, cols=cols, remove_steps=remove_steps, fix_anomalous_powers=fix_anomalous_powers
+        )
 
     return df_power.drop(["Partition"], axis=1) if not has_partition else df_power
 
 
-def process_power(df, cols=None, remove_steps=True):
+def process_power(df, cols=None, remove_steps=True, fix_anomalous_powers=False):
     if cols:
         # Partition slice is removing data analysis nodes
         # (note this will leave job steps without a parent)
@@ -155,9 +161,15 @@ def process_power(df, cols=None, remove_steps=True):
         lambda row: float(row.ConsumedEnergyRaw)/float(row.DeltaT), axis=1
     )
     # Sometimes ConsumedEnergyRaw (very rare) is obviously wrong causing non-physical powers
-    print("Anomalous rows removed:")
+    print("Anomalous rows:")
     print(df_power.loc[df_power.Power >= 10000000])
-    df_power = df_power.loc[df_power.Power < 10000000]
+    if not fix_anomalous_powers:
+        print("Removed.")
+        df_power = df_power.loc[df_power.Power < 10000000]
+    else:
+        print("Power set to 550 W/Node.")
+        for i, anomalous_row in df_power.loc[(df_power.Power >= 10000000)].iterrows():
+            df_power.at[i, "Power"] = 550 * df_power.at[i, "AllocNodes"]
 
     # There are some short jobs that get duplicated a few hundred times in the slurm data
     df_power = df_power[~df_power.duplicated(subset="JobID", keep="first")]

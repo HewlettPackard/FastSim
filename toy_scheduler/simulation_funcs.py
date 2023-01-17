@@ -71,29 +71,26 @@ def get_nodes_and_partitions(node_events_dump):
     }
     nodes = []
     for nid in range(1000, 6860):
-        node_down_schedule = []
+        down_schedule = []
         for _, row in df_events.loc[(df_events.Id == nid)].iterrows():
-            node_down_schedule.append([row.TimeStart, row.Duration, row.State])
-        node_down_schedule.sort(key=lambda schedule: schedule[0])
+            down_schedule.append([row.TimeStart, row.Duration, row.State])
+        down_schedule.sort(key=lambda schedule: schedule[0])
 
         # Merge any adjacent events
         i_event = 0
-        while i_event < len(node_down_schedule) - 1:
-            event, next_event = node_down_schedule[i_event], node_down_schedule[i_event + 1]
+        while i_event < len(down_schedule) - 1:
+            event, next_event = down_schedule[i_event], down_schedule[i_event + 1]
             if event[0] + event[1] == next_event[0] and event[2] == next_event[2]:
-                node_down_schedule[i_event][1] += next_event[1]
-                node_down_schedule.pop(i_event + 1)
+                down_schedule[i_event][1] += next_event[1]
+                down_schedule.pop(i_event + 1)
                 continue
-            node_down_schedule[i_event] = tuple(event)
             i_event += 1
-        for i_event in range(len(node_down_schedule)):
-            node_down_schedule[-1] = tuple(node_down_schedule[-1])
 
         if (2756 <= nid <= 3047) or (6376 <= nid <= 6667):
-            nodes.append(Node(nid, 1000, node_down_schedule=node_down_schedule))
+            nodes.append(Node(nid, 1000, down_schedule=down_schedule))
             partitions["highmem"].add_node(nodes[-1])
         else:
-            nodes.append(Node(nid, 0, node_down_schedule=node_down_schedule))
+            nodes.append(Node(nid, 0, down_schedule=down_schedule))
         partitions["standard"].add_node(nodes[-1])
 
     return nodes, partitions
@@ -107,9 +104,9 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition", "SubmitLine", "JobName", "Reason", "State"
+            "Partition", "SubmitLine", "JobName"
         ],
-        nrows=rows
+        nrows=rows, fix_anomalous_powers=True
     )
 
     convert_to_raw(df_jobs, "AllocNodes")
@@ -123,7 +120,6 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs["TruePowerPerNode"] = df_jobs.apply(
         lambda row: float(row.Power) / float(row.AllocNodes), axis=1
     )
-
 
     df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
@@ -148,8 +144,6 @@ def run_sim(
 ):
     ns, ps = get_nodes_and_partitions(NODE_EVENTS_FILE)
     system.set_nodes_partitions(ns, ps)
-    print(len(system.node_down_order))
-    print(len(system.down_nodes))
 
     queue = Queue(df_jobs, t0, priority_sorter)
     queue.set_system(system)
