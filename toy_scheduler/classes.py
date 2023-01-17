@@ -664,7 +664,7 @@ class Archer2():
             node.set_down(up_time)
 
             self.down_nodes.append(node)
-            self.down_nodes.sort(lambda node: up_time)
+            self.down_nodes.sort(key=lambda node: up_time)
 
             node.node_down_schedule.pop(0)
             if not len(node.node_down_schedule):
