@@ -38,9 +38,18 @@ class Job():
         self.endlimit = time + self.reqtime
         return self
 
+    def assign_node(self, node):
+        node.set_busy()
+        self.assigned_nodes.append(node)
+        node.running_job = self
+        if len(self.assigned_nodes) >= self.nodes:
+            return True
+        return False
+
     def end_job(self):
         for node in self.assigned_nodes:
             node.set_free()
+            node.running_job = None
         self.qos.job_ended(self.user, self.nodes)
         return self
 
@@ -339,16 +348,39 @@ class QOS():
         )
 
 
-
 class Node():
-    def __init__(self, num, weight=0):
+    def __init__(self, num, weight=0, node_down_schedule=[]):
         self.id = num
         self.weight = weight
+
         self.free = True
+        self.running_job = None
+
+        self.node_down_schedule = node_down_schedule
+        self.down = False
+        self.up_time = None
 
         self.partitions = []
 
+    def set_down(self, up_time):
+        self.down = True
+        self.up_time = up_time
+        # If job is already running it will go down after job finished
+        if self.free:
+            for partition in self.partitions:
+                partition.num_available -= 1
+            self.free = False
+
+    def set_up(self):
+        self.down = False
+        self.up_time = None
+        self.free = True
+        for partition in self.partitions:
+            partition.num_available += 1
+
     def set_free(self):
+        if self.down:
+            return
         self.free = True
         for partition in self.partitions:
             partition.num_available += 1
@@ -361,11 +393,10 @@ class Node():
 
 class Archer2():
     def __init__(
-        self, init_time : datetime, node_down_mean=0, backfill_opts={},
-        low_freq_condition=lambda queue: False, low_freq_calc=None, low_freq_reqtime_factor=1.0
+        self, init_time : datetime, nodes=None, partitions=None, backfill_opts={},
+        low_freq_condition=lambda queue: False, low_freq_calc=None, low_freq_reqtime_factor=1.0,
     ):
         self.power_usage = 0 # MW
-        self.node_down_mean = node_down_mean
         self.init_time = init_time
         self.time = init_time
         self.backfill_opts = backfill_opts
@@ -390,21 +421,23 @@ class Archer2():
         self.submitted_jobs_step = []
         self.total_energy = 0.0 # GJ
 
-        self.partitions = {
-            "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
-        }
-        self.nodes = []
-        for i in range(5276):
-            self.nodes.append(Node(i, 0))
-            self.partitions["standard"].add_node(self.nodes[-1])
-        for i in range(5276, 5860):
-            self.nodes.append(Node(i, 1000))
-            self.partitions["standard"].add_node(self.nodes[-1])
-            self.partitions["highmem"].add_node(self.nodes[-1])
+        self.partitions = partitions
+        self.nodes = nodes
+        # self.node_down_order = [
+        #     node for node in nodes if node.node_down_schedule
+        # ].sort(key=lambda node: node.node_down_schedule[0])
+        self.node_down_order = None
+        self.down_nodes = []
 
         self.nodes_free = 5860
-        self.nodes_drained = 0
-        self.nodes_drained_carryover = 0
+
+    def set_nodes_partitions(self, nodes, partitions):
+        self.nodes = nodes
+        self.partitions = partitions
+        self.node_down_order = sorted(
+            [ node for node in nodes if node.node_down_schedule],
+            key=lambda node: node.node_down_schedule[0][0]
+        )
 
     def has_space(self, job : Job):
         return True if self.available_nodes(job.partition) >= job.nodes else False
@@ -603,9 +636,7 @@ class Archer2():
 
             for node in self.partitions[job.partition].nodes:
                 if node.free:
-                    node.set_busy()
-                    job.assigned_nodes.append(node)
-                    if len(job.assigned_nodes) >= job.nodes:
+                    if job.assign_node(node):
                         break
 
             return True
@@ -613,8 +644,39 @@ class Archer2():
         print("No free nodes, job not submitted")
         return False
 
+    def _check_down_nodes(self):
+        while self.down_nodes and self.down_nodes[0].uptime <= self.time:
+            node = self.down_nodes.pop(0)
+            node.set_up()
+
+        while (
+            self.node_down_order and self.node_down_order[0].node_down_schedule[0][0] <= self.time
+        ):
+            node = self.node_down_order[0]
+            up_time = self.time + node.node_down_schedule[0][1]
+
+            if node.running_job:
+                if node.node_down_schedule[0][2] == "DOWN":
+                    up_time += node.running_job.end
+                if up_time <= node.running_job.end:
+                    continue
+
+            node.set_down(up_time)
+
+            self.down_nodes.append(node)
+            self.down_nodes.sort(lambda node: up_time)
+
+            node.node_down_schedule.pop(0)
+            if not len(node.node_down_schedule):
+                self.node_down_order.pop(0)
+            else:
+                self.node_down_order.sort(key=lambda node: node.node_down_schedule[0][0])
+
+
     def step(self, t_step : timedelta):
         self.time += t_step
+
+        self._check_down_nodes()
 
         self.running_jobs.sort(key=lambda job: job.end)
 
@@ -630,26 +692,9 @@ class Archer2():
                 1e+6
             )
 
-        # Resample drained nodes every 12 hour at most
-        if self.node_down_mean:
-            if self.time.hour != (self.time - t_step).hour and not self.time.hour % 12:
-                num_drain = max(
-                    (
-                        round(np.random.normal(
-                            loc=self.node_down_mean, scale=self.node_down_mean / 2
-                        )) +
-                        self.nodes_drained_carryover
-                    ),
-                    0
-                )
-                if num_drain <= self.nodes_free:
-                    self.nodes_drained = num_drain
-                    self.nodes_drained_carryover = 0
-                else:
-                    self.nodes_drained = self.nodes_free
-                    self.nodes_drained_carryover = num_drain - self.nodes_free
-
-        self.occupancy_history.append(1 - (self.available_nodes()/(5860 - self.nodes_drained)))
+        self.occupancy_history.append(
+            1 - (self.available_nodes()/(5860 - sum(1 for node in self.down_nodes if not node.free
+        ))))
         self.power_history.append(self.power_usage)
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)

@@ -1126,20 +1126,24 @@ def plot_blob(
             plt.show()
 
     if "test_mf_priority" in plots:
+        data_bd_slowdowns = [
+            max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                1
+            ) for job in archer[0].job_history
+        ]
         print(
-            "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
+            "true start sorter mean bd slowdown={}+-{}\n".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            ) +
+            "true starts mean bd slowdown={}+-{}\n".format(
+                np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns)
+            ) +
+            "MF priority w/ fairshare mean bd slowdown={}+-{}\n".format(
                 np.mean(archer[0].bd_slowdowns), np.std(archer[0].bd_slowdowns)
             ) +
-            " true start mean bd slowdown={}+-{}".format(
-                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
-            )
-        )
-        print(
             "MF priority w/o fairshare mean bd slowdown={}+-{}".format(
                 np.mean(archer[1].bd_slowdowns), np.std(archer[1].bd_slowdowns)
-            ) +
-            " true start mean bd slowdown={}+-{}".format(
-                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
             )
         )
 
@@ -1210,6 +1214,11 @@ def plot_blob(
             plt.show()
 
         wait_times_true = {
+            job.id : (job.true_job_start - job.submit).total_seconds() for job in (
+                archer[0].job_history
+            )
+        }
+        wait_times_true_sorter = {
             job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }
         wait_times_fairshare = {
@@ -1251,20 +1260,24 @@ def plot_blob(
                 )
             ]
 
+        data_bd_slowdowns = [
+            max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                1
+            ) for job in archer[0].job_history
+        ]
         print(
-            "MF priority w/ fairshare mean bd slowdown={}+-{}".format(
+            "true start sorter mean bd slowdown={}+-{}\n".format(
+                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
+            ) +
+            "true starts mean bd slowdown={}+-{}\n".format(
+                np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns)
+            ) +
+            "MF priority w/ fairshare mean bd slowdown={}+-{}\n".format(
                 np.mean(archer[0].bd_slowdowns), np.std(archer[0].bd_slowdowns)
             ) +
-            "true start mean bd slowdown={}+-{}".format(
-                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
-            )
-        )
-        print(
             "MF priority w/o fairshare mean bd slowdown={}+-{}".format(
                 np.mean(archer[1].bd_slowdowns), np.std(archer[1].bd_slowdowns)
-            ) +
-            "true start mean bd slowdown={}+-{}".format(
-                np.mean(archer[-1].bd_slowdowns), np.std(archer[-1].bd_slowdowns)
             )
         )
 
@@ -1330,6 +1343,11 @@ def plot_blob(
         else:
             plt.show()
 
+        wait_times_true = {
+            job.id : (job.true_job_start - job.submit).total_seconds() for job in (
+                archer[0].job_history
+            )
+        }
         wait_times_true = {
             job.id : (job.start - job.submit).total_seconds() for job in archer[-1].job_history
         }

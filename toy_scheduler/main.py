@@ -32,10 +32,17 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # TODO Consider a controller class that has a single step method that can do the event loop.
 # Information could be passes between classes with this controller, see how it looks
 
-# TODO Put a lot of the hardcoding into globals and rename globals config as globals is a builtin
+# TODO Put a lot of the hardcoding into globals and rename globals config as globals is a builtin.
+# Also id is a builtin so change this where it is used
 
 # TODO Link fairtree to Archer so i it can access the finished_jobs_step rather than explicitly
 # having it passed
+
+# TODO A load of these experiments will be broken now due to all the code changes, go back through
+# and update them and rerun them with all the new features
+
+# TODO Refactor run_sim to initialise the Archer2 object in the function rather than being passed
+# to it
 
 # === ===
 
@@ -399,9 +406,7 @@ def main(args):
             archer = {}
             # ARCHER2 priority weight defaults
             archer[0] = run_sim(
-                df_jobs,
-                Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS),
-                t0,
+                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 300,
                     timedelta(days=14), 0, 10000
@@ -410,9 +415,7 @@ def main(args):
                 no_retained=True
             )
             archer[1] = run_sim(
-                df_jobs,
-                Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS),
-                t0,
+                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 0,
                     timedelta(days=14), 0, 10000
@@ -421,9 +424,8 @@ def main(args):
                 no_retained=True
             )
             archer[-1] = run_sim(
-                df_jobs, Archer2(t0, node_down_mean=0, backfill_opts=BACKFILL_OPTS), t0,
-                DataStartSorter(), seed=0, verbose=args.verbose, min_step=timedelta(seconds=0),
-                no_retained=True
+                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0, DataStartSorter(), seed=0,
+                verbose=args.verbose, min_step=timedelta(seconds=0), no_retained=True
             )
 
         elif args.fifo_baseline:
@@ -444,11 +446,12 @@ def main(args):
             )
 
         print("Running sim for scheduler fcfs...")
-        archer_fcfs = run_sim(
-            df_jobs,
-            Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
-            t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
-        )
+        # archer_fcfs = run_sim(
+        #     df_jobs,
+        #     Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
+        #     t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
+        # )
+        archer_fcfs = None
 
     if args.dump_sim_to:
         data = { "archer" : archer }

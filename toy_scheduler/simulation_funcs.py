@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
-from classes import Queue, Dependency
+from classes import Queue, Dependency, Partition, Node
+from globals import *
 
 sys.path.append("/work/y02/y02/awilkins/archer2_jobdata")
 from funcs import parse_cache, timelimit_str_to_timedelta, hour_to_timeofday
@@ -47,6 +48,56 @@ def get_dependency_arg(submit_line):
 
     return dep_arg
 
+def get_nodes_and_partitions(node_events_dump):
+    df_events = pd.read_csv(
+        node_events_dump, delimiter='|', lineterminator='\n', header=0,
+        usecols=["NodeName", "TimeStart", "TimeEnd", "State"]
+    )
+    df_events = df_events.loc[
+        (
+            (df_events.NodeName.notna()) & (df_events.NodeName.str.contains("nid")) &
+            (df_events.TimeEnd != "Unknown") & (df_events.TimeStart != "Unknown")
+        )
+    ]
+
+    df_events.TimeStart = pd.to_datetime(df_events.TimeStart, format="%Y-%m-%dT%H:%M:%S")
+    df_events.TimeEnd = pd.to_datetime(df_events.TimeEnd, format="%Y-%m-%dT%H:%M:%S")
+    df_events["Duration"] = df_events.apply(lambda row: (row.TimeEnd - row.TimeStart), axis=1)
+    df_events.State = df_events.State.apply(lambda row: "DRAIN" if "DRAIN" in row else "DOWN")
+    df_events["Id"] = df_events.NodeName.apply(lambda row: int(row.split("nid")[1]))
+
+    partitions = {
+        "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
+    }
+    nodes = []
+    for nid in range(1000, 6860):
+        node_down_schedule = []
+        for _, row in df_events.loc[(df_events.Id == nid)].iterrows():
+            node_down_schedule.append([row.TimeStart, row.Duration, row.State])
+        node_down_schedule.sort(key=lambda schedule: schedule[0])
+
+        # Merge any adjacent events
+        i_event = 0
+        while i_event < len(node_down_schedule) - 1:
+            event, next_event = node_down_schedule[i_event], node_down_schedule[i_event + 1]
+            if event[0] + event[1] == next_event[0] and event[2] == next_event[2]:
+                node_down_schedule[i_event][1] += next_event[1]
+                node_down_schedule.pop(i_event + 1)
+                continue
+            node_down_schedule[i_event] = tuple(event)
+            i_event += 1
+        for i_event in range(len(node_down_schedule)):
+            node_down_schedule[-1] = tuple(node_down_schedule[-1])
+
+        if (2756 <= nid <= 3047) or (6376 <= nid <= 6667):
+            nodes.append(Node(nid, 1000, node_down_schedule=node_down_schedule))
+            partitions["highmem"].add_node(nodes[-1])
+        else:
+            nodes.append(Node(nid, 0, node_down_schedule=node_down_schedule))
+        partitions["standard"].add_node(nodes[-1])
+
+    return nodes, partitions
+
 """ End Helpers """
 
 
@@ -56,7 +107,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition", "SubmitLine", "JobName"
+            "Partition", "SubmitLine", "JobName", "Reason", "State"
         ],
         nrows=rows
     )
@@ -95,6 +146,11 @@ def run_sim(
     df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10),
     no_retained=False, mf_priority_calc_step=False
 ):
+    ns, ps = get_nodes_and_partitions(NODE_EVENTS_FILE)
+    system.set_nodes_partitions(ns, ps)
+    print(len(system.node_down_order))
+    print(len(system.down_nodes))
+
     queue = Queue(df_jobs, t0, priority_sorter)
     queue.set_system(system)
 
@@ -140,7 +196,7 @@ def run_sim(
         if verbose and (time.hour != (time - t_step).hour and not time.hour % 3):
             print(
                 "{} (step {}):\n".format(time, cnt) +
-                "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesDrained = {}({})\t\
+                "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesDown = {}\t\
                  Power = {:.4f} MW\n".format(
                     system.occupancy_history[-1] * 100,
                     sum(
@@ -148,7 +204,7 @@ def run_sim(
                             "highmem" in [ partition.name for partition in node.partitions ]
                         )
                     ) * 100,
-                    system.nodes_drained, system.nodes_drained_carryover, system.power_usage
+                    sum(1 for node in system.down_nodes if not node.free), system.power_usage
                 ) +
                 "QueueSize = {} (held by priority {} (highmem {}) ".format(
                     (
