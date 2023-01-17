@@ -1,6 +1,7 @@
 import os
 from glob import glob
-from datetime import datetime, timedelta
+import datetime
+from datetime import timedelta
 import dill as pickle
 
 import pandas as pd
@@ -180,14 +181,13 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
         list(range(150, 301, 50))
     )
 
-    allocnodes_true = [ job.nodes for job in archer_true.job_history ]
     allocnodes_fifo = [ job.nodes for job in archer_fifo.job_history ]
     allocnodes_mf = [ job.nodes for job in archer_mf.job_history ]
 
     vmax = max(
         sum([
             1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
-                zip(allocnodes_true, archer_true.bd_slowdowns)
+                zip(allocnodes_true, true_bd_slowdowns)
             )
         ]),
         sum([
@@ -203,7 +203,7 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
     )
 
     ax[0].hist2d(
-            allocnodes_true, archer_true.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
+            allocnodes_true, true_bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
             cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
     )
     ax[0].set_title("ARCHER2 Data", fontsize=22)
@@ -217,6 +217,71 @@ def bdslowdowns_allocnodes_hist2d_true_fifo_mf(archer_true, archer_fifo, archer_
 
     h = ax[2].hist2d(
         allocnodes_mf, archer_mf.bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
+        norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[2].set_title("Our Simulation", fontsize=22)
+
+    for a in ax:
+        a.set_xscale("log")
+        a.set_yscale("log")
+    ax[1].set_xlabel("Job Num Nodes", fontsize=20)
+
+    fig.tight_layout()
+
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.03, 0.7])
+    fig.colorbar(h[3], cax=cbar_ax)
+
+    return fig, ax
+
+def bdslowdowns_allocnodes_hist2d_true_fifo_mf_noclass(
+    true_bd_slowdowns, true_allocnodes, mf_bd_slowdowns, mf_allocnodes, fifo_bd_slowdowns,
+    fifo_allocnodes
+):
+    fig, ax = plt.subplots(1, 3, figsize=(24, 8))
+
+    bins_allocnodes = np.array(
+        list(range(1, 7, 1)) + list(range(8, 17, 2)) + list(range(22, 101, 6)) +
+        list(range(200, 1001, 100)) + list(range(1500, 5001, 500))
+    )
+    bins_bd_slowdowns = np.array(
+        [ 1 + 0.5 * i for i in range(9) ] + list(range(6, 11, 1)) + list(range(20, 101, 10)) +
+        list(range(150, 301, 50)) + list(range(401, 901, 100))
+    )
+
+    vmax = max(
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(true_allocnodes, true_bd_slowdowns)
+            )
+        ]),
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(fifo_allocnodes, fifo_bd_slowdowns)
+            )
+        ]),
+        sum([
+            1 if (nodes == 1 and slowdown < 2) else 0 for nodes, slowdown in (
+                zip(mf_allocnodes, mf_bd_slowdowns)
+            )
+        ])
+    )
+
+    ax[0].hist2d(
+            true_allocnodes, true_bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
+            cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[0].set_title("ARCHER2 Data", fontsize=22)
+    ax[0].set_ylabel("Job Bounded Slowdown", fontsize=20)
+
+    h = ax[1].hist2d(
+        fifo_allocnodes, fifo_bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns],
+        cmap='jet', norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
+    )
+    ax[1].set_title("FIFO", fontsize=22)
+
+    h = ax[2].hist2d(
+        mf_allocnodes, mf_bd_slowdowns, bins=[bins_allocnodes, bins_bd_slowdowns], cmap='jet',
         norm=matplotlib.colors.LogNorm(vmin=1, vmax=vmax)
     )
     ax[2].set_title("Our Simulation", fontsize=22)
@@ -273,7 +338,7 @@ def plot_blob(
 
     if "cab_power_plot" in plots:
         cabs = {
-            datetime.strptime(os.path.basename(path), "system_%y%m%d") : path
+            datetime.datetime.strptime(os.path.basename(path), "system_%y%m%d") : path
             for path in glob(os.path.join(CABS_DIR, "system_[2]*"))
         }
         for date, cab in cabs.items():
@@ -645,11 +710,10 @@ def plot_blob(
         else:
             plt.show()
 
-        interval = ((0,24),(24,48)) # This looks the clearest
+        interval = ((0,24),(24,48))
         fig, ax = plt.subplots(1, 1, figsize=(14, 8))
         ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
         interval_shade(ax, start[interval], end[interval], interval)
-        ax.set_ylim(1.8, 3.2)
         ax.set_ylabel("Power (MW)", fontsize=20)
         ax.xaxis.label.set_size(18)
         ax.yaxis.label.set_size(18)
@@ -664,19 +728,12 @@ def plot_blob(
             plt.show()
 
         interval = ((0,24),(24,48)) # This looks the clearest
-        for tick, time in enumerate(times[interval]):
-            if time.month == 11 and time.day == 22:
-                start_tick, start_time = tick, time
-                break
-        for tick, time in enumerate(times[interval]):
-            if time.month == 12 and time.day == 2:
-                end_tick, end_time = tick, time
-                break
-        dates_crop = dates[interval][start_tick:end_tick]
-        fig, ax = plt.subplots(1, 1, figsize=(18, 8))
-        ax.plot_date(dates_crop, archer[interval].power_history[start_tick:end_tick], 'g', linewidth=0.6)
-        interval_shade(ax, start_time, end_time, interval)
-        ax.set_ylabel("Power (MW)", fontsize=18)
+        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
+        interval_shade(ax, start[interval], end[interval], interval)
+        ax.set_xlim(datetime.date(2022, 11, 22), datetime.date(2022, 12, 2))
+        ax.set_ylim(2.0, 3.2)
+        ax.set_ylabel("Power (MW)", fontsize=20)
         ax.tick_params(axis='both', which='major', labelsize=14)
         ax.tick_params(axis='both', which='minor', labelsize=14)
         plt.legend(fontsize=18)
@@ -684,10 +741,29 @@ def plot_blob(
         fig.savefig(os.path.join(
             PLOT_DIR, "toyscheduler_low-high_power_0242448_zoomedin_scan{}.pdf".format(save_suffix)
         ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        interval = ((0,12),(12,24))
+        fig, ax = plt.subplots(1, 1, figsize=(14, 8))
+        ax.plot_date(dates[interval], archer[interval].power_history, 'g', linewidth=0.6)
+        interval_shade(ax, start[interval], end[interval], interval)
+        ax.set_xlim(datetime.date(2022, 11, 22), datetime.date(2022, 12, 2))
+        ax.set_ylim(2.0, 3.2)
+        ax.set_ylabel("Power (MW)", fontsize=20)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.tick_params(axis='both', which='minor', labelsize=14)
+        plt.legend(fontsize=18)
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "toyscheduler_low-high_power_0121224_zoomedin_scan{}.pdf".format(save_suffix)
+        ))
         fig.savefig(
             os.path.join(
                 PLOT_DIR,
-                "toyscheduler_low-high_power_0242448_zoomedin_scan_fuckppt{}.png".format(
+                "toyscheduler_low-high_power_0121224_zoomedin_scan_fuckppt{}.png".format(
                     save_suffix
                 ),
             ),
@@ -1373,4 +1449,126 @@ def plot_blob(
             ])) /
             60**2
         ))
+
+    if "test_refactor" in plots:
+        # TODO Redo this baseline fifo to not count the ignore in eval jobs, this will require
+        # turning off partitions, QOS, and dependencies. This will be easier once a lot of this
+        # is moved in a consts global. Wait to do this so I dont have to hack away at code
+        print("Reading baseline fifo sim results")
+        with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as f:
+            data = pickle.load(f)
+        archer_fifo = data["archer"][0]
+
+        data_bd_slowdowns = [
+            max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                1
+            ) for job in archer[0].job_history if not job.ignore_in_eval
+        ]
+        sim_bd_slowdowns = [
+            max(
+                (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            ) for job in archer[0].job_history if not job.ignore_in_eval
+        ]
+        no_eval_ids = [ job.id for job in archer[0].job_history if job.ignore_in_eval ]
+        fifo_bd_slowdowns = [
+            max(
+                (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            ) for job in archer_fifo.job_history if job.id not in no_eval_ids
+        ]
+        print(
+            "True starts mean bd slowdown={}+-{}\n".format(
+                np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns)
+            ) +
+            "Scheduling sim mean bd slowdown={}+-{}\n".format(
+                np.mean(sim_bd_slowdowns), np.std(sim_bd_slowdowns)
+            ) +
+            "FIFO baseline sim mean bd slowdown={}+-{}\n".format(
+                np.mean(fifo_bd_slowdowns), np.std(fifo_bd_slowdowns)
+            )
+        )
+
+        data_allocnodes = [ job.nodes for job in archer[0].job_history if not job.ignore_in_eval ]
+        fifo_allocnodes = [
+            job.nodes for job in archer_fifo.job_history if job.id not in no_eval_ids
+        ]
+        fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf_noclass(
+            data_bd_slowdowns, data_allocnodes, sim_bd_slowdowns, data_allocnodes,
+            fifo_bd_slowdowns, fifo_allocnodes
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            "toyscheduler_test_refactor_withfifobaseline_bdslowdowns_allocnodes{}.pdf".format(
+                save_suffix
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        start_time = archer[0].init_time + timedelta(days=28)
+
+        data_bd_slowdowns_skip = [
+            max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                1
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.submit > start_time
+            )
+        ]
+        sim_bd_slowdowns_skip = [
+            max(
+                (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.submit > start_time
+            )
+        ]
+        fifo_bd_slowdowns_skip = [
+            max(
+                (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            ) for job in archer_fifo.job_history if (
+                job.submit > start_time and job.id not in no_eval_ids
+            )
+        ]
+        print(
+            "=== Skip first 28 days ===" +
+            "True starts mean bd slowdown={}+-{}\n".format(
+                np.mean(data_bd_slowdowns_skip), np.std(data_bd_slowdowns_skip)
+            ) +
+            "Scheduling sim mean bd slowdown={}+-{}\n".format(
+                np.mean(sim_bd_slowdowns_skip), np.std(sim_bd_slowdowns_skip)
+            ) +
+            "FIFO baseline sim mean bd slowdown={}+-{}\n".format(
+                np.mean(fifo_bd_slowdowns_skip), np.std(fifo_bd_slowdowns_skip)
+            )
+        )
+
+        data_allocnodes_skip = [
+            job.nodes for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.submit > start_time
+            )
+        ]
+        fifo_allocnodes_skip = [
+            job.nodes for job in archer_fifo.job_history if (
+                job.submit > start_time and job.id not in no_eval_ids
+            )
+        ]
+        fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf_noclass(
+            data_bd_slowdowns_skip, data_allocnodes_skip, sim_bd_slowdowns_skip,
+            data_allocnodes_skip, fifo_bd_slowdowns_skip, fifo_allocnodes_skip
+        )
+        fig.savefig(os.path.join(
+            PLOT_DIR,
+            (
+                "toyscheduler_test_refactor_withfifobaseline_bdslowdowns_allocnodes" +
+                "_skip28days{}.pdf".format(
+                    save_suffix
+                )
+            )
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
