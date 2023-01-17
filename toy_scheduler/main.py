@@ -44,6 +44,8 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # TODO Refactor run_sim to initialise the Archer2 object in the function rather than being passed
 # to it
 
+# TODO Refactor QOS so that is doesn't check for resource limits that are not set for a given QOS
+
 # === ===
 
 # === Features remaining ===
@@ -56,6 +58,7 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # - implement some of the scheduling options (particularly backfill window and interval,
 #   sched_interval)
 # - Check if pypy can help
+# - Try sortedlist library for lists that need to be resorted immediatley after insertion
 
 # === ===
 
@@ -408,7 +411,7 @@ def main(args):
             archer[0] = run_sim(
                 df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
                 MFPrioritySorter(
-                    ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 300,
+                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 300,
                     timedelta(days=14), 0, 10000
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
@@ -417,7 +420,7 @@ def main(args):
             archer[1] = run_sim(
                 df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
                 MFPrioritySorter(
-                    ASSOCS_FILE, timedelta(minutes=5),  df_jobs.End.max() - t0, t0, 100, 500, 0,
+                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 0,
                     timedelta(days=14), 0, 10000
                 ),
                 verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
@@ -426,6 +429,18 @@ def main(args):
             archer[-1] = run_sim(
                 df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0, DataStartSorter(), seed=0,
                 verbose=args.verbose, min_step=timedelta(seconds=0), no_retained=True
+            )
+
+        elif args.test_refactor:
+            archer = {}
+            archer[0] = run_sim(
+                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
+                MFPrioritySorter(
+                    ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 300,
+                    timedelta(days=14), 0, 10000
+                ),
+                verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
+                no_retained=True
             )
 
         elif args.fifo_baseline:
@@ -445,13 +460,14 @@ def main(args):
                 t0, SimpleLowHighPowerSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
             )
 
+        # NOTE Not using this any more, remove it
         print("Running sim for scheduler fcfs...")
         # archer_fcfs = run_sim(
         #     df_jobs,
         #     Archer2(t0, node_down_mean=NODEDOWN_MEAN, backfill_opts=BACKFILL_OPTS),
         #     t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=MIN_STEP
         # )
-        archer_fcfs = None
+        archer_fcfs = Archer2(t0, backfill_opts=BACKFILL_OPTS)
 
     if args.dump_sim_to:
         data = { "archer" : archer }
@@ -459,9 +475,11 @@ def main(args):
         with open(args.dump_sim_to, 'wb') as f:
             pickle.dump(data, f)
 
+    archer_fcfs = Archer2(t0, backfill_opts=BACKFILL_OPTS) # XXX temporary
     if (
         args.scan_low_high_power or args.scan_job_size_weights or
-        args.scan_job_size_weights_noise or args.test_frequencies or args.test_mf_priority
+        args.scan_job_size_weights_noise or args.test_frequencies or args.test_mf_priority or
+        args.test_refactor
     ):
         archer_times, times, dates, start, end = {}, {}, {}, {}, {}
         for key, archer_entry in archer.items():
@@ -494,6 +512,8 @@ def main(args):
         plots.append("test_frequencies")
     if args.test_mf_priority:
         plots.append("test_mf_priority")
+    if args.test_refactor:
+        plots.append("test_refactor")
 
     if plots:
         plot_blob(
@@ -538,6 +558,11 @@ def parse_arguments():
     scheduler_group.add_argument(
         "--test_mf_priority", action="store_true",
         help="Test of the mf priority implementation (mainly testing that fairshare is working)"
+    )
+    scheduler_group.add_argument(
+        "--test_refactor", action="store_true",
+        help="Run a simulation with all features on to test any refactors and implementation of" +
+             "additional features"
     )
     scheduler_group.add_argument(
         "--fifo_baseline", action="store_true",
