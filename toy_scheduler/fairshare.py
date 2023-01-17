@@ -161,7 +161,7 @@ class FairTree():
         self.calc_period = calc_period
         # decay constant for 1 second applied for the duration of a calc interval
         self.decay_constant = (
-            (1 - np.log(1/2) / decay_halflife.total_seconds()) ** calc_period.total_seconds()
+            (1 + np.log(1/2) / decay_halflife.total_seconds()) ** calc_period.total_seconds()
         )
 
         self.current_period_num = 0
