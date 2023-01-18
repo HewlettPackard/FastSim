@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -10,7 +11,7 @@ class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
-        ignore_in_eval=False
+        reason="None"
     ):
         self.id = id
         self.nodes = nodes
@@ -30,7 +31,12 @@ class Job():
         # and some I cant implemented with available data (JobArrayTaskLimit is usually specified
         # in batch script). Want to have these jobs in simulation but don't want to include them in
         # evaluation stage
-        self.ignore_in_eval = ignore_in_eval
+
+        self.reason = reason
+        self.ignore_in_eval = reason in [
+            "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "Reservation", "BeginTime",
+            "JobHeldUser", "DependencyNeverSatisfied", "JobArrayTaskLimit"
+        ]
 
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
 
@@ -96,14 +102,7 @@ class Queue():
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
                 job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
-                job_row.DependencyArg, job_row.JobName,
-                (
-                    job_row.Reason in [
-                        "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "Reservation",
-                        "BeginTime", "JobHeldUser", "DependencyNeverSatisfied",
-                        "JobArrayTaskLimit"
-                    ]
-                )
+                job_row.DependencyArg, job_row.JobName, job_row.Reason
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self._verify_dependencies()
@@ -114,21 +113,49 @@ class Queue():
         self.qos_held = { qos : [] for qos in self.qoss.values() }
 
     def _verify_dependencies(self):
-        cnt = 0
+        removed_dep_cnt, ignored_dep_cnt = 0, 0
         all_ids = { job.id for job in self.all_jobs }
         for job in self.all_jobs:
             if not job.dependency:
+                # Dependency hidden in batch file
+                if job.reason == "Dependency":
+                    job.ignore_in_eval = True
+                    ignored_dep_cnt += 1
                 continue
 
             for dep_type, ids in job.dependency.conditions.items():
-                job.dependency.conditions[dep_type] = ids.intersection(all_ids)
+                intersection = ids.intersection(all_ids)
+                job.dependency.conditions[dep_type] = intersection
+
+                # Job arrays need to be expanded into individual JobIDs
+                for unmatched_id in ids.difference(intersection):
+                    array_ids = {
+                        id for id in all_ids if re.match("{}_[0-9]".format(unmatched_id), id)
+                    }
+                    if array_ids:
+                        if job.dependency.delimiter == "?":
+                            raise NotImplemetedError(
+                                "Not implemented expanding job array ids for OR dependencies"
+                            )
+                        job.dependency.conditions[dep_type].update(array_ids)
 
             job.dependency.conditions_met = not any(job.dependency.conditions.values())
             if job.dependency.conditions_met and not job.dependency.singleton:
-                cnt += 1
+                removed_dep_cnt += 1
                 job.dependency = None
 
-        print("Removed {} dependencies that cannot be satisfied from workload trace".format(cnt))
+        print(
+            (
+                "Removed {} dependencies that cannot be satisfied from workload trace\n".format(
+                    removed_dep_cnt
+                )
+            ) +
+            (
+                "Ignored {} in evaulation due to dependency not being in SubmitLine".format(
+                    ignored_dep_cnt
+                )
+            )
+        )
 
 
     def set_system(self, system):

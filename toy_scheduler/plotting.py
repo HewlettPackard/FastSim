@@ -1532,7 +1532,7 @@ def plot_blob(
             )
         ]
         print(
-            "=== Skip first 28 days ===" +
+            "=== Skip first 28 days ===\n" +
             "True starts mean bd slowdown={}+-{}\n".format(
                 np.mean(data_bd_slowdowns_skip), np.std(data_bd_slowdowns_skip)
             ) +
@@ -1571,4 +1571,14 @@ def plot_blob(
             plt.close()
         else:
             plt.show()
+
+        for job in archer[0].job_history:
+            if job.ignore_in_eval:
+                continue
+
+            bd_slowdown = max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            )
+            if bd_slowdown > 300:
+                print(job.submit, job.start, job.true_job_start, job.id, job.nodes, job.name, job.partition, job.qos.name, job.dependency.conditions if job.dependency else None)
 

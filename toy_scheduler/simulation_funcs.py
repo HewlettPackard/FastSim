@@ -104,7 +104,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition", "SubmitLine", "JobName"
+            "Partition", "SubmitLine", "JobName", "Reason"
         ],
         nrows=rows, fix_anomalous_powers=True
     )
@@ -200,13 +200,13 @@ def run_sim(
                     ) * 100,
                     sum(1 for node in system.down_nodes if not node.free), system.power_usage
                 ) +
-                "QueueSize = {} (held by priority {} (highmem {}) ".format(
+                "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) ".format(
                     (
                         len(queue.queue) +
                         len(queue.waiting_dependency) +
                         sum(len(jobs) for jobs in queue.qos_held.values())
                     ),
-                    len(queue.queue), sum(1 for job in queue.queue if job.partition == "highmem")
+                    len(queue.queue), sum(1 for job in queue.queue if job.qos.name == "lowpriority"), sum(1 for job in queue.queue if job.partition == "highmem")
                 ) +
                 "dependency {} qos {} (".format(
                     len(queue.waiting_dependency),
