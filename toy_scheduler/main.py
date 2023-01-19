@@ -31,6 +31,8 @@ from toy_scheduler import ARCHER2 # legacy reasons
 
 # TODO Consider a controller class that has a single step method that can do the event loop.
 # Information could be passes between classes with this controller, see how it looks
+# NOTE This is high priority, everything is becoming a bit of mess without this. Replace Archer2
+# with a controller class that does the scheduling steps
 
 # TODO Put a lot of the hardcoding into globals and rename globals config as globals is a builtin.
 # Also id is a builtin so change this where it is used
@@ -57,6 +59,8 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # TODO Performance improvements:
 # - implement some of the scheduling options (particularly backfill window and interval,
 #   sched_interval)
+#       - Done some of these but not happy with implementation, need a controller class I have
+#         decided. Not implemented window yet
 # - Check if pypy can help
 # - Try sortedlist library for lists that need to be resorted immediatley after insertion
 
@@ -439,7 +443,8 @@ def main(args):
                     ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 300,
                     timedelta(days=14), 0, 10000
                 ),
-                verbose=args.verbose, min_step=timedelta(seconds=0), mf_priority_calc_step=True,
+                verbose=args.verbose, fairtree_interval=PRIORITYCALCPERIOD,
+                sched_interval=SCHED_INTERVAL, bf_interval=BACKFILL_OPTS["interval"],
                 no_retained=True
             )
 

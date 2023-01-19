@@ -48,6 +48,19 @@ def get_dependency_arg(submit_line):
 
     return dep_arg
 
+def get_reservation_arg(submit_line):
+    words = submit_line.split(" ")
+    res_arg = None
+    for i_last_word, word in enumerate(words[1:]):
+        # Batch script or executable marks end of options
+        if word[0] != "-" and (words[i_last_word][0] != "-" or "=" in words[i_last_word]):
+            break
+        if "--reservation=" in word:
+            res_arg = word.split("--reservation=")[1]
+            break
+
+    return res_arg
+
 def get_nodes_and_partitions(node_events_dump):
     df_events = pd.read_csv(
         node_events_dump, delimiter='|', lineterminator='\n', header=0,
@@ -126,6 +139,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
     df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
+    df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(lambda row: get_reservation_arg(row))
 
     df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem", "SubmitLine"], axis=1)
 
@@ -139,8 +153,8 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
 
 def run_sim(
-    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, min_step=timedelta(seconds=10),
-    no_retained=False, mf_priority_calc_step=False
+    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, no_retained=False,
+    fairtree_interval=None, sched_interval=None, bf_interval=None
 ):
     ns, ps = get_nodes_and_partitions(NODE_EVENTS_FILE)
     system.set_nodes_partitions(ns, ps)
@@ -158,36 +172,77 @@ def run_sim(
     else:
         num_retained = lambda queue: None
 
+    previous_hour = t0.hour
+    previous_small_sched = t0
+    next_bf_time = t0 + bf_interval
+    next_sched_time = t0 + sched_interval
+    next_fairtree_time = t0 + fairtree_interval
     while queue.all_jobs or queue.queue or system.running_jobs or queue.waiting_dependency:
-        # Not enough precision to compute timedeltas with datetime.max
-        try:
-            t_step = max(min(queue.next_newjob() - time, system.next_event() - time), min_step)
-        except pd._libs.tslibs.np_datetime.OutOfBoundsTimedelta:
-            if queue.next_newjob() == datetime.max:
-                t_step = max(system.next_event() - time, min_step)
+        # No event by event scheduling
+        if DEFER:
+            time = min(
+                next_bf_time, next_sched_time, next_fairtree_time, system.next_event(),
+                queue.next_newjob()
+            )
+
+            small_sched_possible = True if time == system.next_event() else False
+
+            # NOTE There should be a notion of a main scheduler every sched_interval time that
+            # checks all jobs and then a quick one that checks the first 100 (configurable) but for
+            # ARCHER with two partitions I think they are equivalent
+
+            # Still need to end jobs and collect new jobs at the actual time even if scheduling is
+            # no longer event based
+            finished_jobs = system.step(time)
+            for job in finished_jobs:
+                priority_sorter.fairtree.job_finish_usage_update(job)
+            # Need to update dependencies even if there are no new submissions
+            # NOTE submitted_jobs_step and finished_jobs_step are being cleared after check
+            # dependencies since this is the only place they are being used and I dont want
+            # to keep checking the dependencies with the same jobs
+            queue.step(time, num_retained(queue))
+
+            if time == next_fairtree_time:
+                priority_sorter.fairtree.fairshare_calc(system.running_jobs, time)
+                next_fairtree_time += fairtree_interval
+
+            if time == next_sched_time:
+                sched = True
+                next_sched_time += sched_interval
+            elif small_sched_possible and time > previous_small_sched + SCHED_MIN_INTERVAL:
+                sched = True
+                previous_small_sched = time
             else:
-                t_step = max(queue.next_newjob() - time, min_step)
+                sched = False
 
-        # Fair tree can ignore min step
-        if mf_priority_calc_step:
-            next_calc = priority_sorter.fairtree.next_calc() - time
-            if next_calc <= t_step:
-                t_step = next_calc
-                priority_sorter.fairtree.fairshare_calc(system.running_jobs, time + t_step)
+            if time == next_bf_time:
+                backfill = True
+                next_bf_time += bf_interval
+            else:
+                backfill = False
 
-        time += t_step
+            system.submit_jobs(queue, sched=sched, backfill=backfill)
 
-        finished_jobs = system.step(t_step)
-        if mf_priority_calc_step:
+        else:
+            # Not enough precision to compute timedeltas with datetime.max
+            time = min(queue.next_newjob(), system.next_event(), next_fairtree_time)
+
+            if time == next_fairtree_time:
+                priority_sorter.fairtree.fairshare_calc(system.running_jobs, time)
+                next_fairtree_time += fairtree_interval
+                continue
+
+            finished_jobs = system.step(time)
             for job in finished_jobs:
                 priority_sorter.fairtree.job_finish_usage_update(job)
 
-        queue.step(t_step, num_retained(queue))
+            queue.step(time, num_retained(queue))
 
-        system.submit_jobs(queue)
+            system.submit_jobs(queue)
 
         # Print every third hour
-        if verbose and (time.hour != (time - t_step).hour and not time.hour % 3):
+        if verbose and (time.hour != previous_hour and not time.hour % 3):
+            previous_hour = time.hour
             print(
                 "{} (step {}):\n".format(time, cnt) +
                 "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesDown = {}\t\

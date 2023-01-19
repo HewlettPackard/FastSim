@@ -180,6 +180,9 @@ class Queue():
         for i_job in sorted(released, reverse=True):
             self.waiting_dependency.pop(i_job)
 
+        self.system.finished_jobs_step = []
+        self.system.submitted_jobs_step = []
+
     def _check_qos_holds(self):
         for qos in self.qos_held.keys():
             # Dont need to check if we know nothing will be released
@@ -207,8 +210,8 @@ class Queue():
             for i_job in sorted(released, reverse=True):
                 self.qos_held[qos].pop(i_job)
 
-    def step(self, t_step, retained):
-        self.time += t_step
+    def step(self, time, retained):
+        self.time = time
 
         self._check_dependencies()
         self._check_qos_holds()
@@ -583,11 +586,18 @@ class Archer2():
                     usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
                     usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
 
-                    # Nodes do not remain available for this jobs runtime, find new block
-                    if usage_block_start + reqtime > usage_block_end:
-                        selected_intervals = {}
-                        free_nodes = 0
+                    for interval in list(selected_intervals.keys()):
+                        if usage_block_start + reqtime > interval[1]:
+                            free_nodes -= len(selected_intervals.pop(interval))
+
+                    if  job.nodes > free_nodes:
                         continue
+
+                    # # Nodes do not remain available for this jobs runtime, find new block
+                    # if usage_block_start + reqtime > usage_block_end:
+                    #     selected_intervals = {}
+                    #     free_nodes = 0
+                    #     continue
 
                     usage_block_end = usage_block_start + reqtime
 
@@ -618,34 +628,35 @@ class Archer2():
 
         return backfill_now
 
-    def submit_jobs(self, queue : Queue):
+    def submit_jobs(self, queue : Queue, sched=True, backfill=True):
         partitions_full = set()
         low_freqs = self.low_freq_condition(self.queue_size)
 
         self.submitted_jobs_step = []
 
-        jobs_submitted = []
-        for i_job, job in enumerate(queue.queue):
-            if job.partition in partitions_full:
-                continue
+        if sched:
+            jobs_submitted = []
+            for i_job, job in enumerate(queue.queue):
+                if job.partition in partitions_full:
+                    continue
 
-            if self.has_space(job):
-                if low_freqs:
-                    power_factor, time_factor = self.low_freq_calc.get_factors()
-                    job_ready.runtime *= time_factor
-                    job_ready.reqtime *= self.low_freq_reqtime_factor
-                    job_ready.true_node_power *= power_factor
-                self.submit(job.start_job(self.time))
-                jobs_submitted.append(i_job)
-            else:
-                partitions_full.add(job.partition)
-                if len(partitions_full) == len(self.partitions):
-                    break
+                if self.has_space(job):
+                    if low_freqs:
+                        power_factor, time_factor = self.low_freq_calc.get_factors()
+                        job_ready.runtime *= time_factor
+                        job_ready.reqtime *= self.low_freq_reqtime_factor
+                        job_ready.true_node_power *= power_factor
+                    self.submit(job.start_job(self.time))
+                    jobs_submitted.append(i_job)
+                else:
+                    partitions_full.add(job.partition)
+                    if len(partitions_full) == len(self.partitions):
+                        break
 
-        for i in sorted(jobs_submitted, reverse=True):
-            self.submitted_jobs_step.append(queue.queue.pop(i))
+            for i in sorted(jobs_submitted, reverse=True):
+                self.submitted_jobs_step.append(queue.queue.pop(i))
 
-        if queue.queue and self.available_nodes():
+        if backfill and queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
             problemo = False
             for i in backfill_now:
@@ -724,8 +735,8 @@ class Archer2():
             self.down_nodes.append(node)
             self.down_nodes.sort(key=lambda node: node.up_time)
 
-    def step(self, t_step : timedelta):
-        self.time += t_step
+    def step(self, time):
+        self.time = time
 
         self._check_down_nodes()
 
