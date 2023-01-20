@@ -48,6 +48,10 @@ from toy_scheduler import ARCHER2 # legacy reasons
 
 # TODO Refactor QOS so that is doesn't check for resource limits that are not set for a given QOS
 
+# TODO There is a lot of keeping a record of the characteristics of different lists, would be
+# better to make a small class with an add remove methods that do all this recording to make code
+# less confusing
+
 # === ===
 
 # === Features remaining ===

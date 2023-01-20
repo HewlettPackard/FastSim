@@ -40,3 +40,4 @@ ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_050123.csv"
 
 NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221019-230104.csv"
 
+RESERVATIONS_FILE = "/work/y02/y02/awilkins/sinfo_reservations_200123.csv"

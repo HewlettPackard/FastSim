@@ -11,7 +11,7 @@ class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
-        reason="None"
+        reason, reservation_arg
     ):
         self.id = id
         self.nodes = nodes
@@ -26,6 +26,9 @@ class Job():
         self.qos = qos
         self.partition = partition
         self.name = name
+        self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
+        self.reservation = reservation_arg
+
         # Some features are not relevant for scheduluing (AssocMaxCpuMinutesPerJobLimit means for
         # archer that the user hasnt been allocated time yet, reservations, jobs held by user, ...)
         # and some I cant implemented with available data (JobArrayTaskLimit is usually specified
@@ -34,11 +37,9 @@ class Job():
 
         self.reason = reason
         self.ignore_in_eval = reason in [
-            "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "Reservation", "BeginTime",
-            "JobHeldUser", "DependencyNeverSatisfied", "JobArrayTaskLimit"
+            "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
+            "DependencyNeverSatisfied", "JobArrayTaskLimit"
         ]
-
-        self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
 
         self.launch_time = submit
         self.start = None
@@ -77,7 +78,7 @@ class Job():
 
 
 class Queue():
-    def __init__(self, df_jobs, init_time, priority_sorter):
+    def __init__(self, df_jobs, init_time, priority_sorter, valid_reservations=[]):
         self.priority_sorter = priority_sorter
         self.time = init_time
 
@@ -102,7 +103,7 @@ class Queue():
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
                 job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
-                job_row.DependencyArg, job_row.JobName, job_row.Reason
+                job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self._verify_dependencies()
@@ -112,12 +113,32 @@ class Queue():
 
         self.qos_held = { qos : [] for qos in self.qoss.values() }
 
+        self._verify_reservations(valid_reservations)
+        self.reservations = defaultdict(list)
+
+    def _verify_reservations(self, valid_reservations):
+        removed_res, removed_res_cnt = set(), 0
+        for job in self.all_jobs:
+            if not job.reservation:
+                continue
+
+            if job.reservation not in valid_reservations:
+                removed_res.add(job.reservation)
+                removed_res_cnt += 1
+                job.reservation = ""
+                job.ignore_in_eval = True
+
+        print(
+            "Missing reservation records for {} resulting in ignoring reservations for\
+             {} jobs".format(removed_res, removed_res_cnt)
+        )
+
     def _verify_dependencies(self):
         removed_dep_cnt, ignored_dep_cnt = 0, 0
         all_ids = { job.id for job in self.all_jobs }
         for job in self.all_jobs:
             if not job.dependency:
-                # Dependency hidden in batch file
+                # Dependency hidden in batch file or just removed
                 if job.reason == "Dependency":
                     job.ignore_in_eval = True
                     ignored_dep_cnt += 1
@@ -143,6 +164,9 @@ class Queue():
             if job.dependency.conditions_met and not job.dependency.singleton:
                 removed_dep_cnt += 1
                 job.dependency = None
+                if job.reason == "Dependency":
+                    job.ignore_in_eval = True
+                    ignored_dep_cnt += 1
 
         print(
             (
@@ -151,12 +175,12 @@ class Queue():
                 )
             ) +
             (
-                "Ignored {} in evaulation due to dependency not being in SubmitLine".format(
+                "Ignored {} in evaulation due to dependency not being in SubmitLine or missing " \
+                "from workload trace".format(
                     ignored_dep_cnt
                 )
             )
         )
-
 
     def set_system(self, system):
         self.system = system
@@ -173,6 +197,8 @@ class Queue():
             released_job = self.waiting_dependency[i_job]
             if released_job.qos.hold_job(released_job):
                 self.qos_held[released_job.qos].append(released_job.launch_into_hold(self.time))
+            elif released_job.reservation:
+                self.reservations[released_job.reservation].append(released_job.launch(self.time))
             else:
                 self.queue.append(released_job.launch(self.time))
             released.append(i_job)
@@ -204,7 +230,11 @@ class Queue():
                 if job.qos.hold_job_usr(job):
                     continue
 
-                self.queue.append(job.launch(self.time))
+                if job.reservation:
+                    self.reservations[job.reservation].append(job.launch(self.time))
+                else:
+                    self.queue.append(job.launch(self.time))
+
                 released.append(i_job)
 
             for i_job in sorted(released, reverse=True):
@@ -236,11 +266,19 @@ class Queue():
                     self.qos_held[new_job.qos].append(new_job)
                     continue
 
+                if new_job.reservation:
+                    self.reservations[new_job.reservation].append(new_job)
+                    continue
+
                 self.queue.append(new_job.launch(self.time))
         except IndexError: # No more new jobs
             pass
 
         self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
+        for reservation in list(self.reservations.keys()):
+            self.reservations[reservation] = (
+                self.priority_sorter.sort(self.reservations[reservation], self.time)
+            )
 
     def next_newjob(self):
         try:
@@ -393,7 +431,7 @@ class QOS():
 
 
 class Node():
-    def __init__(self, num, weight=0, down_schedule=[]):
+    def __init__(self, num, weight=0, down_schedule=[], reservation_schedule=[]):
         self.id = num
         self.weight = weight
 
@@ -404,26 +442,51 @@ class Node():
         self.down = False
         self.up_time = None
 
+        self.reservation_schedule = reservation_schedule
+        self.reservation = ""
+        self.unreserved_time = None
+
         self.partitions = []
+
+    def set_reserved(self, reservation_name, end_time):
+        self.reservation = reservation_name
+        self.unreserved_time = end_time
+        if self.down or not self.free:
+            return
+        self.free = False
+        for partition in self.partitions:
+            partition.num_available -= 1
+
+    def set_unreserved(self):
+        self.reservation = ""
+        self.unreserved_time = None
+        if self.down or self.running_job:
+            return
+        self.free = True
+        for partition in self.partitions:
+            partition.num_available += 1
 
     def set_down(self, up_time):
         self.down = True
         self.up_time = up_time
-        # If job is already running it will go down after job finished
-        if self.free:
-            for partition in self.partitions:
-                partition.num_available -= 1
-            self.free = False
+        # If job is already running it is allowed to finish
+        if not self.free:
+            return
+        self.free = False
+        for partition in self.partitions:
+            partition.num_available -= 1
 
     def set_up(self):
         self.down = False
         self.up_time = None
+        if self.reservation:
+            return
         self.free = True
         for partition in self.partitions:
             partition.num_available += 1
 
     def set_free(self):
-        if self.down:
+        if self.down or self.reservation:
             return
         self.free = True
         for partition in self.partitions:
@@ -470,8 +533,10 @@ class Archer2():
         # self.node_down_order = [
         #     node for node in nodes if node.down_schedule
         # ].sort(key=lambda node: node.down_schedule[0])
-        self.node_down_order = None
+        self.node_down_order = []
         self.down_nodes = []
+        self.node_reservation_order = []
+        self.reserved_nodes = []
 
         self.nodes_free = 5860
 
@@ -479,8 +544,12 @@ class Archer2():
         self.nodes = nodes
         self.partitions = partitions
         self.node_down_order = sorted(
-            [ node for node in nodes if node.down_schedule],
+            [ node for node in nodes if node.down_schedule ],
             key=lambda node: node.down_schedule[0][0]
+        )
+        self.node_reservation_order = sorted(
+            [ node for node in nodes if node.reservation_schedule ],
+            key=lambda node: node.reservation_schedule[0][0]
         )
 
     def has_space(self, job : Job):
@@ -635,6 +704,33 @@ class Archer2():
         self.submitted_jobs_step = []
 
         if sched:
+            for reservation, res_queue in queue.reservations.items():
+                if not res_queue:
+                    continue
+
+                free_nodes = [
+                    node for node in self.nodes if (
+                        node.reservation == reservation and not node.running_job
+                    )
+                ]
+                while res_queue and res_queue[0].nodes < len(free_nodes):
+                    job = res_queue.pop(0)
+                    self.running_jobs.append(job.start_job(self.time))
+                    self.power_usage += job.true_node_power * job.nodes / 1e+6
+                    self.bd_slowdowns.append(
+                        max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+                    )
+                    self.total_energy += (
+                        job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
+                    )
+
+                    for _ in range(job.nodes):
+                        node = free_nodes.pop(0)
+                        job.assigned_nodes.append(node)
+                        node.running_job = job
+
+                    self.submitted_jobs_step.append(job)
+
             jobs_submitted = []
             for i_job, job in enumerate(queue.queue):
                 if job.partition in partitions_full:
@@ -700,15 +796,17 @@ class Archer2():
         try:
             while self.down_nodes and self.down_nodes[0].up_time <= self.time:
                 node = self.down_nodes.pop(0)
-                self.nodes_free += 1
+                was_free = node.free
                 node.set_up()
+                if not was_free and node.free:
+                    self.nodes_free += 1
         except:
             print(self.down_nodes[0].id, self.down_nodes, self.down_nodes[0].up_time, self.time)
             raise TypeError
 
         while self.node_down_order and self.node_down_order[0].down_schedule[0][0] <= self.time:
             node = self.node_down_order[0]
-            # If already down delay this new downtime until the next day to not interfere (this
+            # If already down delay this new downtime until the next up to not interfere (this
             # happens because my DOWN implementation waits for current running job to finish)
             if node.down:
                 node.down_schedule[0][0] = node.up_time
@@ -727,18 +825,48 @@ class Archer2():
                     up_time += node.running_job.runtime
                 if up_time <= node.running_job.end:
                     continue
-            else:
-                self.nodes_free -= 1
 
+            was_free = node.free
             node.set_down(up_time)
+            if was_free and not node.free:
+                self.nodes_free -= 1
 
             self.down_nodes.append(node)
             self.down_nodes.sort(key=lambda node: node.up_time)
+
+    def _check_reservations(self):
+        while self.reserved_nodes and self.reserved_nodes[0].unreserved_time <= self.time:
+            node = self.reserved_nodes.pop(0)
+            was_free = node.free
+            node.set_unreserved()
+            if not was_free and node.free:
+                self.nodes_free += 1
+
+        while (
+            self.node_reservation_order and
+            self.node_reservation_order[0].reservation_schedule[0][0] <= self.time
+        ):
+            node = self.node_reservation_order[0]
+
+            reservation_schedule = node.reservation_schedule.pop(0)
+            if not len(node.reservation_schedule):
+                self.node_reservation_order.pop(0)
+            else:
+                self.node_reservation_order.sort(key=lambda node: node.reservation_schedulep[0][0])
+
+            was_free = node.free
+            node.set_reserved(reservation_schedule[2], reservation_schedule[1])
+            if was_free and not node.free:
+                self.nodes_free -= 1
+
+            self.reserved_nodes.append(node)
+            self.reserved_nodes.sort(key=lambda node: node.unreserved_time)
 
     def step(self, time):
         self.time = time
 
         self._check_down_nodes()
+        self._check_reservations()
 
         self.running_jobs.sort(key=lambda job: job.end)
 
@@ -748,7 +876,7 @@ class Archer2():
             self.finished_jobs_step[-1].end_job()
             self.job_history.append(self.finished_jobs_step[-1])
             self.nodes_free += sum(
-                1 for node in self.finished_jobs_step[-1].assigned_nodes if not node.down
+                1 for node in self.finished_jobs_step[-1].assigned_nodes if node.free
             )
             self.power_usage -= (
                 self.finished_jobs_step[-1].true_node_power *
