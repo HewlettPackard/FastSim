@@ -72,11 +72,10 @@ class Job():
 
     def launch(self, time):
         self.launch_time = time
-        self.qos.job_launched(self.user, self.nodes)
         return self
 
-    def launch_into_hold(self, time):
-        self.launch_time = time
+    def launch_into_priority(self):
+        self.qos.job_launched(self.user, self.nodes)
         return self
 
 
@@ -203,11 +202,13 @@ class Queue():
 
             released_job = self.waiting_dependency[i_job]
             if released_job.qos.hold_job(released_job):
-                self.qos_held[released_job.qos].append(released_job.launch_into_hold(self.time))
+                self.qos_held[released_job.qos].append(released_job.launch(self.time))
             elif released_job.reservation:
-                self.reservations[released_job.reservation].append(released_job.launch(self.time))
+                self.reservations[released_job.reservation].append(
+                    released_job.launch(self.time).launch_into_priority()
+                )
             else:
-                self.queue.append(released_job.launch(self.time))
+                self.queue.append(released_job.launch(self.time).launch_into_priority())
             released.append(i_job)
 
         for i_job in sorted(released, reverse=True):
@@ -238,9 +239,9 @@ class Queue():
                     continue
 
                 if job.reservation:
-                    self.reservations[job.reservation].append(job.launch(self.time))
+                    self.reservations[job.reservation].append(job.launch_into_priority())
                 else:
-                    self.queue.append(job.launch(self.time))
+                    self.queue.append(job.launch_into_priority())
 
                 released.append(i_job)
 
@@ -270,14 +271,15 @@ class Queue():
                         continue
 
                 if new_job.qos.hold_job(new_job):
-                    self.qos_held[new_job.qos].append(new_job)
+                    self.qos_held[new_job.qos].append(new_job.launch(self.time))
                     continue
 
                 if new_job.reservation:
-                    self.reservations[new_job.reservation].append(new_job)
+                    self.reservations[new_job.reservation].append(new_job.launch(self.time))
                     continue
 
-                self.queue.append(new_job.launch(self.time))
+                self.queue.append(new_job.launch(self.time).launch_into_priority())
+
         except IndexError: # No more new jobs
             pass
 
@@ -711,14 +713,7 @@ class Archer2():
                         # redefining
                         if key[0] == self.time:
                             if not free_blocks[key]:
-                                try:
-                                    free_blocks_ready_intervals.remove((key[0], key[1]))
-                                except:
-                                    print(self.time)
-                                    print(free_blocks_ready_intervals)
-                                    print(key)
-                                    print(free_blocks[key])
-                                    raise TypeError
+                                free_blocks_ready_intervals.remove((key[0], key[1]))
                             if key[0] != usage_block_start:
                                 free_blocks_ready_intervals.add((key[0], usage_block_start))
 
@@ -791,6 +786,9 @@ class Archer2():
             for i in sorted(jobs_submitted, reverse=True):
                 self.submitted_jobs_step.append(queue.queue.pop(i))
 
+            for partition in self.partitions.values():
+                partition.set_unplanned()
+
         if backfill and queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
             for i in backfill_now:
@@ -807,9 +805,6 @@ class Archer2():
                self.submitted_jobs_step.append(queue.queue.pop(i))
 
         self.queue_size = len(queue.queue)
-
-        for partition in self.partitions.values():
-            partition.set_unplanned()
 
     def submit(self, job : Job):
         if self.has_space(job):
@@ -925,6 +920,7 @@ class Archer2():
                 1e+6
             )
 
+        # XXX Need reservations in denominator
         self.occupancy_history.append(
             1 -
             (
