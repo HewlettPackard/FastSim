@@ -11,7 +11,7 @@ class Job():
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
-        reason, reservation_arg
+        reason, reservation_arg, begin_arg
     ):
         self.id = id
         self.nodes = nodes
@@ -36,10 +36,13 @@ class Job():
         # evaluation stage
 
         self.reason = reason
-        self.ignore_in_eval = reason in [
-            "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
-            "DependencyNeverSatisfied", "JobArrayTaskLimit"
-        ]
+        self.ignore_in_eval = (
+            reason in [
+                "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
+                "DependencyNeverSatisfied", "JobArrayTaskLimit"
+            ] or
+            begin_arg
+        )
 
         self.launch_time = submit
         self.start = None
@@ -103,7 +106,8 @@ class Queue():
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
                 job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
-                job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg
+                job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg,
+                job_row.BeginArg
             ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
         ]
         self._verify_dependencies()
@@ -120,6 +124,9 @@ class Queue():
         removed_res, removed_res_cnt = set(), 0
         for job in self.all_jobs:
             if not job.reservation:
+                # XXX testing this, shortqos might not need the reservation specified
+                if job.qos.name == "short":
+                    job.reservation = "shortqos"
                 continue
 
             if job.reservation not in valid_reservations:
@@ -343,7 +350,6 @@ class Dependency():
                     return
 
     def can_release(self, queued_jobs, running_jobs):
-        # return True if np.random.rand() < 0.1 else False
         if not self.conditions_met:
             self.conditions_met = not any(self.conditions.values())
             if not self.conditions_met:
@@ -368,6 +374,7 @@ class Partition():
         self.priority_weight = priority_weight # Normalised s.t. partition with greatest has 1
 
         self.nodes = []
+        self.planned_nodes = []
 
         self.num_available = 0
 
@@ -379,6 +386,16 @@ class Partition():
 
     def available_nodes(self):
         return self.num_available
+
+    def set_planned(self):
+        for node in self.nodes:
+            if node.free:
+                node.set_planned()
+                self.planned_nodes.append(node)
+
+    def set_unplanned(self):
+        while self.planned_nodes:
+            self.planned_nodes.pop(0).set_unplanned()
 
 
 class QOS():
@@ -446,7 +463,21 @@ class Node():
         self.reservation = ""
         self.unreserved_time = None
 
+        self.planned = False
+
         self.partitions = []
+
+    def set_planned(self):
+        self.planned = True
+        self.free = False
+        for partition in self.partitions:
+            partition.num_available -= 1
+
+    def set_unplanned(self):
+        self.planned = False
+        self.free = True
+        for partition in self.partitions:
+            partition.num_available += 1
 
     def set_reserved(self, reservation_name, end_time):
         self.reservation = reservation_name
@@ -507,8 +538,8 @@ class Archer2():
         self.init_time = init_time
         self.time = init_time
         self.backfill_opts = backfill_opts
-        if "min_block_width" not in self.backfill_opts:
-            self.backfill_opts["min_block_width"] = timedelta(minutes=1) # 1min for Archer2
+        if "resolution" not in self.backfill_opts:
+            self.backfill_opts["resolution"] = timedelta(minutes=1) # 1min for Archer2
         if "max_job_test" not in self.backfill_opts:
             self.backfill_opts["max_job_test"] = 1000 # 1000 for Archer2
         self.low_freq_condition = low_freq_condition
@@ -589,7 +620,7 @@ class Archer2():
                 list(queue.queue)[:max(len(queue.queue), self.backfill_opts["max_job_test"])]
             ):
                 # Shadow time too short and no extra nodes -> not possible to backfill anymore
-                if shadow_time <= self.time + self.backfill_opts["min_block_width"] and not extra_nodes:
+                if shadow_time <= self.time + self.backfill_opts["resolution"] and not extra_nodes:
                     return backfill_now
 
                 pass
@@ -601,14 +632,14 @@ class Archer2():
         for job in self.running_jobs:
             # Some jobs exceeding timelimit and some with zero reqtime
             if job.endlimit <= self.time:
-                job.endlimit = self.time + 0.1 * job.reqtime + timedelta(minutes=1)
+                job.endlimit = self.time + self.backfill_opts["resolution"]
             free_blocks[(job.endlimit, datetime.max)].update(job.assigned_nodes)
 
-        min_required_block_time = max( # min
-            self.time + self.backfill_opts["min_block_width"],
-            self.time + (
+        min_required_block_time = (
+            self.time +
+            (
                 min(queue.queue, key=lambda job: job.reqtime).reqtime *
-                self.low_freq_reqtime_factor
+                self.low_freq_reqtime_factor + self.backfill_opts["resolution"]
             )
         )
 
@@ -635,7 +666,7 @@ class Archer2():
                 continue
             partition_num_tested[job.partition] += 1
 
-            reqtime = job.reqtime * self.low_freq_reqtime_factor
+            reqtime = job.reqtime * self.low_freq_reqtime_factor + self.backfill_opts["resolution"]
             # Only need to plan nodes for jobs that may be relevant to immediate scheduling
             if self.time + reqtime > max_block_time:
                 continue
@@ -652,7 +683,7 @@ class Archer2():
                     free_nodes += len(valid_nodes)
 
                 if job.nodes <= free_nodes:
-                    usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
+                    # usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
                     usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
 
                     for interval in list(selected_intervals.keys()):
@@ -680,7 +711,14 @@ class Archer2():
                         # redefining
                         if key[0] == self.time:
                             if not free_blocks[key]:
-                                free_blocks_ready_intervals.remove((key[0], key[1]))
+                                try:
+                                    free_blocks_ready_intervals.remove((key[0], key[1]))
+                                except:
+                                    print(self.time)
+                                    print(free_blocks_ready_intervals)
+                                    print(key)
+                                    print(free_blocks[key])
+                                    raise TypeError
                             if key[0] != usage_block_start:
                                 free_blocks_ready_intervals.add((key[0], usage_block_start))
 
@@ -745,6 +783,7 @@ class Archer2():
                     self.submit(job.start_job(self.time))
                     jobs_submitted.append(i_job)
                 else:
+                    self.partitions[job.partition].set_planned()
                     partitions_full.add(job.partition)
                     if len(partitions_full) == len(self.partitions):
                         break
@@ -754,7 +793,6 @@ class Archer2():
 
         if backfill and queue.queue and self.available_nodes():
             backfill_now = self.get_backfill_jobs(queue)
-            problemo = False
             for i in backfill_now:
                 job_ready = queue.queue[i]
                 if low_freqs:
@@ -769,6 +807,9 @@ class Archer2():
                self.submitted_jobs_step.append(queue.queue.pop(i))
 
         self.queue_size = len(queue.queue)
+
+        for partition in self.partitions.values():
+            partition.set_unplanned()
 
     def submit(self, job : Job):
         if self.has_space(job):

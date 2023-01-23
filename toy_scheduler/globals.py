@@ -30,7 +30,7 @@ SCHED_MIN_INTERVAL=timedelta(seconds=2)
 PRIORITYCALCPERIOD = timedelta(minutes=5)
 
 BACKFILL_OPTS = {
-    "min_block_width" : timedelta(minutes=10), "max_job_test" : 1000 ,
+    "resolution" : timedelta(minutes=1), "max_job_test" : 1000 ,
     "window" : timedelta(minutes=5760), "interval" : timedelta(seconds=30)
 }
 
