@@ -61,6 +61,22 @@ def get_reservation_arg(submit_line):
 
     return res_arg
 
+def get_begin_arg(submit_line):
+    words = submit_line.split(" ")
+    begin_arg = None
+    for i_last_word, word in enumerate(words[1:]):
+        # Batch script or executable marks end of options
+        if word[0] != "-" and (words[i_last_word][0] != "-" or "=" in words[i_last_word]):
+            break
+        if "--begin=" in word:
+            begin_arg = word.split("--begin=")[1]
+            break
+        if word == "-b":
+            begin_arg = words[i_last_word + 2]
+            break
+
+    return begin_arg
+
 def convert_nodelist_to_node_nums(nid_str):
     node_nums = []
 
@@ -187,6 +203,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
     df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
     df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(lambda row: get_reservation_arg(row))
+    df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(lambda row: get_begin_arg(row))
 
     df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem", "SubmitLine"], axis=1)
 
@@ -267,6 +284,9 @@ def run_sim(
             if time == next_bf_time:
                 backfill = True
                 next_bf_time += bf_interval
+                # sched is a subset of what backfill does so may as well do a pass here to see if
+                # we can save some computation
+                sched = True
             else:
                 backfill = False
 
