@@ -314,21 +314,16 @@ def run_sim(
             previous_hour = time.hour
             print(
                 "{} (step {}):\n".format(time, cnt) +
-                "Utilisation = {:.2f}% (highmem {:.2f}%)\tNodesReserved = {} " \
-                "(Utilisation = {:.2f}%)\tNodesDown = {}\tPower = {:.4f} MW\n".format(
-                    system.occupancy_history[-1] * 100,
-                    sum(
-                        100 / 584 for job in system.running_jobs for node in job.assigned_nodes if (
-                            "highmem" in [ partition.name for partition in node.partitions ]
-                        )
-                    ),
+                "Idle Nodes = {} (highmem {})\tNodesReserved = {} " \
+                "(Idle = {})\tNodesDown = {}\tPower = {:.4f} MW\n".format(
+                    system.idle_history[-1], system.partitions["highmem"].available_nodes(),
+                    # sum(
+                    #     100 / 584 for job in system.running_jobs for node in job.assigned_nodes if (
+                    #         "highmem" in [ partition.name for partition in node.partitions ]
+                    #     )
+                    # ),
                     sum(1 for node in system.nodes if node.reservation),
-                    (
-                        sum(
-                            100 for node in system.nodes if node.reservation and node.running_job
-                        ) /
-                        sum(1 for node in system.nodes if node.reservation)
-                    ),
+                    sum(1 for node in system.nodes if node.reservation and not node.running_job),
                     sum(1 for node in system.down_nodes if not node.free), system.power_usage
                 ) +
                 "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) " \
@@ -339,8 +334,8 @@ def run_sim(
                         sum(len(jobs) for jobs in queue.qos_held.values())
                     ),
                     len(queue.queue),
-                    sum(1 for job in queue.queue if job.qos.name == "lowpriority"),
                     sum(1 for job in queue.queue if job.partition == "highmem"),
+                    sum(1 for job in queue.queue if job.qos.name == "lowpriority"),
                     len(queue.waiting_dependency),
                     sum(len(jobs) for jobs in queue.qos_held.values())
                 ) +

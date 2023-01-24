@@ -90,14 +90,14 @@ class Queue():
         # Don't have a proper way to simulate reservations as I can't see a history of deleted ones
         self.qoss = {
             "normal" : QOS("normal", 0, -1, -1, -1, -1),
-            "reservation" : QOS("reservation", 1, -1, -1, -1, -1),
-            "taskfarm" : QOS("taskfarm", 1, -1, 128, 512, 32),
-            "standard" : QOS("standard", 1, -1, -1, 1024, 16),
-            "short" : QOS("short", 1, -1, -1, 32, 4),
-            "long" : QOS("long", 1, 2048, -1, 512, 16),
-            "largescale" : QOS("largescale", 1, -1, -1, -1, 1),
-            "highmem" : QOS("highmem", 1, -1, -1, 256, 16),
-            "lowpriority" : QOS("lowpriority", 0.002, -1, -1, 2048, 16)
+            "reservation" : QOS("reservation", 0.1, -1, -1, -1, -1),
+            "taskfarm" : QOS("taskfarm", 0.1, -1, 128, 512, 32),
+            "standard" : QOS("standard", 0.1, -1, -1, 1024, 16),
+            "short" : QOS("short", 0.1, -1, -1, 32, 4),
+            "long" : QOS("long", 0.1, 2048, -1, 512, 16),
+            "largescale" : QOS("largescale", 0.1, -1, -1, -1, 1),
+            "highmem" : QOS("highmem", 0.1, -1, -1, 256, 16),
+            "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16)
         }
 
         self.all_jobs = [
@@ -255,6 +255,8 @@ class Queue():
         self._check_qos_holds()
 
         if self.time < self.next_newjob():
+            # Still need to sort as there may be new jobs from dependency and qos releases
+            self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
             return
 
         try:
@@ -551,7 +553,7 @@ class Archer2():
         self.running_jobs = []
 
         self.power_history = [self.power_usage] # MW
-        self.occupancy_history = [0] # %
+        self.idle_history = [5860] # %
         self.queue_size = 0
         self.queue_size_history = [0]
         self.times = [self.time]
@@ -920,14 +922,15 @@ class Archer2():
                 1e+6
             )
 
+        self.idle_history.append(self.available_nodes())
         # XXX Need reservations in denominator
-        self.occupancy_history.append(
-            1 -
-            (
-                self.available_nodes() /
-                (5860 - sum(1 for node in self.down_nodes if not node.free))
-            )
-        )
+        # self.occupancy_history.append(
+        #     1 -
+        #     (
+        #         self.available_nodes() /
+        #         (5860 - sum(1 for node in self.down_nodes if not node.free))
+        #     )
+        # )
         self.power_history.append(self.power_usage)
         self.queue_size_history.append(self.queue_size)
         self.times.append(self.time)

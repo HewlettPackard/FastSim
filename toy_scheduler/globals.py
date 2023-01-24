@@ -26,7 +26,7 @@ MIN_STEP = timedelta(seconds=10)
 
 DEFER = True
 SCHED_INTERVAL = timedelta(seconds=60)
-SCHED_MIN_INTERVAL=timedelta(seconds=2)
+SCHED_MIN_INTERVAL = timedelta(seconds=2)
 PRIORITYCALCPERIOD = timedelta(minutes=5)
 
 BACKFILL_OPTS = {
