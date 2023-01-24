@@ -1509,8 +1509,54 @@ def plot_blob(
             "Scheduling sim mean wait time={}+-{}hr\n".format(
                 np.mean(sim_wait_times), np.std(sim_wait_times)
             ) +
-            "FIFO baseline sim mean wait time={}+-{}hr".format(
+            "FIFO baseline sim mean wait time={}+-{}hr\n".format(
                 np.mean(fifo_wait_times), np.std(fifo_wait_times)
+            )
+        )
+
+        data_bd_slowdowns_no_lowpriority = [
+            max(
+                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                1
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.qos.name != "lowpriority"
+            )
+        ]
+        sim_bd_slowdowns_no_lowpriority = [
+            max(
+                (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.qos.name != "lowpriority"
+            )
+        ]
+        data_wait_times_no_lowpriority = [
+            (
+                (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.qos.name != "lowpriority"
+            )
+        ]
+        sim_wait_times_no_lowpriority = [
+            (
+                (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
+            ) for job in archer[0].job_history if (
+                not job.ignore_in_eval and job.qos.name != "lowpriority"
+            )
+        ]
+
+        print(
+            "No lowpriority jobs counted:\n" +
+            "True starts mean bd slowdown={}+-{}\n".format(
+                np.mean(data_bd_slowdowns_no_lowpriority), np.std(data_bd_slowdowns_no_lowpriority)
+            ) +
+            "Scheduling sim mean bd slowdown={}+-{}\n".format(
+                np.mean(sim_bd_slowdowns_no_lowpriority), np.std(sim_bd_slowdowns_no_lowpriority)
+            ) +
+            "True starts mean wait time={}+-{}hr\n".format(
+                np.mean(data_wait_times_no_lowpriority), np.std(data_wait_times_no_lowpriority)
+            ) +
+            "Scheduling sim mean wait time={}+-{}hr\n".format(
+                np.mean(sim_wait_times_no_lowpriority), np.std(sim_wait_times_no_lowpriority)
             )
         )
 
@@ -1595,7 +1641,7 @@ def plot_blob(
             "Scheduling sim mean wait time={}+-{}hr\n".format(
                 np.mean(sim_wait_times_skip), np.std(sim_wait_times_skip)
             ) +
-            "FIFO baseline sim mean wait time={}+-{}hr".format(
+            "FIFO baseline sim mean wait time={}+-{}hr\n".format(
                 np.mean(fifo_wait_times_skip), np.std(fifo_wait_times_skip)
             )
         )
@@ -1652,8 +1698,10 @@ def plot_blob(
         proj_nodehours = defaultdict(float)
         for job in archer[0].job_history:
             proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
-            proj_sim_wait[proj].append((job.start - job.submit).total_seconds())
-            proj_data_wait[proj].append((job.true_job_start - job.submit).total_seconds())
+            proj_sim_wait[proj].append((job.start - job.submit).total_seconds()/ 60 / 60)
+            proj_data_wait[proj].append(
+                (job.true_job_start - job.submit).total_seconds() / 60 / 60
+            )
             proj_nodehours[proj] += job.nodes * job.runtime.total_seconds() / 60 / 60
 
         proj_sim_wait = { proj : np.mean(waits) for proj, waits in proj_sim_wait.items() }
@@ -1675,7 +1723,8 @@ def plot_blob(
                 "{}.\t{}\t- {}".format(i, proj_wait[0], proj_wait[1]) for i, proj_wait in (
                     enumerate(sorted_sim_wait)
                 )
-            )
+            ) +
+            "\n"
         )
         print(
             "True starts top projects by mean wait times:\n" +
@@ -1683,14 +1732,36 @@ def plot_blob(
                 "{}.\t{}\t- {}".format(i, proj_wait[0], proj_wait[1]) for i, proj_wait in (
                     enumerate(sorted_data_wait)
                 )
-            )
+            ) +
+            "\n"
         )
 
-        sim_submit_hour_waits = defaultdict(list)
-        for job in archer[0].job_history:
-            sim_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
-                (job.start - job.submit).total_seconds() / 60 / 60
+        top_projs = [
+            proj for proj, _ in (
+                sorted(proj_nodehours.items(), key=lambda keyval: keyval[1], reverse=True)[:10]
             )
+        ]
+        top_projs.sort(key=lambda proj: proj_data_wait[proj], reverse=True)
+        sim_mean_waits = [ proj_sim_wait[proj] for proj in top_projs ]
+        data_mean_waits = [ proj_data_wait[proj] for proj in top_projs ]
+        x = np.arange(len(top_projs))
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Scheduling Sim")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        ax.set_ylabel("Mean Wait Time (hrs)")
+        ax.set_xticks(x, top_projs)
+        ax.legend()
+        ax.bar_label(sim_bars, padding=3, fmt="%.1f")
+        ax.bar_label(data_bars, padding=3, fmt="%.1f")
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "test_refactor_top_projs_mean_waits{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
 
         hours = [
             archer[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr) for hr in (
@@ -1703,31 +1774,31 @@ def plot_blob(
                 ))
             )
         ]
-        print(len(hours))
 
-        sim_mean_wait_times_rolling_window = []
-        wait_times_rolling_window_sum, wait_times_rolling_window_len = 0.0, 0
-        for hr_num in range(336): # 14 days
-            wait_times_rolling_window_sum += sum(
-                sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+        # Rolling window mean wait time
+        sim_submit_hour_waits = defaultdict(list)
+        for job in archer[0].job_history:
+            sim_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
+                (job.start - job.submit).total_seconds() / 60 / 60
             )
-            wait_times_rolling_window_len += len(
-                sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+
+        sim_mean_wait_times_rolling_window = np.zeros(len(hours))
+        sim_mean_wait_times_rolling_window_err = np.zeros(len(hours))
+        wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
+        for hr_num in range(336):
+            wait_times_rolling_window += sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+            wait_times_rolling_window_hour_lens.append(
+                len(sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)])
             )
-        for hour in hours:
-            wait_times_rolling_window_sum -= sum(sim_submit_hour_waits[hour])
-            wait_times_rolling_window_len -= len(sim_submit_hour_waits[hour])
-            wait_times_rolling_window_sum += sum(
-                sim_submit_hour_waits[hour + timedelta(hours=336)]
+        for i_hour, hour in enumerate(hours):
+            sim_mean_wait_times_rolling_window[i_hour] = np.mean(wait_times_rolling_window)
+            sim_mean_wait_times_rolling_window_err[i_hour] = np.std(wait_times_rolling_window)
+            wait_times_rolling_window = (
+                wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
             )
-            wait_times_rolling_window_len += len(
-                sim_submit_hour_waits[hour + timedelta(hours=336)]
-            )
-            if not wait_times_rolling_window_sum:
-                sim_mean_wait_times_rolling_window.append(0)
-                continue
-            sim_mean_wait_times_rolling_window.append(
-                wait_times_rolling_window_sum / wait_times_rolling_window_len
+            wait_times_rolling_window += sim_submit_hour_waits[hour + timedelta(hours=336)]
+            wait_times_rolling_window_hour_lens.append(
+                len(sim_submit_hour_waits[hour + timedelta(hours=336)])
             )
 
         data_submit_hour_waits = defaultdict(list)
@@ -1736,40 +1807,45 @@ def plot_blob(
                 (job.true_job_start - job.submit).total_seconds() / 60 / 60
             )
 
-        data_mean_wait_times_rolling_window = []
-        wait_times_rolling_window_sum, wait_times_rolling_window_len = 0.0, 0
+        data_mean_wait_times_rolling_window = np.zeros(len(hours))
+        data_mean_wait_times_rolling_window_err = np.zeros(len(hours))
+        wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
         for hr_num in range(336):
-            wait_times_rolling_window_sum += sum(
-                data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+            wait_times_rolling_window += data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+            wait_times_rolling_window_hour_lens.append(
+                len(data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)])
             )
-            wait_times_rolling_window_len += len(
-                data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
+        for i_hour, hour in enumerate(hours):
+            data_mean_wait_times_rolling_window[i_hour] = np.mean(wait_times_rolling_window)
+            data_mean_wait_times_rolling_window_err[i_hour] = np.std(wait_times_rolling_window)
+            wait_times_rolling_window = (
+                wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
             )
-        for hour in hours:
-            wait_times_rolling_window_sum -= sum(data_submit_hour_waits[hour])
-            wait_times_rolling_window_len -= len(data_submit_hour_waits[hour])
-            wait_times_rolling_window_sum += sum(
-                data_submit_hour_waits[hour + timedelta(hours=336)]
-            )
-            wait_times_rolling_window_len += len(
-                data_submit_hour_waits[hour + timedelta(hours=336)]
-            )
-            if not wait_times_rolling_window_sum:
-                data_mean_wait_times_rolling_window.append(0)
-                continue
-            data_mean_wait_times_rolling_window.append(
-                wait_times_rolling_window_sum / wait_times_rolling_window_len
+            wait_times_rolling_window += data_submit_hour_waits[hour + timedelta(hours=336)]
+            wait_times_rolling_window_hour_lens.append(
+                len(data_submit_hour_waits[hour + timedelta(hours=336)])
             )
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         hour_dates = matplotlib.dates.date2num([ hour + timedelta(days=7) for hour in hours ])
         ax.plot_date(
-            hour_dates, np.array(sim_mean_wait_times_rolling_window), 'g', label="Scheduling sim",
+            hour_dates, sim_mean_wait_times_rolling_window, 'g', label="Scheduling sim",
             linewidth=0.6
         )
+        ax.fill_between(
+            hour_dates,
+            sim_mean_wait_times_rolling_window - sim_mean_wait_times_rolling_window_err,
+            sim_mean_wait_times_rolling_window + sim_mean_wait_times_rolling_window_err,
+            edgecolor='g', facecolor='g', alpha=0.2, linewidth=0
+        )
         ax.plot_date(
-            hour_dates, np.array(data_mean_wait_times_rolling_window), 'r', label="Data",
-            linewidth=0.6
+            hour_dates, data_mean_wait_times_rolling_window, 'r', label="Data", linewidth=0.6
+        )
+        ax.fill_between(
+            hour_dates,
+            data_mean_wait_times_rolling_window - data_mean_wait_times_rolling_window_err,
+            data_mean_wait_times_rolling_window + data_mean_wait_times_rolling_window_err,
+            edgecolor='r', facecolor='r', alpha=0.2, linewidth=0
         )
         ax.set_ylabel("Mean Wait Time in Window")
         ax.set_xlabel("Middle Hour of 2 Week Rolling Window")
@@ -1777,7 +1853,185 @@ def plot_blob(
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(
+            PLOT_DIR, "test_refactor_wait_times_rolling_window{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.plot_date(
+            hour_dates, sim_mean_wait_times_rolling_window, 'g', label="Scheduling sim",
+            linewidth=0.6
+        )
+        ax.plot_date(
+            hour_dates, data_mean_wait_times_rolling_window, 'r', label="Data", linewidth=0.6
+        )
+        ax.set_ylabel("Mean Wait Time in Window")
+        ax.set_xlabel("Middle Hour of 2 Week Rolling Window")
+        ax.grid(axis="x")
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "test_refactor_wait_times_rolling_window_noerr{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        # Rolling window mean bd slowdown
+        sim_submit_hour_bdslowdowns = defaultdict(list)
+        for job in archer[0].job_history:
+            sim_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
+                max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1)
+            )
+
+        sim_mean_bdslowdowns_rolling_window = np.zeros(len(hours))
+        sim_mean_bdslowdowns_rolling_window_err = np.zeros(len(hours))
+        bdslowdowns_rolling_window, bdslowdowns_rolling_window_hour_lens = [], []
+        for hr_num in range(336):
+            bdslowdowns_rolling_window += (
+                sim_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)]
+            )
+            bdslowdowns_rolling_window_hour_lens.append(
+                len(sim_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)])
+            )
+        for i_hour, hour in enumerate(hours):
+            sim_mean_bdslowdowns_rolling_window[i_hour] = np.mean(bdslowdowns_rolling_window)
+            sim_mean_bdslowdowns_rolling_window_err[i_hour] = np.std(bdslowdowns_rolling_window)
+            bdslowdowns_rolling_window = (
+                bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
+            )
+            bdslowdowns_rolling_window += sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+            bdslowdowns_rolling_window_hour_lens.append(
+                len(sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+            )
+
+        data_submit_hour_bdslowdowns = defaultdict(list)
+        for job in archer[0].job_history:
+            data_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
+                max(
+                    (
+                        (job.true_job_start + job.runtime - job.submit) /
+                        max(job.runtime, BD_THRESHOLD)
+                    ),
+                    1
+                )
+            )
+
+        data_mean_bdslowdowns_rolling_window = np.zeros(len(hours))
+        data_mean_bdslowdowns_rolling_window_err = np.zeros(len(hours))
+        bdslowdowns_rolling_window, bdslowdowns_rolling_window_hour_lens = [], []
+        for hr_num in range(336):
+            bdslowdowns_rolling_window += (
+                data_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)]
+            )
+            bdslowdowns_rolling_window_hour_lens.append(
+                len(data_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)])
+            )
+        for i_hour, hour in enumerate(hours):
+            data_mean_bdslowdowns_rolling_window[i_hour] = np.mean(bdslowdowns_rolling_window)
+            data_mean_bdslowdowns_rolling_window_err[i_hour] = np.std(bdslowdowns_rolling_window)
+            bdslowdowns_rolling_window = (
+                bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
+            )
+            bdslowdowns_rolling_window += data_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+            bdslowdowns_rolling_window_hour_lens.append(
+                len(data_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+            )
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.plot_date(
+            hour_dates, sim_mean_bdslowdowns_rolling_window, 'g', label="Scheduling sim",
+            linewidth=0.6
+        )
+        ax.fill_between(
+            hour_dates,
+            sim_mean_bdslowdowns_rolling_window - sim_mean_bdslowdowns_rolling_window_err,
+            sim_mean_bdslowdowns_rolling_window + sim_mean_bdslowdowns_rolling_window_err,
+            edgecolor='g', facecolor='g', alpha=0.2, linewidth=0
+        )
+        ax.plot_date(
+            hour_dates, data_mean_bdslowdowns_rolling_window, 'r', label="Data", linewidth=0.6
+        )
+        ax.fill_between(
+            hour_dates,
+            data_mean_bdslowdowns_rolling_window - data_mean_bdslowdowns_rolling_window_err,
+            data_mean_bdslowdowns_rolling_window + data_mean_bdslowdowns_rolling_window_err,
+            edgecolor='r', facecolor='r', alpha=0.2, linewidth=0
+        )
+        ax.set_ylabel("Mean Bounded Slowdown in Window")
+        ax.set_xlabel("Middle Hour of 2 Week Rolling Window")
+        ax.grid(axis="x")
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(
             PLOT_DIR, "test_refactor_bd_slowdowns_rolling_window{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        ax.plot_date(
+            hour_dates, sim_mean_bdslowdowns_rolling_window, 'g', label="Scheduling sim",
+            linewidth=0.6
+        )
+        ax.plot_date(
+            hour_dates, data_mean_bdslowdowns_rolling_window, 'r', label="Data", linewidth=0.6
+        )
+        ax.set_ylabel("Mean Bounded Slowdown in Window")
+        ax.set_xlabel("Middle Hour of 2 Week Rolling Window")
+        ax.grid(axis="x")
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "test_refactor_bd_slowdowns_rolling_window_noerr{}.pdf".format(save_suffix)
+        ))
+        if batch:
+            plt.close()
+        else:
+            plt.show()
+
+        sim_end_hour_cnt = defaultdict(int)
+        for job in archer[0].job_history:
+            sim_end_hour_cnt[job.end.replace(minute=0, second=0)] += 1
+
+        sim_throughput_cumulative = [sim_end_hour_cnt[hours[0]]]
+        for hour in hours[1:]:
+            sim_throughput_cumulative.append(
+                sim_throughput_cumulative[-1] + sim_end_hour_cnt[hour]
+            )
+
+        data_end_hour_cnt = defaultdict(int)
+        for job in archer[0].job_history:
+            data_end_hour_cnt[(job.true_job_start + job.runtime).replace(minute=0, second=0)] += 1
+
+        data_throughput_cumulative = [data_end_hour_cnt[hours[0]]]
+        for hour in hours[1:]:
+            data_throughput_cumulative.append(
+                data_throughput_cumulative[-1] + data_end_hour_cnt[hour]
+            )
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        hour_dates_start_hour = matplotlib.dates.date2num([ hour for hour in hours ])
+        ax.plot_date(
+            hour_dates_start_hour, sim_throughput_cumulative, 'g', label="Scheduling sim",
+            linewidth=0.6
+        )
+        ax.plot_date(
+            hour_dates_start_hour, data_throughput_cumulative, 'r', label="Data", linewidth=0.6
+        )
+        ax.set_ylabel("Cumulative Throughput")
+        ax.set_xlabel("Date (hour resolution)")
+        ax.grid(axis="x")
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(
+            PLOT_DIR, "test_refactor_throughput_cumulative{}.pdf".format(save_suffix)
         ))
         if batch:
             plt.close()
@@ -1798,13 +2052,13 @@ def plot_blob(
         data_allocated_nodes = np.zeros(int((data_max_end - data_min_start).total_seconds() / 60))
 
         for job in archer[0].job_history:
-            l_mins = int((job.start - sim_min_start).total_seconds() / 60 + 0.5)
-            r_mins = int((job.end - sim_min_start).total_seconds() / 60 + 0.5) + 1
+            l_mins = int((job.start - sim_min_start).total_seconds() / 60) + 1
+            r_mins = int((job.end - sim_min_start).total_seconds() / 60) + 1
             sim_allocated_nodes[l_mins:r_mins] += job.nodes
 
-            l_mins = int((job.true_job_start - data_min_start).total_seconds() / 60 + 0.5)
+            l_mins = int((job.true_job_start - data_min_start).total_seconds() / 60) + 1
             r_mins = int(
-                (job.true_job_start + job.runtime - data_min_start).total_seconds() / 60 + 0.5
+                (job.true_job_start + job.runtime - data_min_start).total_seconds() / 60
             ) + 1
             data_allocated_nodes[l_mins:r_mins] += job.nodes
 
