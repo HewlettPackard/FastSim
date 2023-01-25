@@ -149,6 +149,7 @@ def process_power(df, cols=None, remove_steps=True, fix_anomalous_powers=False):
         ]
 
     df_power.ConsumedEnergyRaw = pd.to_numeric(df_power.ConsumedEnergyRaw)
+    # This also has the effect of removing jobs cancelled before running
     df_power = df_power.loc[df_power.ConsumedEnergyRaw > 0]
 
     df_power.Start = pd.to_datetime(df_power.Start, format="%Y-%m-%dT%H:%M:%S")

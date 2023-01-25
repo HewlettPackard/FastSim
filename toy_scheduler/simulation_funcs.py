@@ -180,7 +180,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         [
             "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
-            "Partition", "SubmitLine", "JobName", "Reason"
+            "Partition", "SubmitLine", "JobName", "Reason", "State"
         ],
         nrows=rows, fix_anomalous_powers=True
     )
@@ -197,13 +197,23 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         lambda row: float(row.Power) / float(row.AllocNodes), axis=1
     )
 
-    df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
+    # df_jobs.Elapsed = df_jobs.Elapsed.apply(lambda row: timelimit_str_to_timedelta(row))
+    # A small number of jobs have elapsed > end - start, think end - start is more reliable
+    df_jobs.Elapsed = df_jobs.End - df_jobs.Start
     df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
     df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
 
     df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(lambda row: get_dependency_arg(row))
     df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(lambda row: get_reservation_arg(row))
     df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(lambda row: get_begin_arg(row))
+
+    # Think I need to do this for dependencies
+    print("{} hetrogeneous JobIDs converted to regular JobIDs".format(
+        len(df_jobs.loc[(df_jobs.JobID.str.contains("+", regex=False))])
+    ))
+    df_jobs.JobID = df_jobs.JobID.apply(
+        lambda row: str(int(row.split("+")[0]) + int(row.split("+")[1])) if "+" in row else row
+    )
 
     df_jobs = df_jobs.drop(["ReqCPUS", "ReqNodes", "Group", "ReqMem", "SubmitLine"], axis=1)
 
@@ -251,7 +261,9 @@ def run_sim(
                 queue.next_newjob()
             )
 
-            small_sched_possible = True if time == system.next_event() else False
+            small_sched_possible = (
+                True if not SMALL_SCHED_OFF and time == system.next_event() else False
+            )
 
             # NOTE There should be a notion of a main scheduler every sched_interval time that
             # checks all jobs and then a quick one that checks the first 100 (configurable) but for
@@ -324,10 +336,11 @@ def run_sim(
                     # ),
                     sum(1 for node in system.nodes if node.reservation),
                     sum(1 for node in system.nodes if node.reservation and not node.running_job),
-                    sum(1 for node in system.down_nodes if not node.free), system.power_usage
+                    sum(1 for node in system.down_nodes if not node.running_job),
+                    system.power_usage
                 ) +
                 "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) " \
-                "dependency {} qos {} (".format(
+                "dependency {} qos holds {} (".format(
                     (
                         len(queue.queue) +
                         len(queue.waiting_dependency) +
@@ -343,6 +356,14 @@ def run_sim(
                     "{}={}".format(
                         qos.name, len(jobs)
                     ) for qos, jobs in queue.qos_held.items() if len(jobs)
+                ) +
+                ") qos submit holds {} (".format(
+                    sum(len(jobs) for jobs in queue.qos_submit_held.values())
+                ) +
+                " ".join(
+                    "{}={}".format(
+                        qos.name, len(jobs)
+                    ) for qos, jobs in queue.qos_submit_held.items() if len(jobs)
                 ) +
                 "))\tRunningJobs = {}\n".format(len(system.running_jobs))
             )

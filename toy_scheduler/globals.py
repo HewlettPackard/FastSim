@@ -25,9 +25,14 @@ BD_THRESHOLD = timedelta(hours=1)
 MIN_STEP = timedelta(seconds=10)
 
 DEFER = True
-SCHED_INTERVAL = timedelta(seconds=60)
+SCHED_INTERVAL = timedelta(seconds=15) # 60
+# 2 seconds in config file but sdiag reports ~ 4 scheduling (quick or main) cycles per minute.
+# I suppose the slurm daemon is just too slow to get close to 2 seconds.#
+# Instead I will do a main scheduling 4 times a minute and ignore the quick event based
+# scheduling. Implementing this with SMALL_SCHED_OFF
 SCHED_MIN_INTERVAL = timedelta(seconds=2)
 PRIORITYCALCPERIOD = timedelta(minutes=5)
+SMALL_SCHED_OFF = True
 
 BACKFILL_OPTS = {
     "resolution" : timedelta(minutes=1), "max_job_test" : 1000 ,
