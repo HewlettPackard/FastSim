@@ -53,7 +53,7 @@ class Job():
     def submit_job(self, time=None):
         if time:
             self.submit = time
-        self.qos.job_submitted(job.user)
+        self.qos.job_submitted(self.user)
         return self
 
     def start_job(self, time : datetime):
@@ -237,20 +237,21 @@ class Queue():
                 if job.qos.hold_job_submit_usr(job):
                     continue
 
+                # Pretend the job is now resubmitted
                 job.submit_job(self.time)
                 released.append(i_job)
 
-                if new_job.dependency:
-                    new_job.dependency.update_finished(self.system.job_history)
-                    new_job.dependency.update_submitted(
+                if job.dependency:
+                    job.dependency.update_finished(self.system.job_history)
+                    job.dependency.update_submitted(
                         self.system.running_jobs + self.system.job_history
                     )
-                    if not new_job.dependency.can_release(self.queue, self.system.running_jobs):
-                        self.waiting_dependency.append(new_job)
+                    if not job.dependency.can_release(self.queue, self.system.running_jobs):
+                        self.waiting_dependency.append(job)
                         continue
 
-                if new_job.qos.hold_job(new_job):
-                    self.qos_held[new_job.qos].append(new_job.launch(self.time))
+                if job.qos.hold_job(job):
+                    self.qos_held[job.qos].append(job.launch(self.time))
                     continue
 
                 if job.reservation:
@@ -307,7 +308,7 @@ class Queue():
                 new_job = self.all_jobs.pop(0)
 
                 if new_job.qos.hold_job_submit_usr(new_job):
-                    self.qos_submit_held.append(new_job)
+                    self.qos_submit_held[new_job.qos].append(new_job)
                     continue
 
                 new_job.submit_job()

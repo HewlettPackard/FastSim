@@ -208,7 +208,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
     df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(lambda row: get_begin_arg(row))
 
     # Think I need to do this for dependencies
-    print("{} hetrogeneous JobIDs converted to regular JobIDs".format(
+    print("{} heterogeneous JobIDs converted to regular JobIDs".format(
         len(df_jobs.loc[(df_jobs.JobID.str.contains("+", regex=False))])
     ))
     df_jobs.JobID = df_jobs.JobID.apply(
