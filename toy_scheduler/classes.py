@@ -19,6 +19,7 @@ class Job():
         self.reqtime = reqtime
         self.node_power = node_power
         self.true_node_power = true_node_power
+        self.true_submit = submit
         self.submit = submit
         self.true_job_start = true_job_start
         self.user = user
@@ -49,6 +50,12 @@ class Job():
         self.end = None
         self.assigned_nodes = []
 
+    def submit_job(self, time=None):
+        if time:
+            self.submit = time
+        self.qos.job_submitted(job.user)
+        return self
+
     def start_job(self, time : datetime):
         self.start = time
         self.end = time + self.runtime
@@ -70,10 +77,12 @@ class Job():
         self.qos.job_ended(self.user, self.nodes)
         return self
 
+    # When job starts accruing age
     def launch(self, time):
         self.launch_time = time
         return self
 
+    # When the QOS recognises the job as 'running' for resource limits accounting
     def launch_into_priority(self):
         self.qos.job_launched(self.user, self.nodes)
         return self
@@ -89,15 +98,15 @@ class Queue():
         # hardcoded for now
         # Don't have a proper way to simulate reservations as I can't see a history of deleted ones
         self.qoss = {
-            "normal" : QOS("normal", 0, -1, -1, -1, -1),
-            "reservation" : QOS("reservation", 0.1, -1, -1, -1, -1),
-            "taskfarm" : QOS("taskfarm", 0.1, -1, 128, 512, 32),
-            "standard" : QOS("standard", 0.1, -1, -1, 1024, 16),
-            "short" : QOS("short", 0.1, -1, -1, 32, 4),
-            "long" : QOS("long", 0.1, 2048, -1, 512, 16),
-            "largescale" : QOS("largescale", 0.1, -1, -1, -1, 1),
-            "highmem" : QOS("highmem", 0.1, -1, -1, 256, 16),
-            "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16)
+            "normal" : QOS("normal", 0, -1, -1, -1, -1, -1),
+            "reservation" : QOS("reservation", 0.1, -1, -1, -1, -1, -1),
+            "taskfarm" : QOS("taskfarm", 0.1, -1, 128, 512, 32, 128),
+            "standard" : QOS("standard", 0.1, -1, -1, 1024, 16, 64),
+            "short" : QOS("short", 0.1, -1, -1, 32, 4, 16),
+            "long" : QOS("long", 0.1, 2048, -1, 512, 16, 16),
+            "largescale" : QOS("largescale", 0.1, -1, -1, -1, 1, 8),
+            "highmem" : QOS("highmem", 0.1, -1, -1, 256, 16, 16),
+            "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16, 16)
         }
 
         self.all_jobs = [
@@ -115,6 +124,7 @@ class Queue():
         self.waiting_dependency = []
 
         self.qos_held = { qos : [] for qos in self.qoss.values() }
+        self.qos_submit_held = { qos : [] for qos in self.qoss.values() }
 
         self._verify_reservations(valid_reservations)
         self.reservations = defaultdict(list)
@@ -123,7 +133,7 @@ class Queue():
         removed_res, removed_res_cnt = set(), 0
         for job in self.all_jobs:
             if not job.reservation:
-                # XXX testing this, shortqos might not need the reservation specified
+                # short qos is reservationrequired
                 if job.qos.name == "short":
                     job.reservation = "shortqos"
                 continue
@@ -135,8 +145,8 @@ class Queue():
                 job.ignore_in_eval = True
 
         print(
-            "Missing reservation records for {} resulting in ignoring reservations for\
-             {} jobs".format(removed_res, removed_res_cnt)
+            "Missing reservation records for {} resulting in ignoring reservations for" \
+            "{} jobs".format(removed_res, removed_res_cnt)
         )
 
     def _verify_dependencies(self):
@@ -218,6 +228,39 @@ class Queue():
         self.system.submitted_jobs_step = []
 
     def _check_qos_holds(self):
+        for qos in self.qos_submit_held.keys():
+            if not self.qos_submit_held[qos]:
+                continue
+
+            released = []
+            for i_job, job in enumerate(self.qos_submit_held[qos]):
+                if job.qos.hold_job_submit_usr(job):
+                    continue
+
+                job.submit_job(self.time)
+                released.append(i_job)
+
+                if new_job.dependency:
+                    new_job.dependency.update_finished(self.system.job_history)
+                    new_job.dependency.update_submitted(
+                        self.system.running_jobs + self.system.job_history
+                    )
+                    if not new_job.dependency.can_release(self.queue, self.system.running_jobs):
+                        self.waiting_dependency.append(new_job)
+                        continue
+
+                if new_job.qos.hold_job(new_job):
+                    self.qos_held[new_job.qos].append(new_job.launch(self.time))
+                    continue
+
+                if job.reservation:
+                    self.reservations[job.reservation].append(job.launch_into_priority())
+                else:
+                    self.queue.append(job.launch_into_priority())
+
+            for i_job in sorted(released, reverse=True):
+                self.qos_submit_held[qos].pop(i_job)
+
         for qos in self.qos_held.keys():
             # Dont need to check if we know nothing will be released
             if (
@@ -262,6 +305,12 @@ class Queue():
         try:
             while self.all_jobs[0].submit <= self.time:
                 new_job = self.all_jobs.pop(0)
+
+                if new_job.qos.hold_job_submit_usr(new_job):
+                    self.qos_submit_held.append(new_job)
+                    continue
+
+                new_job.submit_job()
 
                 if new_job.dependency:
                     new_job.dependency.update_finished(self.system.job_history)
@@ -312,6 +361,8 @@ class Dependency():
 
             dep_type = condition.split(":")[0]
             # NOTE after can can take a +time after job_id, just going to ignore these for now
+            if "+" in condition:
+                print(condition)
             job_ids = { job_id.split("+")[0] for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
             if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":
@@ -403,7 +454,7 @@ class Partition():
 
 
 class QOS():
-    def __init__(self, name, priority, grp_nodes, grp_jobs, usr_nodes, usr_jobs):
+    def __init__(self, name, priority, grp_nodes, grp_jobs, usr_nodes, usr_jobs, usr_submit):
         self.name = name
         self.priority = priority
 
@@ -412,6 +463,7 @@ class QOS():
         grp_nodes = 1000000000000 if grp_nodes == -1 else grp_nodes
         usr_jobs = 1000000000000 if usr_jobs == -1 else usr_jobs
         usr_nodes = 1000000000000 if usr_nodes == -1 else usr_nodes
+        usr_submit = 1000000000000 if usr_submit == -1 else usr_submit
 
         self.grp_quotas = []
         self.job_quota_remaining = grp_jobs
@@ -419,6 +471,11 @@ class QOS():
 
         self.usr_job_quota_remaining = defaultdict(lambda: usr_jobs)
         self.usr_node_quota_remaining = defaultdict(lambda: usr_nodes)
+
+        self.usr_submit_quota_remaining = defaultdict(lambda: usr_submit)
+
+    def job_submitted(self, user):
+        self.usr_submit_quota_remaining[user] -= 1
 
     def job_launched(self, user, nodes):
         self.job_quota_remaining -= 1
@@ -431,6 +488,7 @@ class QOS():
         self.node_quota_remaining += nodes
         self.usr_job_quota_remaining[user] += 1
         self.usr_node_quota_remaining[user] += nodes
+        self.usr_submit_quota_remaining[user] += 1
         self.possible_to_release = True
 
     def hold_job(self, job):
@@ -449,6 +507,9 @@ class QOS():
             not self.usr_job_quota_remaining[job.user] or
             job.nodes > self.usr_node_quota_remaining[job.user]
         )
+
+    def hold_job_submit_usr(self, job):
+        return not self.usr_submit_quota_remaining[job.user]
 
 
 class Node():
@@ -860,7 +921,7 @@ class Archer2():
 
             if node.running_job:
                 if down_schedule[2] == "DOWN":
-                    up_time += node.running_job.runtime
+                    up_time += node.running_job.end - self.time
                 if up_time <= node.running_job.end:
                     continue
 
