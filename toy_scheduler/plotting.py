@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.dates
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 from classes import Archer2, Job
 from fairshare import FairTree
@@ -1457,22 +1458,38 @@ def plot_blob(
         # turning off partitions, QOS, and dependencies. This will be easier once a lot of this
         # is moved in a consts global. Wait to do this so I dont have to hack away at code
         print("Reading baseline fifo sim results")
-        with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as f:
+        with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as (
+            f
+        ):
             data = pickle.load(f)
         archer_fifo = data["archer"][0]
+
+        max_submit = max(archer[0].job_history, key=lambda job: job.submit).submit
+        job_history = [
+            job for job in archer[0].job_history if (
+                archer[0].init_time + timedelta(days=4) < job.submit <
+                max_submit - timedelta(days=4)
+            )
+        ]
+
+        print(
+            "Ignoring {} out of {} jobs in evaulation\n".format(
+                sum(1 for job in job_history if job.ignore_in_eval), len(job_history)
+            )
+        )
 
         data_bd_slowdowns = [
             max(
                 (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
                 1
-            ) for job in archer[0].job_history if not job.ignore_in_eval
+            ) for job in job_history if not job.ignore_in_eval
         ]
         sim_bd_slowdowns = [
             max(
                 (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
-            ) for job in archer[0].job_history if not job.ignore_in_eval
+            ) for job in job_history if not job.ignore_in_eval
         ]
-        no_eval_ids = [ job.id for job in archer[0].job_history if job.ignore_in_eval ]
+        no_eval_ids = [ job.id for job in job_history if job.ignore_in_eval ]
         fifo_bd_slowdowns = [
             max(
                 (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
@@ -1481,12 +1498,12 @@ def plot_blob(
         data_wait_times = [
             (
                 (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if not job.ignore_in_eval
+            ) for job in job_history if not job.ignore_in_eval
         ]
         sim_wait_times = [
             (
                 (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if not job.ignore_in_eval
+            ) for job in job_history if not job.ignore_in_eval
         ]
         fifo_wait_times = [
             (
@@ -1518,30 +1535,22 @@ def plot_blob(
             max(
                 (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
                 1
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.qos.name != "lowpriority"
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
         sim_bd_slowdowns_no_lowpriority = [
             max(
                 (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.qos.name != "lowpriority"
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
         data_wait_times_no_lowpriority = [
             (
                 (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.qos.name != "lowpriority"
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
         sim_wait_times_no_lowpriority = [
             (
                 (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.qos.name != "lowpriority"
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
 
         print(
@@ -1560,7 +1569,7 @@ def plot_blob(
             )
         )
 
-        data_allocnodes = [ job.nodes for job in archer[0].job_history if not job.ignore_in_eval ]
+        data_allocnodes = [ job.nodes for job in job_history if not job.ignore_in_eval ]
         fifo_allocnodes = [
             job.nodes for job in archer_fifo.job_history if job.id not in no_eval_ids
         ]
@@ -1585,16 +1594,12 @@ def plot_blob(
             max(
                 (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
                 1
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.submit > start_time
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         sim_bd_slowdowns_skip = [
             max(
                 (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.submit > start_time
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         fifo_bd_slowdowns_skip = [
             max(
@@ -1606,16 +1611,12 @@ def plot_blob(
         data_wait_times_skip = [
             (
                 (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.submit > start_time
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         sim_wait_times_skip = [
             (
                 (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-            ) for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.submit > start_time
-            )
+            ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         fifo_wait_times_skip = [
             (
@@ -1647,9 +1648,7 @@ def plot_blob(
         )
 
         data_allocnodes_skip = [
-            job.nodes for job in archer[0].job_history if (
-                not job.ignore_in_eval and job.submit > start_time
-            )
+            job.nodes for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         fifo_allocnodes_skip = [
             job.nodes for job in archer_fifo.job_history if (
@@ -1674,7 +1673,8 @@ def plot_blob(
         else:
             plt.show()
 
-        for job in archer[0].job_history:
+        print("Jobs with > 100 difference in bd_slowdown:")
+        for job in job_history:
             if job.ignore_in_eval:
                 continue
 
@@ -1686,17 +1686,34 @@ def plot_blob(
             )
             if np.abs(bd_slowdown_true - bd_slowdown_sim) > 100:
                 print(
-                    bd_slowdown_true, bd_slowdown_sim, job.submit, job.start, job.true_job_start,
-                    job.id, job.nodes, job.name, job.partition, job.qos.name,
+                    bd_slowdown_true, bd_slowdown_sim, job.user, job.submit, job.start,
+                    job.true_job_start, job.id, job.nodes, job.name, job.partition, job.qos.name,
                     job.dependency.conditions if job.dependency else None, job.reason
                 )
+        print()
 
         assoc_tree = FairTree(
             ASSOCS_FILE, timedelta(minutes=1), timedelta(minutes=1), archer[0].init_time
         )
+
+        print("Jobs from proj-e761 or proj-e697:")
+        for job in job_history:
+            if job.ignore_in_eval:
+                continue
+
+            # proj-e761, proj-e697
+            proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
+            if proj in ["proj-e761", "proj-e697"]:
+                print(
+                    proj, job.user, job.submit, job.start, job.true_job_start, job.id, job.nodes,
+                    job.name, job.partition, job.qos.name,
+                    job.dependency.conditions if job.dependency else None, job.reason
+                )
+        print()
+
         proj_sim_wait, proj_data_wait = defaultdict(list), defaultdict(list)
         proj_nodehours = defaultdict(float)
-        for job in archer[0].job_history:
+        for job in job_history:
             proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
             proj_sim_wait[proj].append((job.start - job.submit).total_seconds()/ 60 / 60)
             proj_data_wait[proj].append(
@@ -1704,46 +1721,53 @@ def plot_blob(
             )
             proj_nodehours[proj] += job.nodes * job.runtime.total_seconds() / 60 / 60
 
-        proj_sim_wait = { proj : np.mean(waits) for proj, waits in proj_sim_wait.items() }
-        proj_data_wait = { proj : np.mean(waits) for proj, waits in proj_data_wait.items() }
+        top_projs = [
+            proj for proj, _ in (
+                sorted(proj_nodehours.items(), key=lambda keyval: keyval[1], reverse=True)[:10]
+            )
+        ]
+
+        proj_sim_wait_mean = { proj : np.mean(waits) for proj, waits in proj_sim_wait.items() }
+        proj_data_wait_mean = { proj : np.mean(waits) for proj, waits in proj_data_wait.items() }
+        proj_sim_wait_err = { proj : np.std(waits) for proj, waits in proj_sim_wait.items() }
+        proj_data_wait_err = { proj : np.std(waits) for proj, waits in proj_data_wait.items() }
         sorted_sim_wait = [
-            (proj, wait) for proj, wait in (
-                sorted(proj_sim_wait.items(), key=lambda proj_wait: proj_wait[1], reverse=True)
-            ) if proj_nodehours[proj] > 50000
+            (proj, wait_mean, proj_sim_wait_err[proj]) for proj, wait_mean in (
+                sorted(
+                    proj_sim_wait_mean.items(), key=lambda proj_wait: proj_wait[1], reverse=True
+                )
+            ) if proj in top_projs
         ]
         sorted_data_wait = [
-            (proj, wait) for proj, wait in (
-                sorted(proj_data_wait.items(), key=lambda proj_wait: proj_wait[1], reverse=True)
-            ) if proj_nodehours[proj] > 50000
+            (proj, wait_mean, proj_data_wait_err[proj]) for proj, wait_mean in (
+                sorted(
+                    proj_data_wait_mean.items(), key=lambda proj_wait: proj_wait[1], reverse=True
+                )
+            ) if proj in top_projs
         ]
 
         print(
             "Scheduling sim top projects by mean wait times:\n" +
             "\n".join(
-                "{}.\t{}\t- {}".format(i, proj_wait[0], proj_wait[1]) for i, proj_wait in (
-                    enumerate(sorted_sim_wait)
-                )
+                "{}.\t{}\t- {} += {}".format(
+                    i, proj_wait[0], proj_wait[1], proj_wait[2]
+                ) for i, proj_wait in enumerate(sorted_sim_wait)
             ) +
             "\n"
         )
         print(
             "True starts top projects by mean wait times:\n" +
             "\n".join(
-                "{}.\t{}\t- {}".format(i, proj_wait[0], proj_wait[1]) for i, proj_wait in (
-                    enumerate(sorted_data_wait)
-                )
+                "{}.\t{}\t- {} += {}".format(
+                    i, proj_wait[0], proj_wait[1], proj_wait[2]
+                ) for i, proj_wait in enumerate(sorted_data_wait)
             ) +
             "\n"
         )
 
-        top_projs = [
-            proj for proj, _ in (
-                sorted(proj_nodehours.items(), key=lambda keyval: keyval[1], reverse=True)[:10]
-            )
-        ]
         top_projs.sort(key=lambda proj: proj_data_wait[proj], reverse=True)
-        sim_mean_waits = [ proj_sim_wait[proj] for proj in top_projs ]
-        data_mean_waits = [ proj_data_wait[proj] for proj in top_projs ]
+        sim_mean_waits = [ proj_sim_wait_mean[proj] for proj in top_projs ]
+        data_mean_waits = [ proj_data_wait_mean[proj] for proj in top_projs ]
         x = np.arange(len(top_projs))
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -1767,9 +1791,7 @@ def plot_blob(
             archer[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr) for hr in (
                 range(int(
                     (
-                        max(archer[0].job_history, key=lambda job: job.submit).submit -
-                        timedelta(days=14) -
-                        archer[0].init_time
+                        max_submit - timedelta(days=14) - archer[0].init_time
                     ).total_seconds() / 60 / 60
                 ))
             )
@@ -1777,7 +1799,7 @@ def plot_blob(
 
         # Rolling window mean wait time
         sim_submit_hour_waits = defaultdict(list)
-        for job in archer[0].job_history:
+        for job in job_history:
             sim_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                 (job.start - job.submit).total_seconds() / 60 / 60
             )
@@ -1802,7 +1824,7 @@ def plot_blob(
             )
 
         data_submit_hour_waits = defaultdict(list)
-        for job in archer[0].job_history:
+        for job in job_history:
             data_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                 (job.true_job_start - job.submit).total_seconds() / 60 / 60
             )
@@ -1883,7 +1905,7 @@ def plot_blob(
 
         # Rolling window mean bd slowdown
         sim_submit_hour_bdslowdowns = defaultdict(list)
-        for job in archer[0].job_history:
+        for job in job_history:
             sim_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
                 max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1)
             )
@@ -1910,7 +1932,7 @@ def plot_blob(
             )
 
         data_submit_hour_bdslowdowns = defaultdict(list)
-        for job in archer[0].job_history:
+        for job in job_history:
             data_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
                 max(
                     (
@@ -1997,7 +2019,7 @@ def plot_blob(
             plt.show()
 
         sim_end_hour_cnt = defaultdict(int)
-        for job in archer[0].job_history:
+        for job in job_history:
             sim_end_hour_cnt[job.end.replace(minute=0, second=0)] += 1
 
         sim_throughput_cumulative = [sim_end_hour_cnt[hours[0]]]
@@ -2007,7 +2029,7 @@ def plot_blob(
             )
 
         data_end_hour_cnt = defaultdict(int)
-        for job in archer[0].job_history:
+        for job in job_history:
             data_end_hour_cnt[(job.true_job_start + job.runtime).replace(minute=0, second=0)] += 1
 
         data_throughput_cumulative = [data_end_hour_cnt[hours[0]]]
@@ -2038,35 +2060,48 @@ def plot_blob(
         else:
             plt.show()
 
-        sim_max_end = max(archer[0].job_history, key=lambda job: job.end).end
-        sim_min_start = min(archer[0].job_history, key=lambda job: job.start).start
-        data_max_end_job = max(
-            archer[0].job_history, key=lambda job: job.true_job_start + job.runtime
-        )
+        sim_max_end = max(job_history, key=lambda job: job.end).end
+        sim_min_start = min(job_history, key=lambda job: job.start).start
+        data_max_end_job = max(job_history, key=lambda job: job.true_job_start + job.runtime)
         data_max_end = data_max_end_job.true_job_start + data_max_end_job.runtime
-        data_min_start = min(
-            archer[0].job_history, key=lambda job: job.true_job_start
-        ).true_job_start
+        data_min_start = min(job_history, key=lambda job: job.true_job_start).true_job_start
 
         sim_allocated_nodes = np.zeros(int((sim_max_end - sim_min_start).total_seconds() / 60))
         data_allocated_nodes = np.zeros(int((data_max_end - data_min_start).total_seconds() / 60))
 
-        for job in archer[0].job_history:
+        # sim_mins_allocated_nodes = defaultdict(int)
+        # data_mins_allocated_nodes = defaultdict(int)
+
+        for job in tqdm(job_history):
             l_mins = int((job.start - sim_min_start).total_seconds() / 60) + 1
-            r_mins = int((job.end - sim_min_start).total_seconds() / 60) + 1
-            sim_allocated_nodes[l_mins:r_mins] += job.nodes
+            u_mins = int((job.end - sim_min_start).total_seconds() / 60)
+            sim_allocated_nodes[l_mins:u_mins] += job.nodes
 
             l_mins = int((job.true_job_start - data_min_start).total_seconds() / 60) + 1
-            r_mins = int(
-                (job.true_job_start + job.runtime - data_min_start).total_seconds() / 60
-            ) + 1
-            data_allocated_nodes[l_mins:r_mins] += job.nodes
+            u_mins = int((job.true_job_start + job.runtime - data_min_start).total_seconds() / 60)
+            data_allocated_nodes[l_mins:u_mins] += job.nodes
 
-        print("Scheduling sim mean(max) allocations nodes = {} += {} ({})".format(
+            # minute = job.start.replace(minute=0) + timedelta(minutes=1)
+            # while minute < job.end:
+            #     sim_mins_allocated_nodes[minute] += job.nodes
+            #     minute += timedelta(minutes=1)
+            # minute = job.true_job_start.replace(minute=0) + timedelta(minutes=1)
+            # while minute < job.true_job_start + job.runtime:
+            #     data_mins_allocated_nodes[minute] += job.nodes
+            #     minute += timedelta(minutes=1)
+
+        for minute in sim_mins_allocated_nodes.keys():
+            sim_nodes = sim_mins_allocated_nodes[minute]
+            data_nodes = data_mins_allocated_nodes[minute]
+            if sim_nodes > 5860 or data_nodes > 5860:
+                print("\n", minute, sim_nodes, data_nodes, "\n", sep="\t")
+            print(minute, sim_nodes, data_nodes, end="\r", sep="\t")
+
+        print("Scheduling sim mean(max) allocations nodes = {} +- {} ({})".format(
             np.mean(sim_allocated_nodes[2880:-2880]), np.std(sim_allocated_nodes[2880:-2880]),
             np.max(sim_allocated_nodes)
         ))
-        print("Data mean(max) allocations nodes = {} += {} ({})".format(
+        print("Data mean(max) allocations nodes = {} +- {} ({})".format(
             np.mean(data_allocated_nodes[2880:-2880]), np.std(data_allocated_nodes[2880:-2880]),
             np.max(data_allocated_nodes)
         ))
@@ -2082,10 +2117,11 @@ def plot_blob(
                 range(len(sim_allocated_nodes))
             )
         ]
-        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Scheduling sim", linewidth=0.4)
-        ax.plot_date(data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.4)
+        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Scheduling sim", linewidth=0.1)
+        ax.plot_date(data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.1)
         ax.set_ylabel("Date (minute resolution)")
         ax.set_xlabel("Number of Allocated Nodes")
+        ax.grid(axis="y")
         plt.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(
