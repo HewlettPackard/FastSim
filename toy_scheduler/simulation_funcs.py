@@ -352,7 +352,8 @@ def run_sim(
                     next_bf_time += bf_interval
                 # sched is a subset of what backfill does so may as well do a pass here to see if
                 # we can save some computation
-                sched = True
+                # NOTE Need to respect the backfill max_test so don't do a sched here
+                # sched = True
             else:
                 backfill = False
 
@@ -428,23 +429,30 @@ def run_sim(
                 ) +
                 "))\tRunningJobs = {}\n".format(len(system.running_jobs))
             )
-            if len(queue.queue) > 30:
-                for i, job in enumerate(queue.queue[:30]):
-                    print(
-                        "{}. {} : ".format(i, job.id) +
-                        " ".join(
-                            "{}".format(
-                                priority_calc(job)
-                            ) for priority_calc in priority_sorter.priority_factors
-                        ) +
-                        " -> {}".format(
-                            sum(
-                                priority_calc(job) for priority_calc in (
-                                    priority_sorter.priority_factors
-                                )
-                            )
-                        )
-                    )
+            # if len(queue.queue) > 30:
+            #     print(
+            #         " ".join(
+            #             "{}".format(priority_calc.__name__) for priority_calc in (
+            #                 priority_sorter.priority_factors
+            #             )
+            #         )
+            #     )
+            #     for i, job in enumerate(queue.queue[:30]):
+            #         print(
+            #             "{}. {} ({} {}): ".format(i, job.id, job.nodes, time - job.launch_time) +
+            #             " ".join(
+            #                 "{:.2f}".format(
+            #                     priority_calc(job)
+            #                 ) for priority_calc in priority_sorter.priority_factors
+            #             ) +
+            #             " -> {}".format(
+            #                 sum(
+            #                     priority_calc(job) for priority_calc in (
+            #                         priority_sorter.priority_factors
+            #                     )
+            #                 )
+            #             )
+            #         )
             # for i, user_data in enumerate(
             #     sorted(
             #         [

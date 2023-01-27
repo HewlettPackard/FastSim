@@ -45,7 +45,12 @@ BACKFILL_OPTS = {
 SLOWDOWN_WITH_QUEUESIZE = True
 # NOTE Use timedeltas
 SCHED_INTERVAL_PERPENDINGJOB = 0.028 # s ((60 / Cycles per minute) / Queue length mean) # 0.012 0.028
-BACKFILL_TIME_PERPRIORITYJOB = 0.037 # s (Mean cycle / (Depth Mean)) # 0.030 0.037
+# Using `squeue --Format=JobID,Partition,State,SubmitTime,StartTime,NumNodes,SchedNodes,Reason,QOS
+# | grep -e PENDING -e STATE | grep -v "(null)" | wc -l` suggests that backfill is only scheduling
+# ~200 jobs of the priority queue before ending which corresponds to 0.1125s per job. It looks
+# like sdiag counts scheduling it does for AssocMaxCpuMinutesPerJobLimit jobs which get a start
+# time but (null) scheduled nodes so I am not sure why these seem to get counted.
+BACKFILL_TIME_PERPRIORITYJOB = 0.1125 # s (Mean cycle / (Depth Mean)) # 0.030 0.037 0.1125
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 
