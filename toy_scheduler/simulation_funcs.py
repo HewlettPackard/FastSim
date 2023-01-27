@@ -259,7 +259,14 @@ def run_sim(
         sched_ready = t0
         BACKFILL_OPTS["max_job_test"] = min(
             BACKFILL_OPTS["max_job_test"],
-            int(BACKFILL_OPTS["max_time"].total_seconds() / BACKFILL_TIME_PERPRIORITYJOB)
+            int(
+                (
+                    BACKFILL_OPTS["max_time"] -
+                    int(BACKFILL_OPTS["max_time"] / BACKFILL_OPTS["yield_interval"]) *
+                    BACKFILL_OPTS["yield_sleep"]
+                ).total_seconds()  /
+                BACKFILL_TIME_PERPRIORITYJOB
+            )
         )
 
     previous_hour = t0.hour
@@ -421,6 +428,34 @@ def run_sim(
                 ) +
                 "))\tRunningJobs = {}\n".format(len(system.running_jobs))
             )
+            if len(queue.queue) > 30:
+                for i, job in enumerate(queue.queue[:30]):
+                    print(
+                        "{}. {} : ".format(i, job.id) +
+                        " ".join(
+                            "{}".format(
+                                priority_calc(job)
+                            ) for priority_calc in priority_sorter.priority_factors
+                        ) +
+                        " -> {}".format(
+                            sum(
+                                priority_calc(job) for priority_calc in (
+                                    priority_sorter.priority_factors
+                                )
+                            )
+                        )
+                    )
+            # for i, user_data in enumerate(
+            #     sorted(
+            #         [
+            #             (
+            #                 user.name, user.parent.name, user.fairshare_factor, user.levelfs
+            #             ) for user in priority_sorter.fairtree.levels[-1]
+            #         ],
+            #         key=lambda user_data: user_data[2]
+            #     )[:20]
+            # ):
+            #     print("{}: {}".format(i + 1, user_data))
 
         cnt += 1
 

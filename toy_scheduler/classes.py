@@ -782,6 +782,9 @@ class Archer2():
             ) for partition in self.partitions.keys()
         }
         for i_job, job in enumerate(queue.queue):
+            # Mimics bf not seeing jobs submitted after it gets initial lock
+            if BACKFILL_OPTS["continue"] and job.submit > self.time - BACKFILL_OPTS["interval"]:
+                continue
             # break if no blocks or only <= min blocks available for immediate backfill
             if not free_blocks_ready_intervals:
                 break

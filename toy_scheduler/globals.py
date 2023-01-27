@@ -37,13 +37,15 @@ SMALL_SCHED_OFF = False
 BACKFILL_OPTS = {
     "resolution" : timedelta(minutes=1), "max_job_test" : 1000 ,
     "window" : timedelta(minutes=5760), "interval" : timedelta(seconds=30), # 30
-    "max_time" : timedelta(seconds=30)
+    "max_time" : timedelta(seconds=30), "yield_interval" : timedelta(seconds=2),
+    "yield_sleep" : timedelta(seconds=0.5), "continue" : True
 }
 
 # To try and recreate the slowdown in scheduling loop caused by congestion
 SLOWDOWN_WITH_QUEUESIZE = True
-SCHED_INTERVAL_PERPENDINGJOB = 0.012 # s ((60 / Cycles per minute) / Queue length mean)
-BACKFILL_TIME_PERPRIORITYJOB = 0.030 # s (Mean cycle / (Depth Mean))
+# NOTE Use timedeltas
+SCHED_INTERVAL_PERPENDINGJOB = 0.028 # s ((60 / Cycles per minute) / Queue length mean) # 0.012 0.028
+BACKFILL_TIME_PERPRIORITYJOB = 0.037 # s (Mean cycle / (Depth Mean)) # 0.030 0.037
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 
