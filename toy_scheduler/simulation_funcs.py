@@ -373,17 +373,21 @@ def run_sim(
             previous_hour = time.hour
             print(
                 "{} (step {}):\n".format(time, cnt) +
-                "Idle Nodes = {} (highmem {})\tNodesReserved = {} " \
-                "(Idle/Down = {})\tNodesHPE_RestricLongJobs = {} (Idle/Down = {})\t" \
+                "Idle Nodes = {} (highmem {})\tNodesReserved = {}(Idle = {})\t" \
+                "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
                 "NodesDown = {}\tPower = {:.4f} MW\n".format(
                     system.available_nodes(),
                     system.partitions["highmem"].available_nodes(backfill=True),
                     sum(1 for node in system.nodes if node.reservation),
-                    sum(1 for node in system.nodes if node.reservation and not node.running_job),
+                    sum(
+                       1 for node in system.nodes if (
+                            node.reservation and not node.running_job and not node.down
+                        )
+                    ),
                     sum(1 for node in system.nodes if node.job_end_restriction),
                     sum(
                         1 for node in system.nodes if (
-                            node.job_end_restriction and not node.running_job
+                            node.job_end_restriction and not node.running_job and not node.down
                         )
                     ),
                     sum(1 for node in system.down_nodes if not node.running_job),
