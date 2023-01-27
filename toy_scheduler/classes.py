@@ -431,16 +431,27 @@ class Partition():
 
         self.nodes = []
         self.planned_nodes = []
+        self.always_available_nodes = []
+        self.backfill_only_nodes = []
 
         self.num_available = 0
+        self.num_available_only_backfill = 0
 
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
         self.nodes.sort(key=lambda node: node.weight) # Small weights get priority
-        self.num_available += node.free
+        if not node.job_end_restriction:
+            self.always_available_nodes.append(node)
+            self.num_available += node.free
+        else:
+            self.backfill_only_nodes.append(node)
+            self.num_available_only_backfill += node.free
 
-    def available_nodes(self):
+    def available_nodes(self, backfill=False):
+        if backfill:
+            return self.num_available + self.num_available_only_backfill
+
         return self.num_available
 
     def set_planned(self):
@@ -514,7 +525,9 @@ class QOS():
 
 
 class Node():
-    def __init__(self, num, weight=0, down_schedule=[], reservation_schedule=[]):
+    def __init__(
+        self, num, weight=0, down_schedule=[], reservation_schedule=[], job_end_restriction=None
+    ):
         self.id = num
         self.weight = weight
 
@@ -528,6 +541,7 @@ class Node():
         self.reservation_schedule = reservation_schedule
         self.reservation = ""
         self.unreserved_time = None
+        self.job_end_restriction = job_end_restriction
 
         self.planned = False
 
@@ -537,12 +551,18 @@ class Node():
         self.planned = True
         self.free = False
         for partition in self.partitions:
+            if self.job_end_restriction: # NOTE This is so janky but Im desparate, fix in refactor
+                partition.num_available_only_backfill -= 1
+                continue
             partition.num_available -= 1
 
     def set_unplanned(self):
         self.planned = False
         self.free = True
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
             partition.num_available += 1
 
     def set_reserved(self, reservation_name, end_time):
@@ -552,6 +572,9 @@ class Node():
             return
         self.free = False
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
             partition.num_available -= 1
 
     def set_unreserved(self):
@@ -561,6 +584,9 @@ class Node():
             return
         self.free = True
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
             partition.num_available += 1
 
     def set_down(self, up_time):
@@ -571,6 +597,9 @@ class Node():
             return
         self.free = False
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
             partition.num_available -= 1
 
     def set_up(self):
@@ -580,6 +609,9 @@ class Node():
             return
         self.free = True
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
             partition.num_available += 1
 
     def set_free(self):
@@ -587,11 +619,17 @@ class Node():
             return
         self.free = True
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
             partition.num_available += 1
 
     def set_busy(self):
         self.free = False
         for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
             partition.num_available -= 1
 
 
@@ -649,12 +687,14 @@ class Archer2():
             key=lambda node: node.reservation_schedule[0][0]
         )
 
-    def has_space(self, job : Job):
-        return True if self.available_nodes(job.partition) >= job.nodes else False
+    def has_space(self, job : Job, backfill=False):
+        return (
+            True if self.available_nodes(job.partition, backfill=backfill) >= job.nodes else False
+        )
 
-    def available_nodes(self, partition=""):
+    def available_nodes(self, partition="", backfill=False):
         if partition:
-            return self.partitions[partition].available_nodes()
+            return self.partitions[partition].available_nodes(backfill=backfill)
 
         return self.nodes_free
 
@@ -694,12 +734,32 @@ class Archer2():
             return backfill_now
 
         free_blocks = defaultdict(set)
-        free_blocks[(self.time, datetime.max)] = { node for node in self.nodes if node.free }
+        free_blocks_ready_intervals = set()
+        for node in self.nodes:
+            if not node.free:
+                continue
+            if not node.job_end_restriction:
+                free_blocks[(self.time, datetime.max)].add(node)
+                free_blocks_ready_intervals.add((self.time, datetime.max))
+                continue
+            free_blocks[(self.time, node.job_end_restriction(self.time))].add(node)
+            free_blocks_ready_intervals.add((self.time, node.job_end_restriction(self.time)))
+        # free_blocks[(self.time, datetime.max)] = {
+        #     node for node in self.nodes if node.free and not node.job_end_restriction
+        # }
         for job in self.running_jobs:
             # Some jobs exceeding timelimit and some with zero reqtime
             if job.endlimit <= self.time:
                 job.endlimit = self.time + self.backfill_opts["resolution"]
-            free_blocks[(job.endlimit, datetime.max)].update(job.assigned_nodes)
+            for node in job.assigned_nodes:
+                if not node.job_end_restriction:
+                    free_blocks[(job.endlimit, datetime.max)].add(node)
+                    continue
+                end_restriction = node.job_end_restriction(self.time)
+                if job.endlimit >= end_restriction:
+                    continue
+                free_blocks[(job.endlimit, end_restriction)].add(node)
+            # free_blocks[(job.endlimit, datetime.max)].update(job.assigned_nodes)
 
         min_required_block_time = (
             self.time +
@@ -709,10 +769,11 @@ class Archer2():
             )
         )
 
-        free_blocks_ready_intervals = (
-            { (self.time, datetime.max) } if self.available_nodes() else set()
-        )
-        max_block_time = datetime.max
+        # free_blocks_ready_intervals = (
+        #     { (self.time, datetime.max) } if self.available_nodes() else set()
+        # )
+        # max_block_time = datetime.max
+        max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
         partition_num_tested = defaultdict(int)
         # Dont consider jobs that require partitions with no available nodes
         partition_maxes = {
@@ -747,6 +808,7 @@ class Archer2():
                 if valid_nodes:
                     selected_intervals[interval] = valid_nodes
                     free_nodes += len(valid_nodes)
+                    latest_interval = interval
 
                 if job.nodes <= free_nodes:
                     # usage_block_end = min(selected_intervals.keys(), key=lambda key: key[1])[1]
@@ -759,16 +821,19 @@ class Archer2():
                     if  job.nodes > free_nodes:
                         continue
 
-                    # # Nodes do not remain available for this jobs runtime, find new block
-                    # if usage_block_start + reqtime > usage_block_end:
-                    #     selected_intervals = {}
-                    #     free_nodes = 0
-                    #     continue
-
                     usage_block_end = usage_block_start + reqtime
 
+                    # Remove nodes we don't need from the latest interval added
+                    for i in range(free_nodes - job.nodes):
+                        selected_intervals[interval].pop()
+
                     if usage_block_start == self.time:
-                        backfill_now.append(i_job)
+                        backfill_now.append(
+                            (
+                                i_job,
+                                { node for nodes in selected_intervals.values() for node in nodes }
+                            )
+                        )
 
                     for key, nodes in selected_intervals.items():
                         free_blocks[key] -= nodes
@@ -815,7 +880,7 @@ class Archer2():
                     self.running_jobs.append(job.start_job(self.time))
                     self.power_usage += job.true_node_power * job.nodes / 1e+6
                     self.bd_slowdowns.append(
-                        max((job.end - job.submit)/max(job.runtime, BD_THRESHOLD), 1)
+                        max((job.end - job.submit) / max(job.runtime, BD_THRESHOLD), 1)
                     )
                     self.total_energy += (
                         job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
@@ -853,25 +918,32 @@ class Archer2():
             for partition in self.partitions.values():
                 partition.set_unplanned()
 
-        if backfill and queue.queue and self.available_nodes():
+        if backfill and queue.queue and self.available_nodes(backfill=True):
             backfill_now = self.get_backfill_jobs(queue)
-            for i in backfill_now:
-                job_ready = queue.queue[i]
+            for i_job, nodes in backfill_now:
+                job_ready = queue.queue[i_job]
                 if low_freqs:
                     power_factor, time_factor = self.low_freq_calc.get_factors()
                     job_ready.runtime *= time_factor
                     job_ready.reqtime *= self.low_freq_reqtime_factor
                     job_ready.true_node_power *= power_factor
-                if not self.submit(job_ready.start_job(self.time)):
-                    print(self.available_nodes(), i, backfill_now)
+                if not self.submit(job_ready.start_job(self.time), nodes=nodes, backfill=True):
+                    print(
+                        self.available_nodes(), self.available_nodes(backfill=True), i,
+                        backfill_now
+                    )
 
-            for i in sorted(backfill_now, reverse=True):
-               self.submitted_jobs_step.append(queue.queue.pop(i))
+            # if backfill_now:
+            #     print([ (i_job, len(nodes)) for i_job, nodes in backfill_now ])
+
+            for i_job, _ in sorted(backfill_now, key=lambda job_nodes: job_nodes[0], reverse=True):
+               self.submitted_jobs_step.append(queue.queue.pop(i_job))
+
 
         self.queue_size = len(queue.queue)
 
-    def submit(self, job : Job):
-        if self.has_space(job):
+    def submit(self, job : Job, nodes=None, backfill=False):
+        if self.has_space(job, backfill=backfill):
             self.running_jobs.append(job)
             self.nodes_free -= job.nodes
             self.power_usage += job.true_node_power * job.nodes / 1e+6
@@ -882,10 +954,19 @@ class Archer2():
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
             )
 
-            for node in self.partitions[job.partition].nodes:
-                if node.free:
-                    if job.assign_node(node):
-                        break
+            if nodes:
+                for node in nodes:
+                    if node.running_job:
+                        raise Exception(" ")
+                    if not node.free:
+                        raise Exception(" ")
+                    job.assign_node(node)
+
+            else:
+                for node in self.partitions[job.partition].always_available_nodes:
+                    if node.free:
+                        if job.assign_node(node):
+                            break
 
             return True
 
@@ -952,7 +1033,7 @@ class Archer2():
             if not len(node.reservation_schedule):
                 self.node_reservation_order.pop(0)
             else:
-                self.node_reservation_order.sort(key=lambda node: node.reservation_schedulep[0][0])
+                self.node_reservation_order.sort(key=lambda node: node.reservation_schedule[0][0])
 
             was_free = node.free
             node.set_reserved(reservation_schedule[2], reservation_schedule[1])

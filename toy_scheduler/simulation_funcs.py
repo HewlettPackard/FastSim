@@ -116,7 +116,6 @@ def get_nodes_and_partitions(node_events_dump, reservations_dump):
         reservations_dump, delimiter='|', lineterminator='\n', header=0,
         usecols=["RESV_NAME", "STATE", "START_TIME", "END_TIME", "NODELIST"]
     )
-    df_reservations = df_reservations.loc[(df_reservations.STATE == "ACTIVE")]
 
     df_reservations.START_TIME = pd.to_datetime(
         df_reservations.START_TIME, format="%Y-%m-%dT%H:%M:%S"
@@ -138,8 +137,14 @@ def get_nodes_and_partitions(node_events_dump, reservations_dump):
             down_schedule.append([row.TimeStart, row.Duration, row.State])
         down_schedule.sort(key=lambda schedule: schedule[0])
 
-        reservation_schedule = []
+        reservation_schedule, job_end_restriction = [], None
         for _, row in df_reservations.loc[(df_reservations.NODELIST == nid)].iterrows():
+            # Think this behaviour is being controlled outside of slurm
+            if row.RESV_NAME == "HPE_RestrictLongJobs":
+                job_end_restriction = (
+                    lambda time: (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
+                )
+                continue
             reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
         reservation_schedule.sort(key=lambda schedule: schedule[0])
 
@@ -157,14 +162,16 @@ def get_nodes_and_partitions(node_events_dump, reservations_dump):
             nodes.append(
                 Node(
                     nid, 1000, down_schedule=down_schedule,
-                    reservation_schedule=reservation_schedule
+                    reservation_schedule=reservation_schedule,
+                    job_end_restriction=job_end_restriction
                 )
             )
             partitions["highmem"].add_node(nodes[-1])
         else:
             nodes.append(
                 Node(
-                    nid, 0, down_schedule=down_schedule, reservation_schedule=reservation_schedule
+                    nid, 0, down_schedule=down_schedule, reservation_schedule=reservation_schedule,
+                    job_end_restriction=job_end_restriction
                 )
             )
         partitions["standard"].add_node(nodes[-1])
@@ -227,7 +234,7 @@ def prep_job_data(data, cache, df_name, model, rows=None):
 
 
 def run_sim(
-    df_jobs, system, t0, priority_sorter, seed=None, verbose=False, no_retained=False,
+    df_jobs, system, t0, tf, priority_sorter, seed=None, verbose=False, no_retained=False,
     fairtree_interval=None, sched_interval=None, bf_interval=None
 ):
     nodes, partitions, valid_reservations = get_nodes_and_partitions(
@@ -248,13 +255,20 @@ def run_sim(
     else:
         num_retained = lambda queue: None
 
+    if SLOWDOWN_WITH_QUEUESIZE:
+        sched_ready = t0
+        BACKFILL_OPTS["max_job_test"] = min(
+            BACKFILL_OPTS["max_job_test"],
+            int(BACKFILL_OPTS["max_time"].total_seconds() / BACKFILL_TIME_PERPRIORITYJOB)
+        )
+
     previous_hour = t0.hour
     previous_small_sched = t0
     next_bf_time = t0 + bf_interval
     next_sched_time = t0 + sched_interval
     next_fairtree_time = t0 + fairtree_interval
     while queue.all_jobs or queue.queue or system.running_jobs or queue.waiting_dependency:
-        # No event by event scheduling
+        # No scheduling on job submission, only end and set intervals
         if DEFER:
             time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, system.next_event(),
@@ -284,7 +298,12 @@ def run_sim(
                 priority_sorter.fairtree.fairshare_calc(system.running_jobs, time)
                 next_fairtree_time += fairtree_interval
 
-            if time == next_sched_time:
+            # Not ready to scheduler yet, skip this interval
+            if SLOWDOWN_WITH_QUEUESIZE and time < sched_ready:
+                if time == next_sched_time:
+                    next_sched_time += sched_interval
+                sched = False
+            elif time == next_sched_time:
                 sched = True
                 next_sched_time += sched_interval
             elif small_sched_possible and time > previous_small_sched + SCHED_MIN_INTERVAL:
@@ -293,9 +312,37 @@ def run_sim(
             else:
                 sched = False
 
+            # Mimics the controller taking longer to get round to a scheduling call when busy
+            if sched and SLOWDOWN_WITH_QUEUESIZE:
+                sched_ready = (
+                    time +
+                    timedelta(
+                        seconds=(
+                            (
+                                len(queue.queue) +
+                                sum(len(jobs) for jobs in queue.qos_held.values())
+                            ) *
+                            SCHED_INTERVAL_PERPENDINGJOB
+                        )
+                    )
+                )
+
+            # I think backfill is running in its own thread rather than being part of scheduler so
+            # this does not beed to play by the rules of sched_ready
             if time == next_bf_time:
                 backfill = True
-                next_bf_time += bf_interval
+                if SLOWDOWN_WITH_QUEUESIZE:
+                    next_bf_time += (
+                        bf_interval +
+                        timedelta(
+                            seconds=(
+                                min(len(queue.queue), BACKFILL_OPTS["max_job_test"]) *
+                                BACKFILL_TIME_PERPRIORITYJOB
+                            )
+                        )
+                    )
+                else:
+                    next_bf_time += bf_interval
                 # sched is a subset of what backfill does so may as well do a pass here to see if
                 # we can save some computation
                 sched = True
@@ -327,15 +374,18 @@ def run_sim(
             print(
                 "{} (step {}):\n".format(time, cnt) +
                 "Idle Nodes = {} (highmem {})\tNodesReserved = {} " \
-                "(Idle = {})\tNodesDown = {}\tPower = {:.4f} MW\n".format(
-                    system.idle_history[-1], system.partitions["highmem"].available_nodes(),
-                    # sum(
-                    #     100 / 584 for job in system.running_jobs for node in job.assigned_nodes if (
-                    #         "highmem" in [ partition.name for partition in node.partitions ]
-                    #     )
-                    # ),
+                "(Idle/Down = {})\tNodesHPE_RestricLongJobs = {} (Idle/Down = {})\t" \
+                "NodesDown = {}\tPower = {:.4f} MW\n".format(
+                    system.available_nodes(),
+                    system.partitions["highmem"].available_nodes(backfill=True),
                     sum(1 for node in system.nodes if node.reservation),
                     sum(1 for node in system.nodes if node.reservation and not node.running_job),
+                    sum(1 for node in system.nodes if node.job_end_restriction),
+                    sum(
+                        1 for node in system.nodes if (
+                            node.job_end_restriction and not node.running_job
+                        )
+                    ),
                     sum(1 for node in system.down_nodes if not node.running_job),
                     system.power_usage
                 ) +

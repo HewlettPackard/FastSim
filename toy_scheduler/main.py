@@ -52,6 +52,10 @@ from toy_scheduler import ARCHER2 # legacy reasons
 # better to make a small class with an add remove methods that do all this recording to make code
 # less confusing
 
+# TODO Currently enforcing job restriction reservations (HPE_RestricLongJobs) in a weird way and
+# only trying to schedule affected nodes in the backfill stage leading to
+# "backfill only available nodes". This needs to be redone in the refactor
+
 # === ===
 
 # === Features remaining ===
@@ -273,6 +277,9 @@ def main(args):
         joblib.load(args.use_power_preds) if args.use_power_preds else None, rows=args.rows
     )
     t0 = df_jobs.Start.min()
+    tf = df_jobs.Submit.max()
+
+    print (t0, tf)
 
     if args.read_sim_from:
         print("Reading sim results from {} ...".format(args.read_sim_from))
@@ -442,7 +449,7 @@ def main(args):
         elif args.test_refactor:
             archer = {}
             archer[0] = run_sim(
-                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0,
+                df_jobs, Archer2(t0, backfill_opts=BACKFILL_OPTS), t0, tf,
                 MFPrioritySorter(
                     ASSOCS_FILE, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 300,
                     timedelta(days=14), 0, 10000
@@ -457,8 +464,8 @@ def main(args):
             df_jobs = df_jobs.assign(Partition="standard")
             archer[0] = run_sim(
                 df_jobs,
-                Archer2(t0, node_down_mean=0, backfill_opts={ "max_jobs_test" : 0 }),
-                t0, FIFOSorter(), seed=0, verbose=args.verbose, min_step=timedelta(seconds=0)
+                Archer2(t0, backfill_opts={ "max_jobs_test" : 0 }), t0, FIFOSorter(), seed=0,
+                verbose=args.verbose, min_step=timedelta(seconds=0)
             )
 
         else:

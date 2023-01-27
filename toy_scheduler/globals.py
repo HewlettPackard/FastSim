@@ -25,19 +25,25 @@ BD_THRESHOLD = timedelta(hours=1)
 MIN_STEP = timedelta(seconds=10)
 
 DEFER = True
-SCHED_INTERVAL = timedelta(seconds=15) # 60
+SCHED_INTERVAL = timedelta(seconds=60) # 15 60
 # 2 seconds in config file but sdiag reports ~ 4 scheduling (quick or main) cycles per minute.
 # I suppose the slurm daemon is just too slow to get close to 2 seconds.#
 # Instead I will do a main scheduling 4 times a minute and ignore the quick event based
 # scheduling. Implementing this with SMALL_SCHED_OFF
 SCHED_MIN_INTERVAL = timedelta(seconds=2)
 PRIORITYCALCPERIOD = timedelta(minutes=5)
-SMALL_SCHED_OFF = True
+SMALL_SCHED_OFF = False
 
 BACKFILL_OPTS = {
     "resolution" : timedelta(minutes=1), "max_job_test" : 1000 ,
-    "window" : timedelta(minutes=5760), "interval" : timedelta(seconds=30)
+    "window" : timedelta(minutes=5760), "interval" : timedelta(seconds=30), # 30
+    "max_time" : timedelta(seconds=30)
 }
+
+# To try and recreate the slowdown in scheduling loop caused by congestion
+SLOWDOWN_WITH_QUEUESIZE = True
+SCHED_INTERVAL_PERPENDINGJOB = 0.012 # s ((60 / Cycles per minute) / Queue length mean)
+BACKFILL_TIME_PERPRIORITYJOB = 0.030 # s (Mean cycle / (Depth Mean))
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 
