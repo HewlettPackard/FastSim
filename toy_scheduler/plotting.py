@@ -1480,7 +1480,7 @@ def plot_blob(
 
         data_bd_slowdowns = [
             max(
-                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, BD_THRESHOLD),
                 1
             ) for job in job_history if not job.ignore_in_eval
         ]
@@ -1497,7 +1497,7 @@ def plot_blob(
         ]
         data_wait_times = [
             (
-                (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
+                (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
             ) for job in job_history if not job.ignore_in_eval
         ]
         sim_wait_times = [
@@ -1511,20 +1511,20 @@ def plot_blob(
             ) for job in archer_fifo.job_history if job.id not in no_eval_ids
         ]
         print(
-            "True starts mean bd slowdown={}+-{}\n".format(
-                np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns)
+            "True starts mean bd slowdown={}+-{} (total = {})\n".format(
+                np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns), np.sum(data_bd_slowdowns)
             ) +
-            "Scheduling sim mean bd slowdown={}+-{}\n".format(
-                np.mean(sim_bd_slowdowns), np.std(sim_bd_slowdowns)
+            "Scheduling sim mean bd slowdown={}+-{} (total = {})\n".format(
+                np.mean(sim_bd_slowdowns), np.std(sim_bd_slowdowns), np.sum(sim_bd_slowdowns)
             ) +
             "FIFO baseline sim mean bd slowdown={}+-{}\n".format(
                 np.mean(fifo_bd_slowdowns), np.std(fifo_bd_slowdowns)
             ) +
-            "True starts mean wait time={}+-{}hr\n".format(
-                np.mean(data_wait_times), np.std(data_wait_times)
+            "True starts mean wait time={}+-{} hrs (total = {} hrs)\n".format(
+                np.mean(data_wait_times), np.std(data_wait_times), np.sum(data_wait_times)
             ) +
-            "Scheduling sim mean wait time={}+-{}hr\n".format(
-                np.mean(sim_wait_times), np.std(sim_wait_times)
+            "Scheduling sim mean wait time={}+-{}hrs (total = {} hrs)\n".format(
+                np.mean(sim_wait_times), np.std(sim_wait_times), np.sum(sim_wait_times)
             ) +
             "FIFO baseline sim mean wait time={}+-{}hr\n".format(
                 np.mean(fifo_wait_times), np.std(fifo_wait_times)
@@ -1533,7 +1533,7 @@ def plot_blob(
 
         data_bd_slowdowns_no_lowpriority = [
             max(
-                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, BD_THRESHOLD),
                 1
             ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
@@ -1544,7 +1544,7 @@ def plot_blob(
         ]
         data_wait_times_no_lowpriority = [
             (
-                (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
+                (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
             ) for job in job_history if not job.ignore_in_eval and job.qos.name != "lowpriority"
         ]
         sim_wait_times_no_lowpriority = [
@@ -1592,7 +1592,7 @@ def plot_blob(
 
         data_bd_slowdowns_skip = [
             max(
-                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD),
+                (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, BD_THRESHOLD),
                 1
             ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
@@ -1610,7 +1610,7 @@ def plot_blob(
         ]
         data_wait_times_skip = [
             (
-                (job.true_job_start + job.runtime - job.submit).total_seconds() / 60 / 60
+                (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
             ) for job in job_history if not job.ignore_in_eval and job.submit > start_time
         ]
         sim_wait_times_skip = [
@@ -1679,14 +1679,14 @@ def plot_blob(
                 continue
 
             bd_slowdown_true = max(
-                (job.true_job_start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
+                (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, BD_THRESHOLD), 1
             )
             bd_slowdown_sim = max(
                 (job.start + job.runtime - job.submit) / max(job.runtime, BD_THRESHOLD), 1
             )
             if np.abs(bd_slowdown_true - bd_slowdown_sim) > 100:
                 print(
-                    bd_slowdown_true, bd_slowdown_sim, job.user, job.submit, job.start,
+                    bd_slowdown_true, bd_slowdown_sim, job.user, job.submit, job.true_submit, job.start,
                     job.true_job_start, job.id, job.nodes, job.name, job.partition, job.qos.name,
                     job.dependency.conditions if job.dependency else None, job.reason
                 )
@@ -1705,7 +1705,7 @@ def plot_blob(
             proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
             if proj in ["proj-e761", "proj-e697"]:
                 print(
-                    proj, job.user, job.submit, job.start, job.true_job_start, job.id, job.nodes,
+                    proj, job.user, job.submit, job.true_submit, job.start, job.true_job_start, job.id, job.nodes,
                     job.name, job.partition, job.qos.name,
                     job.dependency.conditions if job.dependency else None, job.reason
                 )
@@ -1717,7 +1717,7 @@ def plot_blob(
             proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
             proj_sim_wait[proj].append((job.start - job.submit).total_seconds()/ 60 / 60)
             proj_data_wait[proj].append(
-                (job.true_job_start - job.submit).total_seconds() / 60 / 60
+                (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
             )
             proj_nodehours[proj] += job.nodes * job.runtime.total_seconds() / 60 / 60
 
@@ -1826,7 +1826,7 @@ def plot_blob(
         data_submit_hour_waits = defaultdict(list)
         for job in job_history:
             data_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
-                (job.true_job_start - job.submit).total_seconds() / 60 / 60
+                (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
             )
 
         data_mean_wait_times_rolling_window = np.zeros(len(hours))
@@ -1936,7 +1936,7 @@ def plot_blob(
             data_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
                 max(
                     (
-                        (job.true_job_start + job.runtime - job.submit) /
+                        (job.true_job_start + job.runtime - job.true_submit) /
                         max(job.runtime, BD_THRESHOLD)
                     ),
                     1
@@ -2090,12 +2090,12 @@ def plot_blob(
             #     data_mins_allocated_nodes[minute] += job.nodes
             #     minute += timedelta(minutes=1)
 
-        for minute in sim_mins_allocated_nodes.keys():
-            sim_nodes = sim_mins_allocated_nodes[minute]
-            data_nodes = data_mins_allocated_nodes[minute]
-            if sim_nodes > 5860 or data_nodes > 5860:
-                print("\n", minute, sim_nodes, data_nodes, "\n", sep="\t")
-            print(minute, sim_nodes, data_nodes, end="\r", sep="\t")
+        # for minute in sim_mins_allocated_nodes.keys():
+        #     sim_nodes = sim_mins_allocated_nodes[minute]
+        #     data_nodes = data_mins_allocated_nodes[minute]
+        #     if sim_nodes > 5860 or data_nodes > 5860:
+        #         print("\n", minute, sim_nodes, data_nodes, "\n", sep="\t")
+        #     print(minute, sim_nodes, data_nodes, end="\r", sep="\t")
 
         print("Scheduling sim mean(max) allocations nodes = {} +- {} ({})".format(
             np.mean(sim_allocated_nodes[2880:-2880]), np.std(sim_allocated_nodes[2880:-2880]),
