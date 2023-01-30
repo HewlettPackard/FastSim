@@ -257,16 +257,16 @@ def run_sim(
 
     if SLOWDOWN_WITH_QUEUESIZE:
         sched_ready = t0
-        BACKFILL_OPTS["max_job_test"] = min(
-            BACKFILL_OPTS["max_job_test"],
-            int(
-                (
-                    BACKFILL_OPTS["max_time"] -
-                    int(BACKFILL_OPTS["max_time"] / BACKFILL_OPTS["yield_interval"]) *
-                    BACKFILL_OPTS["yield_sleep"]
-                ).total_seconds()  /
-                BACKFILL_TIME_PERPRIORITYJOB
-            )
+        BACKFILL_OPTS["max_test_timelimit"] = int(
+            (
+                BACKFILL_OPTS["max_time"] -
+                int(BACKFILL_OPTS["max_time"] / BACKFILL_OPTS["yield_interval"]) *
+                BACKFILL_OPTS["yield_sleep"]
+            ).total_seconds() / BACKFILL_TIME_PERPRIORITYJOB
+        )
+    else:
+        BACKFILL_OPTS["max_test_timelimit"] = (
+            BACKFILL_OPTS["max_job_test"] * len(system.partitions)
         )
 
     previous_hour = t0.hour

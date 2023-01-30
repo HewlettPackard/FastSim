@@ -744,6 +744,9 @@ class Archer2():
                 continue
             free_blocks[(self.time, node.job_end_restriction(self.time))].add(node)
             free_blocks_ready_intervals.add((self.time, node.job_end_restriction(self.time)))
+
+        if not free_blocks_ready_intervals:
+            return backfill_now
         # free_blocks[(self.time, datetime.max)] = {
         #     node for node in self.nodes if node.free and not node.job_end_restriction
         # }
@@ -786,12 +789,12 @@ class Archer2():
             if BACKFILL_OPTS["continue"] and job.submit > self.time - BACKFILL_OPTS["interval"]:
                 continue
             # break if no blocks or only <= min blocks available for immediate backfill
-            if not free_blocks_ready_intervals:
-                break
-            max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
             if max_block_time < min_required_block_time:
                 break
 
+            # Empiracal max jobs before reaching bf_max_time
+            if sum(partition_num_tested.values()) > BACKFILL_OPTS["max_test_timelimit"]:
+                break
             if partition_num_tested[job.partition] >= partition_maxes[job.partition]:
                 continue
             partition_num_tested[job.partition] += 1
@@ -828,7 +831,7 @@ class Archer2():
 
                     # Remove nodes we don't need from the latest interval added
                     for i in range(free_nodes - job.nodes):
-                        selected_intervals[interval].pop()
+                        selected_intervals[latest_interval].pop()
 
                     if usage_block_start == self.time:
                         backfill_now.append(
@@ -857,6 +860,12 @@ class Archer2():
                         # These nodes are now reserved, delete block if this leaves nothing left
                         if not free_blocks[key]:
                             free_blocks.pop(key)
+
+                    if not free_blocks_ready_intervals:
+                        return backfill_now
+                    max_block_time = max(
+                        free_blocks_ready_intervals, key=lambda interval: interval[1]
+                    )[1]
 
                     break
 

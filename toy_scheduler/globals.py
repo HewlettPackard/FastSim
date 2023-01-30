@@ -42,7 +42,7 @@ BACKFILL_OPTS = {
 }
 
 # To try and recreate the slowdown in scheduling loop caused by congestion
-SLOWDOWN_WITH_QUEUESIZE = True
+SLOWDOWN_WITH_QUEUESIZE = False
 # NOTE Use timedeltas
 SCHED_INTERVAL_PERPENDINGJOB = 0.028 # s ((60 / Cycles per minute) / Queue length mean) # 0.012 0.028
 # Using `squeue --Format=JobID,Partition,State,SubmitTime,StartTime,NumNodes,SchedNodes,Reason,QOS
@@ -50,6 +50,9 @@ SCHED_INTERVAL_PERPENDINGJOB = 0.028 # s ((60 / Cycles per minute) / Queue lengt
 # ~200 jobs of the priority queue before ending which corresponds to 0.1125s per job. It looks
 # like sdiag counts scheduling it does for AssocMaxCpuMinutesPerJobLimit jobs which get a start
 # time but (null) scheduled nodes so I am not sure why these seem to get counted.
+# NOTE This is much more dependent on how busy Slurm is with all other things, another time this
+# number was 357. Tricky to model when congestion happens, if I can be sure it is due to congestion
+# and nothing else wrong with my simulator I can leave it.
 BACKFILL_TIME_PERPRIORITYJOB = 0.1125 # s (Mean cycle / (Depth Mean)) # 0.030 0.037 0.1125
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
@@ -60,5 +63,4 @@ ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_050123.csv"
 NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221019-230104.csv"
 # NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221212-230122.csv"
 
-
-RESERVATIONS_FILE = "/work/y02/y02/awilkins/sinfo_reservations_200123.csv"
+RESERVATIONS_FILE = "/work/y02/y02/awilkins/sinfo_reservations_300123.csv"
