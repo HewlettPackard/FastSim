@@ -1,6 +1,28 @@
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
-        self.partitions, self.nodes,
+        self.partitions, self.nodes, self.valid_reservations = _get_nodes_and_partitions(
+            node_events_dump, res_dump
+        )
+
+        self.partitions_by_name = { partition.name : partition for partition in self.partitions }
+
+    def get_partition_by_name(self, name):
+        return self.partitions_by_name[name]
+
+    def _convert_nodelist_to_node_nums(nid_str):
+        node_nums = []
+
+        nid_str = nid_str.strip("nid").strip("[").strip("]")
+        for nid_str_entry in nid_str.split(","):
+            if "-" not in nid_str_entry:
+                node_nums.append(int(nid_str_entry))
+                continue
+
+            nid_str_range = nid_str_entry.split("-")
+            for node_num in range(int(nid_str_range[0]), int(nid_str_range[1]) + 1):
+                node_nums.append(node_num)
+
+        return node_nums
 
     def _get_nodes_and_partitions(node_events_dump, reservations_dump):
         df_events = pd.read_csv(
@@ -31,7 +53,7 @@ class Partitions:
             df_reservations.START_TIME, format="%Y-%m-%dT%H:%M:%S"
         )
         df_reservations.END_TIME = pd.to_datetime(df_reservations.END_TIME, format="%Y-%m-%dT%H:%M:%S")
-        df_reservations.NODELIST = df_reservations.NODELIST.apply(convert_nodelist_to_node_nums)
+        df_reservations.NODELIST = df_reservations.NODELIST.apply(_convert_nodelist_to_node_nums)
 
         valid_reservations = [ row.RESV_NAME for _, row in df_reservations.iterrows() ]
 
@@ -130,3 +152,111 @@ class Partition():
         while self.planned_nodes:
             self.planned_nodes.pop(0).set_unplanned()
 
+
+class Node():
+    def __init__(
+        self, num, weight=0, down_schedule=[], reservation_schedule=[], job_end_restriction=None
+    ):
+        self.id = num
+        self.weight = weight
+
+        self.free = True
+        self.running_job = None
+
+        self.down_schedule = down_schedule
+        self.down = False
+        self.up_time = None
+
+        self.reservation_schedule = reservation_schedule
+        self.reservation = ""
+        self.unreserved_time = None
+        self.job_end_restriction = job_end_restriction
+
+        self.planned = False
+
+        self.partitions = []
+
+    def set_planned(self):
+        self.planned = True
+        self.free = False
+        for partition in self.partitions:
+            if self.job_end_restriction: # NOTE This is so janky but Im desparate, fix in refactor
+                partition.num_available_only_backfill -= 1
+                continue
+            partition.num_available -= 1
+
+    def set_unplanned(self):
+        self.planned = False
+        self.free = True
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
+            partition.num_available += 1
+
+    def set_reserved(self, reservation_name, end_time):
+        self.reservation = reservation_name
+        self.unreserved_time = end_time
+        if self.down or not self.free:
+            return
+        self.free = False
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
+            partition.num_available -= 1
+
+    def set_unreserved(self):
+        self.reservation = ""
+        self.unreserved_time = None
+        if self.down or self.running_job:
+            return
+        self.free = True
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
+            partition.num_available += 1
+
+    def set_down(self, up_time):
+        self.down = True
+        self.up_time = up_time
+        # If job is already running it is allowed to finish
+        if not self.free:
+            return
+        self.free = False
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
+            partition.num_available -= 1
+
+    def set_up(self):
+        self.down = False
+        self.up_time = None
+        if self.reservation:
+            return
+        self.free = True
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
+            partition.num_available += 1
+
+    def set_free(self):
+        if self.down or self.reservation:
+            return
+        self.free = True
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill += 1
+                continue
+            partition.num_available += 1
+
+    def set_busy(self):
+        self.free = False
+        for partition in self.partitions:
+            if self.job_end_restriction:
+                partition.num_available_only_backfill -= 1
+                continue
+            partition.num_available -= 1

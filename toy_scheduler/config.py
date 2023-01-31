@@ -22,7 +22,7 @@ mandatory_fields = set(
 )
 
 
-def get_config(self, config_file):
+def get_config(config_file):
     print("Reading config from {}".format(config_file))
 
     with open(config_file) as f:
