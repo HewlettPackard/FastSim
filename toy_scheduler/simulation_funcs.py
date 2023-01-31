@@ -189,10 +189,44 @@ def prep_job_data(data, cache, df_name, model, rows=None):
             "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
             "Partition", "SubmitLine", "JobName", "Reason", "State"
         ],
-        nrows=rows, fix_anomalous_powers=True
+        nrows=rows, keep_bad_jobs=True
     )
 
     convert_to_raw(df_jobs, "AllocNodes")
+
+    print(
+        "Salvaging {} jobs with bad ConsumedEnergyRaw".format(
+            len(
+                df_jobs.loc[
+                    (df_jobs.ConsumedEnergyRaw.isna()) | (df_jobs.ConsumedEnergyRaw == "0.0") |
+                    (df_jobs.ConsumedEnergyRaw == 0.0) | (df_jobs.ConsumedEnergyRaw == "")
+                ]
+            )
+        )
+    )
+    df_jobs.ConsumedEnergyRaw = df_jobs.apply(
+        lambda row: (
+            float(row.ConsumedEnergyRaw) if (
+                row.ConsumedEnergyRaw == row.ConsumedEnergyRaw and # ie. not nan
+                row.ConsumedEnergyRaw != "0.0" and row.ConsumedEnergyRaw != 0.0 and
+                row.ConsumedEnergyRaw != ""
+            ) else float(550 * row.AllocNodes * row.DeltaT)
+        ),
+        axis=1
+    )
+    df_jobs["Power"] = df_jobs.apply(
+        lambda row: float(row.ConsumedEnergyRaw) / float(row.DeltaT) if row.DeltaT != 0 else 0.0,
+        axis=1
+    )
+
+    # Sometimes ConsumedEnergyRaw (very rare) is obviously wrong causing non-physical powers
+    print("Anomalous rows:")
+    print(df_jobs.loc[df_jobs.Power >= 10000000])
+    # print("Removed.")
+    # df_jobs = df_jobs.loc[df_jobs.Power < 10000000]
+    print("Power set to 550 W/Node.")
+    for i, anomalous_row in df_jobs.loc[(df_jobs.Power >= 10000000)].iterrows():
+        df_jobs.at[i, "Power"] = 550 * df_jobs.at[i, "AllocNodes"]
 
     if model:
         df_jobs["PowerPerNode"] = model_power_predictions(model, df_jobs)
@@ -229,6 +263,8 @@ def prep_job_data(data, cache, df_name, model, rows=None):
         acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
         if len(acc_users) == 2:
             df_jobs.at[i, "User"] = acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
+
+    print("Workload trace has {} jobs".format(len(df_jobs)))
 
     return df_jobs
 

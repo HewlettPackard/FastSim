@@ -83,7 +83,7 @@ def power_print_dump(df_power):
 
 
 def parse_cache(
-    df, cache, data_name, df_name, cols, remove_steps=True, nrows=None, fix_anomalous_powers=False
+    df, cache, data_name, df_name, cols, remove_steps=True, nrows=None, keep_bad_jobs=False
 ):
     # Ew
     has_partition = "Partition" in cols
@@ -102,7 +102,7 @@ def parse_cache(
     mkdir_p("/work/y02/y02/awilkins/pandas_cache/{}".format(data_name))
     if cache == "save":
         df_power = process_power(
-            df, cols=cols, remove_steps=remove_steps, fix_anomalous_powers=fix_anomalous_powers
+            df, cols=cols, remove_steps=remove_steps, keep_bad_jobs=keep_bad_jobs
         )
         df_power.to_pickle(
             "/work/y02/y02/awilkins/pandas_cache/{}/{}.pkl".format(data_name, df_name)
@@ -114,64 +114,78 @@ def parse_cache(
         return df_power
     else:
         df_power = process_power(
-            df, cols=cols, remove_steps=remove_steps, fix_anomalous_powers=fix_anomalous_powers
+            df, cols=cols, remove_steps=remove_steps, keep_bad_jobs=keep_bad_jobs
         )
 
     return df_power.drop(["Partition"], axis=1) if not has_partition else df_power
 
 
-def process_power(df, cols=None, remove_steps=True, fix_anomalous_powers=False):
-    if cols:
-        # Partition slice is removing data analysis nodes
-        # (note this will leave job steps without a parent)
-        df_power = df.loc[
-            (
-                (df.Start != "Unknown") & (df.Start.notna()) &
-                (df.End != "Unknown") & (df.End.notna()) &
-                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
-                (df.Partition != "serial")
-            ),
-            cols
-        ]
+def process_power(df, cols=None, remove_steps=True, keep_bad_jobs=False):
+    if keep_bad_jobs:
+        if cols:
+            df_power = df.loc[
+                (
+                    (df.Start != "Unknown") & (df.Start.notna()) &
+                    (df.End != "Unknown") & (df.End.notna()) &
+                    (df.AllocNodes != "0") & (df.AllocNodes != 0) & # Just to be safe
+                    (df.Partition != "serial")
+                ),
+                cols
+            ]
+        else:
+            df_power = df.loc[
+                (
+                    (df.Start != "Unknown") & (df.Start.notna()) &
+                    (df.End != "Unknown") & (df.End.notna()) &
+                    (df.AllocNodes != "0") & (df.AllocNodes != 0) &
+                    (df.Partition != "serial")
+                )
+            ]
     else:
-        df_power = df.loc[
-            (
-                (df.Start != "Unknown") & (df.Start.notna()) &
-                (df.End != "Unknown") & (df.End.notna()) &
-                (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
-                (df.Partition != "serial")
-            )
-        ]
+        if cols:
+            # Partition slice is removing data analysis nodes
+            # (note this will leave job steps without a parent)
+            df_power = df.loc[
+                (
+                    (df.Start != "Unknown") & (df.Start.notna()) &
+                    (df.End != "Unknown") & (df.End.notna()) &
+                    (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
+                    (df.Partition != "serial")
+                ),
+                cols
+            ]
+        else:
+            df_power = df.loc[
+                (
+                    (df.Start != "Unknown") & (df.Start.notna()) &
+                    (df.End != "Unknown") & (df.End.notna()) &
+                    (df.ConsumedEnergyRaw != "") & (df.ConsumedEnergyRaw.notna()) &
+                    (df.Partition != "serial")
+                )
+            ]
 
     if remove_steps:
         df_power = df_power[
             df_power.apply(lambda row: len(str(row.JobID).split(".")) == 1, axis=1)
         ]
 
-    df_power.ConsumedEnergyRaw = pd.to_numeric(df_power.ConsumedEnergyRaw)
-    # This also has the effect of removing jobs cancelled before running
-    df_power = df_power.loc[df_power.ConsumedEnergyRaw > 0]
-
     df_power.Start = pd.to_datetime(df_power.Start, format="%Y-%m-%dT%H:%M:%S")
     df_power.End = pd.to_datetime(df_power.End, format="%Y-%m-%dT%H:%M:%S")
 
     df_power["DeltaT"] = df_power.apply(lambda row: (row.End - row.Start).total_seconds(), axis=1)
-    df_power = df_power.loc[df_power.DeltaT > 0]
 
-    df_power["Power"] = df_power.apply(
-        lambda row: float(row.ConsumedEnergyRaw)/float(row.DeltaT), axis=1
-    )
-    # Sometimes ConsumedEnergyRaw (very rare) is obviously wrong causing non-physical powers
-    print("Anomalous rows:")
-    print(df_power.loc[df_power.Power >= 10000000])
-    if not fix_anomalous_powers:
-        print("Removed.")
-        df_power = df_power.loc[df_power.Power < 10000000]
-    else:
-        print("Power set to 550 W/Node.")
-        for i, anomalous_row in df_power.loc[(df_power.Power >= 10000000)].iterrows():
-            df_power.at[i, "Power"] = 550 * df_power.at[i, "AllocNodes"]
+    if not keep_bad_jobs:
+        df_power.ConsumedEnergyRaw = pd.to_numeric(df_power.ConsumedEnergyRaw)
+        # This also has the effect of removing jobs cancelled before running
+        df_power = df_power.loc[df_power.ConsumedEnergyRaw > 0]
 
+        df_power = df_power.loc[df_power.DeltaT > 0]
+
+        # Need to wait to compute power if wanting to do something with the bad ConsumedEnergyRaw
+        # jobs
+        df_power["Power"] = df_power.apply(
+            lambda row: float(row.ConsumedEnergyRaw) / float(row.DeltaT), axis=1
+        )
     # There are some short jobs that get duplicated a few hundred times in the slurm data
     df_power = df_power[~df_power.duplicated(subset="JobID", keep="first")]
 

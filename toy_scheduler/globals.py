@@ -57,10 +57,12 @@ BACKFILL_TIME_PERPRIORITYJOB = 0.1125 # s (Mean cycle / (Depth Mean)) # 0.030 0.
 
 KDE_MODEL_2GHZ = "/work/y02/y02/awilkins/archer2_jobdata/models/cpufreq2ghz_kde.joblib"
 
-ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_050123.csv"
+ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_230129.csv"
+# ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_050123.csv"
 # ASSOCS_FILE = "/work/y02/y02/awilkins/sacct_archer2_assocs_230123.csv"
 
-NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221019-230104.csv"
+NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221019-230129.csv"
+# NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221019-230104.csv"
 # NODE_EVENTS_FILE = "/work/y02/y02/awilkins/sacctmgr_events_221212-230122.csv"
 
 RESERVATIONS_FILE = "/work/y02/y02/awilkins/sinfo_reservations_300123.csv"
