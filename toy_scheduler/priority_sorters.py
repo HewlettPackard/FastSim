@@ -1,4 +1,4 @@
-from fairtree import FairTree
+from fairshare import FairTree
 
 
 # TODO Implement partitions as objects attached to the nodes rather than having to got through this
@@ -46,7 +46,9 @@ class MFPrioritySorter():
         if self.no_partition_priority_tiers:
             sorted_queue = sorted(
                 queue,
-                key=lambda job: sum(priority_calc(job) for priority_calc in self.priority_factors),
+                key=lambda job: (
+                    sum(priority_calc(job) for priority_calc in self.priority_factors), job.id
+                ),
                 reverse=True
             )
             return sorted_queue
@@ -55,7 +57,8 @@ class MFPrioritySorter():
             queue,
             key=lambda job: (
                 self._partition_priority_tier(job),
-                sum(priority_calc(job) for priority_calc in self.priority_factors)
+                sum(priority_calc(job) for priority_calc in self.priority_factors),
+                job.id
             ),
             reverse=True
         )

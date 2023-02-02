@@ -1,6 +1,11 @@
+from datetime import timedelta
+
+import pandas as pd
+
+
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
-        self.partitions, self.nodes, self.valid_reservations = _get_nodes_and_partitions(
+        self.nodes, self.partitions, self.valid_reservations = self._get_nodes_partitions(
             node_events_dump, res_dump
         )
 
@@ -9,7 +14,7 @@ class Partitions:
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
 
-    def _convert_nodelist_to_node_nums(nid_str):
+    def _convert_nodelist_to_node_nums(self, nid_str):
         node_nums = []
 
         nid_str = nid_str.strip("nid").strip("[").strip("]")
@@ -24,7 +29,7 @@ class Partitions:
 
         return node_nums
 
-    def _get_nodes_and_partitions(node_events_dump, reservations_dump):
+    def _get_nodes_partitions(self, node_events_dump, reservations_dump):
         df_events = pd.read_csv(
             node_events_dump, delimiter='|', lineterminator='\n', header=0,
             usecols=["NodeName", "TimeStart", "TimeEnd", "State"]
@@ -53,7 +58,9 @@ class Partitions:
             df_reservations.START_TIME, format="%Y-%m-%dT%H:%M:%S"
         )
         df_reservations.END_TIME = pd.to_datetime(df_reservations.END_TIME, format="%Y-%m-%dT%H:%M:%S")
-        df_reservations.NODELIST = df_reservations.NODELIST.apply(_convert_nodelist_to_node_nums)
+        df_reservations.NODELIST = df_reservations.NODELIST.apply(
+            self._convert_nodelist_to_node_nums
+        )
 
         valid_reservations = [ row.RESV_NAME for _, row in df_reservations.iterrows() ]
 
@@ -71,10 +78,13 @@ class Partitions:
 
             reservation_schedule, job_end_restriction = [], None
             for _, row in df_reservations.loc[(df_reservations.NODELIST == nid)].iterrows():
-                # Think this behaviour is being controlled outside of slurm
+                # Think this behaviour is being controlled by a maintenance script running in a
+                # screen session
                 if row.RESV_NAME == "HPE_RestrictLongJobs":
                     job_end_restriction = (
-                        lambda time: (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
+                        lambda time: (
+                            (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
+                        )
                     )
                     continue
                 reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
@@ -108,7 +118,7 @@ class Partitions:
                 )
             partitions["standard"].add_node(nodes[-1])
 
-        return nodes, partitions, valid_reservations
+        return nodes, list(partitions.values()), valid_reservations
 
 
 class Partition():
@@ -128,7 +138,7 @@ class Partition():
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
-        self.nodes.sort(key=lambda node: node.weight) # Small weights get priority
+        self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
         if not node.job_end_restriction:
             self.always_available_nodes.append(node)
             self.num_available += node.free

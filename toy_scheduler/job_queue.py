@@ -1,11 +1,14 @@
-import datetime
-from datetime import timedelta
+import re
+import datetime; from datetime import timedelta
+from collections import defaultdict
 
 import pandas as pd
 
+# TODO Move some of these mehtods into a helper functions file
+
 
 class Queue():
-    def __init__(self, job_data, priority_sorter, valid_reservations=[]):
+    def __init__(self, job_data, priority_sorter=None, valid_reservations=[]):
         self.priority_sorter = priority_sorter
 
         # hardcoded for now
@@ -22,17 +25,18 @@ class Queue():
             "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16, 16)
         }
 
-        df_jobs = _prep_job_data(df_jobs)
+        df_jobs = self._prep_job_data(job_data)
         self.time = df_jobs.Start.min()
         self.all_jobs = [
             Job(
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
-                job_row.Timelimit, job_row.PowerPerNode, job_row.TruePowerPerNode, job_row.Start,
-                job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
-                job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg,
-                job_row.BeginArg
-            ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
-        ]
+                job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
+                job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
+                job_row.Partition, job_row.DependencyArg, job_row.JobName, job_row.Reason,
+                job_row.ReservationArg, job_row.BeginArg
+            ) for _, job_row in df_jobs.iterrows()
+        ].sort(key=lambda job: (job.submit, job.id))
+        self.all_jobs.sort(key=lambda job: (job.submit, job.id))
         self._verify_dependencies()
         self.queue = []
 
@@ -44,7 +48,10 @@ class Queue():
         self._verify_reservations(valid_reservations)
         self.reservations = defaultdict(list)
 
-    def _get_sbatch_cli_arg(submit_line, long="", short=""):
+    def set_priority_sorter(self, priority_sorter):
+        self.priority_sorter = priority_sorter
+
+    def _get_sbatch_cli_arg(self, submit_line, long="", short=""):
         words = submit_line.split(" ")
         dep_arg = None
         for i_last_word, word in enumerate(words[1:]):
@@ -53,7 +60,7 @@ class Queue():
                 break
             if long:
                 if long + "=" in word:
-                    dep_arg = word.split("--dependency=")[1]
+                    dep_arg = word.split(long + "=")[1]
                     break
                 if word == long:
                     dep_arg = words[i_last_word + 2]
@@ -65,7 +72,7 @@ class Queue():
 
         return dep_arg
 
-    def _timelimit_str_to_timedelta(t_str):
+    def _timelimit_str_to_timedelta(self, t_str):
         days, hrs = 0, 0
         try:
             if "-" in t_str:
@@ -85,14 +92,14 @@ class Queue():
 
         return datetime.timedelta(days=days, hours=hrs, minutes=mins, seconds=secs)
 
-    def _convert_to_raw(df, cols):
+    def _convert_to_raw(self, df, cols):
         df[cols] = df[cols].astype(str)
         df[cols] = df[cols].replace(
             { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
         ).astype(float).astype(int)
         return df
 
-    def _prep_job_data(data_path):
+    def _prep_job_data(self, data_path):
         df_jobs = pd.read_csv(
             data_path, delimiter='|', lineterminator='\n', header=0,
             usecols=[
@@ -102,20 +109,22 @@ class Queue():
             ]
         )
         df_jobs = df_jobs.loc[
-            (df.Start != "Unknown") & (df.Start.notna()) & (df.End != "Unknown") &
-            (df.End.notna()) & (df.AllocNodes != "0") & (df.AllocNodes != 0) & # Just to be safe
-            (df.Partition != "serial")
+            (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
+            (df_jobs.End.notna()) & (df_jobs.AllocNodes != "0") & (df_jobs.AllocNodes != 0) &
+            (df_jobs.Partition != "serial")
         ]
 
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
-        df_jobs.Start = pd.to_datetime(df_power.Start, format="%Y-%m-%dT%H:%M:%S")
-        df_jobs.End = pd.to_datetime(df_power.End, format="%Y-%m-%dT%H:%M:%S")
+        df_jobs.Start = pd.to_datetime(df_jobs.Start, format="%Y-%m-%dT%H:%M:%S")
+        df_jobs.End = pd.to_datetime(df_jobs.End, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.Elapsed = df_jobs.End - df_jobs.Start
-        df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: _timelimit_str_to_timedelta(row))
+        df_jobs.Timelimit = df_jobs.Timelimit.apply(
+            lambda row: self._timelimit_str_to_timedelta(row)
+        )
 
         df_jobs = df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")]
 
-        _convert_to_raw(df_jobs, "AllocNodes")
+        self._convert_to_raw(df_jobs, "AllocNodes")
 
         num_bad = len(
             df_jobs.loc[
@@ -128,13 +137,15 @@ class Queue():
                 float(row.ConsumedEnergyRaw) if (
                     row.ConsumedEnergyRaw == row.ConsumedEnergyRaw and # ie. not nan
                     row.ConsumedEnergyRaw != 0.0 and row.ConsumedEnergyRaw != ""
-                ) else float(550 * row.AllocNodes * row.DeltaT)
+                ) else float(550 * row.AllocNodes * row.Elapsed.total_seconds())
             ),
             axis=1
         )
         df_jobs["Power"] = df_jobs.apply(
             lambda row: (
-                float(row.ConsumedEnergyRaw) / float(row.DeltaT) if row.DeltaT != 0 else 0.0
+                (
+                    float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds()
+                ) if row.Elapsed.total_seconds() != 0 else 0.0
             ),
             axis=1
         )
@@ -148,13 +159,13 @@ class Queue():
         )
 
         df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(
-            lambda row: _get_sbatch_cli_arg(row, long="--dependency", short="-d")
+            lambda row: self._get_sbatch_cli_arg(row, long="--dependency", short="-d")
         )
         df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(
-            lambda row: _get_sbatch_cli_arg(row, long="--reservation")
+            lambda row: self._get_sbatch_cli_arg(row, long="--reservation")
         )
         df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
-            lambda row: _get_sbatch_cli_arg(row, long="--begin", short="-b")
+            lambda row: self._get_sbatch_cli_arg(row, long="--begin", short="-b")
         )
 
         print("{} heterogeneous JobIDs converted to regular JobIDs".format(
@@ -342,7 +353,7 @@ class Queue():
 
         if self.time < self.next_newjob():
             # Still need to sort as there may be new jobs from dependency and qos releases
-            self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
+            self.queue = self.priority_sorter.sort(self.queue, self.time)
             return
 
         try:
@@ -375,7 +386,7 @@ class Queue():
         except IndexError: # No more new jobs
             pass
 
-        self.queue[retained:] = self.priority_sorter.sort(self.queue[retained:], self.time)
+        self.queue = self.priority_sorter.sort(self.queue, self.time)
         for reservation in list(self.reservations.keys()):
             self.reservations[reservation] = (
                 self.priority_sorter.sort(self.reservations[reservation], self.time)
@@ -385,7 +396,7 @@ class Queue():
         try:
             return self.all_jobs[0].submit
         except IndexError:
-            return datetime.max
+            return datetime.datetime.max
 
 
 class QOS():
@@ -468,6 +479,7 @@ class Job():
         self.partition = partition
         self.name = name
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
+        # self.dependency = dependency_arg
         self.reservation = reservation_arg
 
         # Some features are not relevant for scheduluing (AssocMaxCpuMinutesPerJobLimit means for
@@ -489,6 +501,9 @@ class Job():
         self.start = None
         self.end = None
         self.assigned_nodes = []
+
+    # def init_dependency(self, jid_to_job):
+    #     self.dependency = Dependency(self.dependency, self.user, self.name, jid_to_job)
 
     def submit_job(self, time=None):
         if time:

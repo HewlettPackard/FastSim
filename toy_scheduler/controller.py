@@ -1,4 +1,4 @@
-import datetime
+import datetime; from datetime import timedelta
 from collections import defaultdict
 
 from config import get_config
@@ -11,30 +11,28 @@ class Controller():
     def __init__(self, config_file):
         self.config = get_config(config_file)
 
-        self.partitions = Partitions(config.node_events_dump, config.reservations_dump)
+        self.partitions = Partitions(self.config.node_events_dump, self.config.reservations_dump)
 
-        priority_sorter = MFPrioritySorter(
-            config.assocs_dump, timedelta(minutes=5), timedelta(days=2), t0, 100, 500, 300,
-            timedelta(days=14), 0, 10000
-        )
-        self.fairtree = priority_sorter.fairtree
         self.queue = Queue(
-            config.job_dump, priority_sorter,
-            valid_reservations=self.partitions.valid_reservations
+            self.config.job_dump, valid_reservations=self.partitions.valid_reservations
         )
         self.init_time = self.queue.time
         self.time = self.queue.time
+        priority_sorter = MFPrioritySorter(
+            self.config.assocs_dump, timedelta(minutes=5), timedelta(days=2), self.init_time, 100,
+            500, 300, timedelta(days=14), 0, 10000
+        )
+        self.queue.set_priority_sorter(priority_sorter)
+        self.fairtree = priority_sorter.fairtree
 
         self.times = [self.time]
         self.power_usage = 0
-        self.power_history = [self.power_usage]
-        self.bd_slowdowns = []
         self.total_energy = 0.0
 
         self.job_history = []
         self.running_jobs = []
         self.finished_jobs_step = []
-        self.submitted_jobs_step = [] 
+        self.submitted_jobs_step = []
 
         self.down_nodes = []
         self.node_down_order = sorted(
@@ -48,24 +46,24 @@ class Controller():
         )
 
         self.step_cnt = 0
+        self.previous_print_hour = self.time.hour
 
     def _next_job_finish(self):
         if not self.running_jobs:
-            return datetime.max
+            return datetime.datetime.max
 
         return self.running_jobs[0].end
 
     def run_sim(self):
         # TODO Non-defer implementation
-        previous_hour = self.time.hour
         previous_small_sched = self.time
         next_bf_time = self.time + self.config.bf_interval
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
-        while self.queue.all_jobs or queue.queue or system.running_jobs:
+        while self.queue.all_jobs or self.queue.queue or self.running_jobs:
             self.time = min(
-                next_bf_time, next_sched_time, next_fairtree_time,
-                max(previous_small_sched + self.config.sched_min_interval, self._next_job_finish())
+                next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
+                self.queue.next_newjob()
             )
 
             sched, bf, fairtree = False, False, False
@@ -74,32 +72,31 @@ class Controller():
                 fairtree = True
                 next_fairtree_time += self.config.PriorityCalcPeriod
 
-            if (
-                self.time >=
-                max(previous_small_sched + self.config.sched_min_interval, self._next_job_finish())
+            if self.time == next_sched_time:
+                sched = True
+                next_sched_time += self.config.sched_interval
+            elif (
+                self.time > previous_small_sched + self.config.sched_min_interval and
+                self.time == self._next_job_finish()
             ):
                 sched = True
                 previous_small_sched = self.time
 
-            if self.time == next_sched_time:
-                sched = True
-                next_sched_time += self.config.sched_interval
-
             if self.time == next_bf_time:
                 bf = True
                 next_bf_time += self.config.bf_interval
-                    
+
             self._step(sched, bf, fairtree)
             self.step_cnt += 1
 
     def _step(self, sched, bf, fairtree):
-        if not sched and not bf:
-            if fairtree: 
-                self.fairtree.fairshare_calc(self.running_jobs, self.time)
-            return
-
-        self._check_down_nodes()
-        self._check_reservations()
+        # NOTE Regardless of sched or bf still need to:
+        # - check for down nodes so the they can go down closer to the correct time rather than in
+        # groups at sched/bf steps
+        # - finish jobs when they finish so that dependecies/qos submit holds can start accruing
+        # time at the correct time
+        # - release jobs from qos submit and dependencies holds so that they can start accruing
+        # time at the correct time
 
         self._check_finished_jobs()
         for job in self.finished_jobs_step:
@@ -109,17 +106,22 @@ class Controller():
             self.total_energy += (
                 job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
             )
-            self.bd_slowdowns.append(
-                max((job.end - job.submit) / max(job.runtime, self.config.bd_threshold), 1)
-            )
-    
+
+        self._check_down_nodes()
+        self._check_reservations()
+
+        self.running_jobs.sort(key=lambda job: job.end)
+
         # NOTE Changes to dependencies and qos implementations should mean I won't have to pass all
         # of this
         self.queue.step(
             self.time, self.finished_jobs_step, self.submitted_jobs_step, self.running_jobs,
             self.job_history
         )
-        
+
+        if fairtree:
+            self.fairtree.fairshare_calc(self.running_jobs, self.time)
+
         # NOTE Put these into methods
         self.submitted_jobs_step = []
         if sched:
@@ -144,14 +146,6 @@ class Controller():
                     self.submitted_jobs_step.append(job)
 
             partitions_full = set()
-            # partitions_full = {
-            #     partition in self.partitions.partitions if not partition.available_nodes()
-            # }
-            # partition_free_nodes = {
-            #     partition : [
-            #         node for node in partition.nodes if node.free and not node.job_end_restriction
-            #     ] for partition in self.partitions.partitions
-            # }
 
             jobs_submitted = []
             for i_job, job in enumerate(self.queue.queue):
@@ -171,9 +165,9 @@ class Controller():
                         break
 
             for i in sorted(jobs_submitted, reverse=True):
-                self.submitted_jobs_step.append(queue.queue.pop(i))
+                self.submitted_jobs_step.append(self.queue.queue.pop(i))
 
-            for partition in self.partitions.values():
+            for partition in self.partitions.partitions:
                 partition.set_unplanned()
 
         if (
@@ -184,34 +178,36 @@ class Controller():
                 )
             )
         ):
-            backfill_now = self._get_backfill_jobs(queue)
+            backfill_now = self._get_backfill_jobs()
             for i_job, nodes in backfill_now:
                 job_ready = self.queue.queue[i_job]
-                self._submit(job_ready.start_job(self.time), nodes=nodes, backfill=True)
+                self._submit(job_ready.start_job(self.time), nodes=nodes)
 
             # if backfill_now:
             #     print([ (i_job, len(nodes)) for i_job, nodes in backfill_now ])
 
             for i_job, _ in sorted(backfill_now, key=lambda job_nodes: job_nodes[0], reverse=True):
-               self.submitted_jobs_step.append(queue.queue.pop(i_job))
+               self.submitted_jobs_step.append(self.queue.queue.pop(i_job))
 
-        self.power_history.append(self.power_usage)
+        if sched or bf:
+            self.running_jobs.sort(key=lambda job: job.end)
+
         self.times.append(self.time)
 
-        previous_hour = self._print_stats()
+        self._print_stats()
 
-    def _print_stats(self, previous_hour):
-        if not (self.time.hour != previous_hour and not self.time.hour % 3):
-            return previous_hour
+    def _print_stats(self):
+        if not (self.time.hour != self.previous_print_hour and not self.time.hour % 3):
+            return
 
-        previous_hour = time.hour
+        self.previous_print_hour = self.time.hour
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
             "Idle Nodes = {} (highmem {})\tNodesReserved = {}(Idle = {})\t" \
             "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
-                self.parititions.get_partition_by_name("standard").available_nodes(backfill=True),
-                self.parititions.get_partition_by_name("highmem").available_nodes(backfill=True),
+                self.partitions.get_partition_by_name("standard").available_nodes(backfill=True),
+                self.partitions.get_partition_by_name("highmem").available_nodes(backfill=True),
                 sum(1 for node in self.partitions.nodes if node.reservation),
                 sum(
                    1 for node in self.partitions.nodes if (
@@ -251,19 +247,14 @@ class Controller():
             " ".join(
                 "{}={}".format(
                     qos.name, len(jobs)
-                ) for qos, jobs in self,queue.qos_submit_held.items() if len(jobs)
+                ) for qos, jobs in self.queue.qos_submit_held.items() if len(jobs)
             ) +
             "))\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
 
-        return previous_hour
-        
     def _submit(self, job, nodes=None):
         self.running_jobs.append(job)
         self.power_usage += job.true_node_power * job.nodes / 1e+6
-        self.bd_slowdowns.append(
-            max((job.end - job.submit)/max(job.runtime, self.config.bd_threshold), 1)
-        )
         self.total_energy += (
             job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
         )
@@ -284,7 +275,7 @@ class Controller():
                     if job.assign_node(node):
                         break
 
-        if len(job.assign_node) != job.nodes:
+        if len(job.assigned_nodes) != job.nodes:
             raise Exception("bruh")
 
         return True
@@ -319,8 +310,8 @@ class Controller():
             if not node.free:
                 continue
             if not node.job_end_restriction:
-                free_blocks[(self.time, datetime.max)].add(node)
-                free_blocks_ready_intervals.add((self.time, datetime.max))
+                free_blocks[(self.time, datetime.datetime.max)].add(node)
+                free_blocks_ready_intervals.add((self.time, datetime.datetime.max))
                 continue
             free_blocks[(self.time, node.job_end_restriction(self.time))].add(node)
             free_blocks_ready_intervals.add((self.time, node.job_end_restriction(self.time)))
@@ -333,7 +324,7 @@ class Controller():
                 job.endlimit = self.time + self.config.bf_resolution
             for node in job.assigned_nodes:
                 if not node.job_end_restriction:
-                    free_blocks[(job.endlimit, datetime.max)].add(node)
+                    free_blocks[(job.endlimit, datetime.datetime.max)].add(node)
                     continue
                 end_restriction = node.job_end_restriction(self.time)
                 if job.endlimit >= end_restriction:
@@ -342,16 +333,16 @@ class Controller():
 
         min_required_block_time = (
             self.time +
-            min(queue.queue, key=lambda job: job.reqtime).reqtime * self.config.bf_window
+            min(self.queue.queue, key=lambda job: job.reqtime).reqtime + self.config.bf_resolution
         )
 
         max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
         partition_num_tested = defaultdict(int)
         # Dont consider jobs that require partitions with no available nodes
         partition_maxes = {
-            partition : (
-                self.config.max_job_test if partition.available_nodes(backfill=True) else 0
-            ) for partition in self.partitions
+            partition.name : (
+                self.config.bf_max_job_test if partition.available_nodes(backfill=True) else 0
+            ) for partition in self.partitions.partitions
         }
         for i_job, job in enumerate(self.queue.queue):
             # Mimics bf not seeing jobs submitted after it gets initial lock
@@ -377,11 +368,11 @@ class Controller():
             selected_intervals = {}
 
             for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
-                valid_nodes = {
-                    node for node in nodes if (
+                valid_nodes = [
+                        node for node in sorted(nodes, key=lambda node: node.id) if (
                         self.partitions.get_partition_by_name(job.partition) in node.partitions
                     )
-                }
+                ]
                 if valid_nodes:
                     selected_intervals[interval] = valid_nodes
                     free_nodes += len(valid_nodes)
@@ -394,7 +385,7 @@ class Controller():
                         if usage_block_start + reqtime > interval[1]:
                             free_nodes -= len(selected_intervals.pop(interval))
 
-                    if  job.nodes > free_nodes:
+                    if job.nodes > free_nodes:
                         continue
 
                     usage_block_end = usage_block_start + reqtime
@@ -412,7 +403,7 @@ class Controller():
                         )
 
                     for key, nodes in selected_intervals.items():
-                        free_blocks[key] -= nodes
+                        free_blocks[key] -= set(nodes)
 
                         # The original ready now block has been broken and the interval needs
                         # redefining
@@ -451,10 +442,7 @@ class Controller():
         try:
             while self.down_nodes and self.down_nodes[0].up_time <= self.time:
                 node = self.down_nodes.pop(0)
-                was_free = node.free
                 node.set_up()
-                if not was_free and node.free:
-                    self.nodes_free += 1
         except:
             print(self.down_nodes[0].id, self.down_nodes, self.down_nodes[0].up_time, self.time)
             raise TypeError
@@ -465,6 +453,7 @@ class Controller():
             # happens because my DOWN implementation waits for current running job to finish)
             if node.down:
                 node.down_schedule[0][0] = node.up_time
+                self.node_down_order.sort(key=lambda node: node.down_schedule[0][0])
                 continue
 
             down_schedule = node.down_schedule.pop(0)
@@ -481,10 +470,7 @@ class Controller():
                 if up_time <= node.running_job.end:
                     continue
 
-            was_free = node.free
             node.set_down(up_time)
-            if was_free and not node.free:
-                self.nodes_free -= 1
 
             self.down_nodes.append(node)
             self.down_nodes.sort(key=lambda node: node.up_time)
@@ -492,10 +478,7 @@ class Controller():
     def _check_reservations(self):
         while self.reserved_nodes and self.reserved_nodes[0].unreserved_time <= self.time:
             node = self.reserved_nodes.pop(0)
-            was_free = node.free
             node.set_unreserved()
-            if not was_free and node.free:
-                self.nodes_free += 1
 
         while (
             self.node_reservation_order and
@@ -509,11 +492,8 @@ class Controller():
             else:
                 self.node_reservation_order.sort(key=lambda node: node.reservation_schedule[0][0])
 
-            was_free = node.free
             node.set_reserved(reservation_schedule[2], reservation_schedule[1])
-            if was_free and not node.free:
-                self.nodes_free -= 1
 
             self.reserved_nodes.append(node)
             self.reserved_nodes.sort(key=lambda node: node.unreserved_time)
-        
+
