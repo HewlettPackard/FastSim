@@ -233,7 +233,9 @@ class FairTree():
                 child_node.usage *= self.decay_constant
                 child_node.levelfs = child_node.shares / child_node.usage
             current_node.new_child_usage = False
-            current_node.children.sort(key=lambda node: node.levelfs, reverse=True)
+            # XXX Temporary for reproducibility. Should implement logic that deals with ties (merge
+            # children and give tied users the same rank)
+            current_node.children.sort(key=lambda node: (node.levelfs, node.name), reverse=True)
 
         for child_node in current_node.children:
             rank = self._tree_traversal(child_node, rank)
@@ -242,7 +244,7 @@ class FairTree():
 
     def job_finish_usage_update(self, job):
         node = self.uniq_users[job.account][job.user]
-        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds() # TODO node->cpu seconds
+        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds()
         self._update_usages(node, usage)
 
     def _update_usages(self, node, usage):

@@ -116,8 +116,8 @@ class Queue():
                 job_row.User, job_row.Account, self.qoss[job_row.QOS], job_row.Partition,
                 job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg,
                 job_row.BeginArg
-            ) for _, job_row in df_jobs.sort_values("Submit").iterrows()
-        ]
+            ) for _, job_row in df_jobs.iterrows()
+        ].sort(key=lambda job: (job.submit, job.id))
         self._verify_dependencies()
         self.queue = []
 
@@ -440,7 +440,7 @@ class Partition():
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
-        self.nodes.sort(key=lambda node: node.weight) # Small weights get priority
+        self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
         if not node.job_end_restriction:
             self.always_available_nodes.append(node)
             self.num_available += node.free
@@ -781,13 +781,15 @@ class Archer2():
         # Dont consider jobs that require partitions with no available nodes
         partition_maxes = {
             partition : (
-                self.backfill_opts["max_job_test"] if self.available_nodes(partition) else 0
+                self.backfill_opts["max_job_test"] if (
+                    self.available_nodes(partition, backfill=True)
+                ) else 0
             ) for partition in self.partitions.keys()
         }
         for i_job, job in enumerate(queue.queue):
             # Mimics bf not seeing jobs submitted after it gets initial lock
-            if BACKFILL_OPTS["continue"] and job.submit > self.time - BACKFILL_OPTS["interval"]:
-                continue
+            # if BACKFILL_OPTS["continue"] and job.submit > self.time - BACKFILL_OPTS["interval"]:
+            #     continue
             # break if no blocks or only <= min blocks available for immediate backfill
             if max_block_time < min_required_block_time:
                 break
@@ -830,8 +832,9 @@ class Archer2():
                     usage_block_end = usage_block_start + reqtime
 
                     # Remove nodes we don't need from the latest interval added
-                    for i in range(free_nodes - job.nodes):
-                        selected_intervals[latest_interval].pop()
+                    # Don't want to pop randomly for reproducibility between runs
+                    for node in sorted(selected_intervals[latest_interval])[:free_nodes-job.nodes]:
+                        selected_intervals[latest_interval].remove(node)
 
                     if usage_block_start == self.time:
                         backfill_now.append(
@@ -1003,6 +1006,7 @@ class Archer2():
             # happens because my DOWN implementation waits for current running job to finish)
             if node.down:
                 node.down_schedule[0][0] = node.up_time
+                self.node_down_order.sort(key=lambda node: node.down_schedule[0][0])
                 continue
 
             down_schedule = node.down_schedule.pop(0)

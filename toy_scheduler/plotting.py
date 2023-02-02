@@ -1,4 +1,4 @@
-import os
+import os, sys
 from glob import glob
 import datetime
 from datetime import timedelta
@@ -1465,10 +1465,10 @@ def plot_blob(
             data = pickle.load(f)
         archer_fifo = data["archer"][0]
 
-        max_submit = max(archer[0].job_history, key=lambda job: job.submit).submit
+        max_submit = max(archer[0].job_history, key=lambda job: job.submit).true_submit
         job_history = [
             job for job in archer[0].job_history if (
-                archer[0].init_time + timedelta(days=4) < job.submit <
+                archer[0].init_time + timedelta(days=4) < job.true_submit <
                 max_submit - timedelta(days=4)
             )
         ]
@@ -1904,7 +1904,8 @@ def plot_blob(
         hours = [
             archer[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr) for hr in (
                 range(int(
-                    ( max_submit - timedelta(days=14) - archer[0].init_time
+                    (
+                        max_submit - timedelta(days=14) - archer[0].init_time
                     ).total_seconds() / 60 / 60
                 ))
             )

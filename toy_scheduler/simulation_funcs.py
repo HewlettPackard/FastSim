@@ -140,12 +140,11 @@ def get_nodes_and_partitions(node_events_dump, reservations_dump):
         reservation_schedule, job_end_restriction = [], None
         for _, row in df_reservations.loc[(df_reservations.NODELIST == nid)].iterrows():
             # Think this behaviour is being controlled outside of slurm
-            # XXX Temporary
-            # if row.RESV_NAME == "HPE_RestrictLongJobs":
-            #     job_end_restriction = (
-            #         lambda time: (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
-            #     )
-            #     continue
+            if row.RESV_NAME == "HPE_RestrictLongJobs":
+                job_end_restriction = (
+                    lambda time: (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
+                )
+                continue
             reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
         reservation_schedule.sort(key=lambda schedule: schedule[0])
 

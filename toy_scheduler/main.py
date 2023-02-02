@@ -195,7 +195,9 @@ class MFPrioritySorter():
         if self.no_partition_priority_tiers:
             sorted_queue = sorted(
                 queue,
-                key=lambda job: sum(priority_calc(job) for priority_calc in self.priority_factors),
+                key=lambda job: (
+                    sum(priority_calc(job) for priority_calc in self.priority_factors),job.id
+                ),
                 reverse=True
             )
             return sorted_queue
@@ -531,7 +533,7 @@ def main(args):
     if args.test_refactor:
         plots.append("test_refactor")
 
-    if plots:
+    if plots and not args.no_plot:
         plot_blob(
             plots, archer, start, end, times, dates, archer_fcfs=archer_fcfs,
             times_fcfs=times_fcfs, dates_fcfs=dates_fcfs, batch=args.batch, df_jobs=df_jobs,
@@ -617,6 +619,7 @@ def parse_arguments():
     parser.add_argument("--verbose", action="store_false")
     parser.add_argument("--dump_sim_to", type=str, default="", help="Pickle sim results")
     parser.add_argument("--read_sim_from", type=str, default="", help="Read pickled sim results")
+    parser.add_argument("--no_plot", action="store_true")
 
     args = parser.parse_args()
 

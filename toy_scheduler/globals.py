@@ -35,7 +35,7 @@ PRIORITYCALCPERIOD = timedelta(minutes=5)
 SMALL_SCHED_OFF = False
 
 BACKFILL_OPTS = {
-    "resolution" : timedelta(minutes=1), "max_job_test" : 1000 ,
+    "resolution" : timedelta(minutes=1), "max_job_test" : 1000,
     "window" : timedelta(minutes=5760), "interval" : timedelta(seconds=30), # 30
     "max_time" : timedelta(seconds=30), "yield_interval" : timedelta(seconds=2),
     "yield_sleep" : timedelta(seconds=0.5), "continue" : True
