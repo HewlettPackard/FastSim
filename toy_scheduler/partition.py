@@ -2,6 +2,8 @@ from datetime import timedelta
 
 import pandas as pd
 
+from helpers import convert_nodelist_to_node_nums
+
 
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
@@ -13,21 +15,6 @@ class Partitions:
 
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
-
-    def _convert_nodelist_to_node_nums(self, nid_str):
-        node_nums = []
-
-        nid_str = nid_str.strip("nid").strip("[").strip("]")
-        for nid_str_entry in nid_str.split(","):
-            if "-" not in nid_str_entry:
-                node_nums.append(int(nid_str_entry))
-                continue
-
-            nid_str_range = nid_str_entry.split("-")
-            for node_num in range(int(nid_str_range[0]), int(nid_str_range[1]) + 1):
-                node_nums.append(node_num)
-
-        return node_nums
 
     def _get_nodes_partitions(self, node_events_dump, reservations_dump):
         df_events = pd.read_csv(
@@ -58,9 +45,7 @@ class Partitions:
             df_reservations.START_TIME, format="%Y-%m-%dT%H:%M:%S"
         )
         df_reservations.END_TIME = pd.to_datetime(df_reservations.END_TIME, format="%Y-%m-%dT%H:%M:%S")
-        df_reservations.NODELIST = df_reservations.NODELIST.apply(
-            self._convert_nodelist_to_node_nums
-        )
+        df_reservations.NODELIST = df_reservations.NODELIST.apply(convert_nodelist_to_node_nums)
 
         valid_reservations = [ row.RESV_NAME for _, row in df_reservations.iterrows() ]
 
@@ -112,7 +97,8 @@ class Partitions:
             else:
                 nodes.append(
                     Node(
-                        nid, 0, down_schedule=down_schedule, reservation_schedule=reservation_schedule,
+                        nid, 0, down_schedule=down_schedule,
+                        reservation_schedule=reservation_schedule,
                         job_end_restriction=job_end_restriction
                     )
                 )
@@ -121,7 +107,7 @@ class Partitions:
         return nodes, list(partitions.values()), valid_reservations
 
 
-class Partition():
+class Partition:
     def __init__(self, name, priority_tier, priority_weight):
         self.name = name
         self.priority_tier = priority_tier
@@ -270,3 +256,4 @@ class Node():
                 partition.num_available_only_backfill -= 1
                 continue
             partition.num_available -= 1
+

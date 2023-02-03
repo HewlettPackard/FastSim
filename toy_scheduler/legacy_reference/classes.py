@@ -117,7 +117,8 @@ class Queue():
                 job_row.DependencyArg, job_row.JobName, job_row.Reason, job_row.ReservationArg,
                 job_row.BeginArg
             ) for _, job_row in df_jobs.iterrows()
-        ].sort(key=lambda job: (job.submit, job.id))
+        ]
+        self.all_jobs.sort(key=lambda job: (job.submit, job.id))
         self._verify_dependencies()
         self.queue = []
 

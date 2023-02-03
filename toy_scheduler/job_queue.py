@@ -1,13 +1,14 @@
 import re
+from enum import Enum
 import datetime; from datetime import timedelta
 from collections import defaultdict
 
 import pandas as pd
 
-# TODO Move some of these mehtods into a helper functions file
+from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_raw
 
 
-class Queue():
+class Queue:
     def __init__(self, job_data, priority_sorter=None, valid_reservations=[]):
         self.priority_sorter = priority_sorter
 
@@ -35,9 +36,13 @@ class Queue():
                 job_row.Partition, job_row.DependencyArg, job_row.JobName, job_row.Reason,
                 job_row.ReservationArg, job_row.BeginArg
             ) for _, job_row in df_jobs.iterrows()
-        ].sort(key=lambda job: (job.submit, job.id))
+        ]
         self.all_jobs.sort(key=lambda job: (job.submit, job.id))
+        # NOTE verify with jid first to ensure all jids have a Job in the data
         self._verify_dependencies()
+        jid_to_job = { job.id : job for job in self.all_jobs }
+        for job in self.all_jobs:
+            job.init_dependency(jid_to_job)
         self.queue = []
 
         self.waiting_dependency = []
@@ -50,54 +55,6 @@ class Queue():
 
     def set_priority_sorter(self, priority_sorter):
         self.priority_sorter = priority_sorter
-
-    def _get_sbatch_cli_arg(self, submit_line, long="", short=""):
-        words = submit_line.split(" ")
-        dep_arg = None
-        for i_last_word, word in enumerate(words[1:]):
-            # Batch script or executable marks end of options
-            if word[0] != "-" and (words[i_last_word][0] != "-" or "=" in words[i_last_word]):
-                break
-            if long:
-                if long + "=" in word:
-                    dep_arg = word.split(long + "=")[1]
-                    break
-                if word == long:
-                    dep_arg = words[i_last_word + 2]
-                    break
-            if short:
-                if word == short:
-                    dep_arg = words[i_last_word + 2]
-                    break
-
-        return dep_arg
-
-    def _timelimit_str_to_timedelta(self, t_str):
-        days, hrs = 0, 0
-        try:
-            if "-" in t_str:
-                days = int(t_str.split("-")[0])
-                t_str = t_str.split("-")[1]
-        except:
-            print(t_str)
-
-        if t_str.count(":") == 1 and t_str.count("."): # MM:SS.SS
-            mins, secs = t_str.split(":")
-            mins = int(mins)
-            secs = float(secs)
-        elif t_str.count(":") == 2: ## HH:MM:SS (SS has no decimal place for these ones)
-            hrs, mins, secs = map(int, t_str.split(":"))
-        else:
-            raise NotImplementedError("Bruh")
-
-        return datetime.timedelta(days=days, hours=hrs, minutes=mins, seconds=secs)
-
-    def _convert_to_raw(self, df, cols):
-        df[cols] = df[cols].astype(str)
-        df[cols] = df[cols].replace(
-            { "K" : "e+03", "M" : "e+06", "G" : "e+09", "T" : "e+12" }, regex=True
-        ).astype(float).astype(int)
-        return df
 
     def _prep_job_data(self, data_path):
         df_jobs = pd.read_csv(
@@ -118,13 +75,11 @@ class Queue():
         df_jobs.Start = pd.to_datetime(df_jobs.Start, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.End = pd.to_datetime(df_jobs.End, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.Elapsed = df_jobs.End - df_jobs.Start
-        df_jobs.Timelimit = df_jobs.Timelimit.apply(
-            lambda row: self._timelimit_str_to_timedelta(row)
-        )
+        df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
         df_jobs = df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")]
 
-        self._convert_to_raw(df_jobs, "AllocNodes")
+        convert_to_raw(df_jobs, "AllocNodes")
 
         num_bad = len(
             df_jobs.loc[
@@ -159,13 +114,13 @@ class Queue():
         )
 
         df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(
-            lambda row: self._get_sbatch_cli_arg(row, long="--dependency", short="-d")
+            lambda row: get_sbatch_cli_arg(row, long="--dependency", short="-d")
         )
         df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(
-            lambda row: self._get_sbatch_cli_arg(row, long="--reservation")
+            lambda row: get_sbatch_cli_arg(row, long="--reservation")
         )
         df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
-            lambda row: self._get_sbatch_cli_arg(row, long="--begin", short="-b")
+            lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
         )
 
         print("{} heterogeneous JobIDs converted to regular JobIDs".format(
@@ -259,30 +214,27 @@ class Queue():
             )
         )
 
-    def _check_dependencies(self, finished_jobs_step, submitted_jobs_step, running_jobs):
+    def _check_dependencies(self, running_jobs):
         released = []
         for i_job, job in enumerate(self.waiting_dependency):
-            job.dependency.update_finished(finished_jobs_step)
-            job.dependency.update_submitted(submitted_jobs_step)
-
             if not job.dependency.can_release(self.queue, running_jobs):
                 continue
 
             released_job = self.waiting_dependency[i_job]
             if released_job.qos.hold_job(released_job):
-                self.qos_held[released_job.qos].append(released_job.launch(self.time))
+                self.qos_held[released_job.qos].append(released_job.qos_resource_hold(self.time))
             elif released_job.reservation:
                 self.reservations[released_job.reservation].append(
-                    released_job.launch(self.time).launch_into_priority()
+                    released_job.priority(self.time)
                 )
             else:
-                self.queue.append(released_job.launch(self.time).launch_into_priority())
+                self.queue.append(released_job.priority(self.time))
             released.append(i_job)
 
         for i_job in sorted(released, reverse=True):
             self.waiting_dependency.pop(i_job)
 
-    def _check_qos_holds(self, running_jobs, job_history):
+    def _check_qos_holds(self, running_jobs):
         for qos in self.qos_submit_held.keys():
             if not self.qos_submit_held[qos]:
                 continue
@@ -297,20 +249,18 @@ class Queue():
                 released.append(i_job)
 
                 if job.dependency:
-                    job.dependency.update_finished(job_history)
-                    job.dependency.update_submitted(running_jobs + job_history)
                     if not job.dependency.can_release(self.queue, running_jobs):
-                        self.waiting_dependency.append(job)
+                        self.waiting_dependency.append(job.dependency_hold())
                         continue
 
                 if job.qos.hold_job(job):
-                    self.qos_held[job.qos].append(job.launch(self.time))
+                    self.qos_held[job.qos].append(job.qos_resource_hold(self.time))
                     continue
 
                 if job.reservation:
-                    self.reservations[job.reservation].append(job.launch_into_priority())
+                    self.reservations[job.reservation].append(job.priority(self.time))
                 else:
-                    self.queue.append(job.launch_into_priority())
+                    self.queue.append(job.priority(self.time))
 
             for i_job in sorted(released, reverse=True):
                 self.qos_submit_held[qos].pop(i_job)
@@ -336,20 +286,20 @@ class Queue():
                     continue
 
                 if job.reservation:
-                    self.reservations[job.reservation].append(job.launch_into_priority())
+                    self.reservations[job.reservation].append(job.priority(self.time))
                 else:
-                    self.queue.append(job.launch_into_priority())
+                    self.queue.append(job.priority(self.time))
 
                 released.append(i_job)
 
             for i_job in sorted(released, reverse=True):
                 self.qos_held[qos].pop(i_job)
 
-    def step(self, time, finished_jobs_step, submitted_jobs_step, running_jobs, job_history):
+    def step(self, time, running_jobs):
         self.time = time
 
-        self._check_dependencies(finished_jobs_step, submitted_jobs_step, running_jobs)
-        self._check_qos_holds(running_jobs, job_history)
+        self._check_dependencies(running_jobs)
+        self._check_qos_holds(running_jobs)
 
         if self.time < self.next_newjob():
             # Still need to sort as there may be new jobs from dependency and qos releases
@@ -361,27 +311,25 @@ class Queue():
                 new_job = self.all_jobs.pop(0)
 
                 if new_job.qos.hold_job_submit_usr(new_job):
-                    self.qos_submit_held[new_job.qos].append(new_job)
+                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                     continue
 
                 new_job.submit_job()
 
                 if new_job.dependency:
-                    new_job.dependency.update_finished(job_history)
-                    new_job.dependency.update_submitted(running_jobs + job_history)
                     if not new_job.dependency.can_release(self.queue, running_jobs):
-                        self.waiting_dependency.append(new_job)
+                        self.waiting_dependency.append(new_job.dependency_hold())
                         continue
 
                 if new_job.qos.hold_job(new_job):
-                    self.qos_held[new_job.qos].append(new_job.launch(self.time))
+                    self.qos_held[new_job.qos].append(new_job.qos_resource_hold(self.time))
                     continue
 
                 if new_job.reservation:
-                    self.reservations[new_job.reservation].append(new_job.launch(self.time))
+                    self.reservations[new_job.reservation].append(new_job.priority(self.time))
                     continue
 
-                self.queue.append(new_job.launch(self.time).launch_into_priority())
+                self.queue.append(new_job.priority(self.time))
 
         except IndexError: # No more new jobs
             pass
@@ -399,7 +347,7 @@ class Queue():
             return datetime.datetime.max
 
 
-class QOS():
+class QOS:
     def __init__(self, name, priority, grp_nodes, grp_jobs, usr_nodes, usr_jobs, usr_submit):
         self.name = name
         self.priority = priority
@@ -435,7 +383,6 @@ class QOS():
         self.usr_job_quota_remaining[user] += 1
         self.usr_node_quota_remaining[user] += nodes
         self.usr_submit_quota_remaining[user] += 1
-        self.possible_to_release = True
 
     def hold_job(self, job):
         return (
@@ -458,7 +405,7 @@ class QOS():
         return not self.usr_submit_quota_remaining[job.user]
 
 
-class Job():
+class Job:
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
@@ -479,7 +426,6 @@ class Job():
         self.partition = partition
         self.name = name
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
-        # self.dependency = dependency_arg
         self.reservation = reservation_arg
 
         # Some features are not relevant for scheduluing (AssocMaxCpuMinutesPerJobLimit means for
@@ -497,13 +443,16 @@ class Job():
             begin_arg
         )
 
-        self.launch_time = submit
+        self.launch_time = None
         self.start = None
         self.end = None
         self.assigned_nodes = []
 
-    # def init_dependency(self, jid_to_job):
-    #     self.dependency = Dependency(self.dependency, self.user, self.name, jid_to_job)
+        self.state = JobState.FUTURE
+
+    def init_dependency(self, jid_to_job):
+        if self.dependency:
+            self.dependency.convert_jids_to_jobs(jid_to_job)
 
     def submit_job(self, time=None):
         if time:
@@ -515,6 +464,7 @@ class Job():
         self.start = time
         self.end = time + self.runtime
         self.endlimit = time + self.reqtime
+        self.state = JobState.RUNNING
         return self
 
     def assign_node(self, node):
@@ -530,20 +480,33 @@ class Job():
             node.set_free()
             node.running_job = None
         self.qos.job_ended(self.user, self.nodes)
+        self.state = JobState.COMPLETED
         return self
 
-    # When job starts accruing age
-    def launch(self, time):
+    def qos_submit_hold(self):
+        self.state = JobState.QOS_SUBMIT
+        return self
+
+    def dependency_hold(self):
+        self.state = JobState.DEPENDENCY
+        return self
+
+    # The earliest stage when job starts accruing age
+    def qos_resource_hold(self, time):
+        self.state = JobState.QOS_RESOURCES
         self.launch_time = time
         return self
 
     # When the QOS recognises the job as 'running' for resource limits accounting
-    def launch_into_priority(self):
+    def priority(self, time):
+        self.state = JobState.PRIORITY
+        if not self.launch_time:
+            self.launch_time = time
         self.qos.job_launched(self.user, self.nodes)
         return self
 
 
-class Dependency():
+class Dependency:
     def __init__(self, dependency_args, user, name):
         self.job_user_name = (user, name)
         self.delimiter = "?" if "?" in dependency_args else ","
@@ -559,14 +522,14 @@ class Dependency():
             # NOTE after can can take a +time after job_id, just going to ignore these for now
             if "+" in condition:
                 print(condition)
-            job_ids = { job_id.split("+")[0] for job_id in condition.split(":")[1:] }
+            jobs = { job_id.split("+")[0] for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
             if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":
-                self.conditions["afterany"] = job_ids
+                self.conditions["afterany"] = jobs
                 continue
 
             if dep_type == "after":
-                self.conditions[dep_type] = job_ids
+                self.conditions[dep_type] = jobs
                 continue
 
             raise NotImplementedError("Unrecognised dep_type {}".format(dep_type))
@@ -576,35 +539,31 @@ class Dependency():
 
         self.conditions_met = not any(self.conditions.values())
 
-    def update_finished(self, jobs):
-        # return
-        if not self.finished_relevant or self.conditions_met:
-            return
-
-        for job in jobs:
-            if job.id in self.conditions["afterany"]:
-                self.conditions["afterany"].remove(job.id)
-                if self.delimiter == "?":
-                    self.conditions_met = True
-                    return
-
-    def update_submitted(self, jobs):
-        # return
-        if not self.submitted_relevant or self.conditions_met:
-            return
-
-        for job in jobs:
-            if job.id in self.conditions["after"]:
-                self.conditions["after"].remove(job.id)
-                if self.delimiter == "?":
-                    self.conditions_met = True
-                    return
+    def convert_jids_to_jobs(self, jid_to_job):
+        for key in self.conditions.keys():
+            self.conditions[key] = { jid_to_job[jid] for jid in self.conditions[key] }
 
     def can_release(self, queued_jobs, running_jobs):
         if not self.conditions_met:
+            if "afterany" in self.conditions.keys():
+                for job in list(self.conditions["afterany"]):
+                    if job.state != JobState.COMPLETED:
+                        continue
+                    self.conditions["afterany"].remove(job)
+                    if self.delimiter == "?":
+                        self.conditions_met = True
+                        break
+
+            if "after" in self.conditions.keys():
+                for job in list(self.conditions["after"]):
+                    if job.state != JobState.COMPLETED and job.state != RUNNING:
+                        continue
+                    self.conditions["after"].remove(job)
+                    if self.delimiter == "?":
+                        self.conditions_met = True
+                        break
+
             self.conditions_met = not any(self.conditions.values())
-            if not self.conditions_met:
-                return False
 
         if self.conditions_met and not self.singleton:
             return True
@@ -616,3 +575,14 @@ class Dependency():
             return True
 
         return False
+
+
+class JobState(Enum):
+    FUTURE = 1
+    PRIORITY = 2
+    RUNNING = 3
+    COMPLETED = 4
+    QOS_SUBMIT = 5
+    DEPENDENCY = 6
+    QOS_RESOURCES = 7
+

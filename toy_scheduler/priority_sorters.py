@@ -1,9 +1,10 @@
 from fairshare import FairTree
+from partition import Partition
 
 
 # TODO Implement partitions as objects attached to the nodes rather than having to got through this
 # dictionary using the name
-class MFPrioritySorter():
+class MFPrioritySorter:
     def __init__(
         self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
         fairshare_weight, max_age, partition_weight, qos_weight
@@ -19,7 +20,6 @@ class MFPrioritySorter():
         self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
 
         # NOTE Hardcoded for now - sort this out
-        from classes import Partition
         self.partitions = {
             "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
         }

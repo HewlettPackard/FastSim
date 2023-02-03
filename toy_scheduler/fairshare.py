@@ -6,7 +6,7 @@ import numpy as np
 # TODO define a base class and make this neater, _ infront of add_parent to indicate private
 
 
-class Root():
+class Root:
     def __init__(self, initial_usage, name="root"):
         self.name = name
         self.usage = initial_usage
@@ -30,7 +30,8 @@ class Root():
 
 
 # NOTE children can be projects or accounts
-class Partition():
+# NOTE disambiguated from Partition in partitions.py
+class PartitionNode:
     def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
@@ -63,7 +64,7 @@ class Partition():
 
 
 # There can be any number of project levels including 0
-class Project():
+class Project:
     def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
@@ -98,7 +99,7 @@ class Project():
 # {Account, User} us the unique identifier i think, so a job will point to an account and user
 # (which may belong to multiple accounts). This account and user will have there usages updated
 # then the usage will be propagated up the tree.
-class Account():
+class Account:
     def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
@@ -131,7 +132,7 @@ class Account():
 
 
 # Users with the same name may coexist under different accounts
-class User():
+class User:
     def __init__(self, name, shares, initial_usage):
         self.name = name
         self.shares = shares
@@ -155,7 +156,7 @@ class User():
         return ret
 
 
-class FairTree():
+class FairTree:
     def __init__(self, assoc_file, calc_period, decay_halflife, init_time):
         self.last_calc_time = init_time
         self.calc_period = calc_period
@@ -261,7 +262,7 @@ class FairTree():
 
         root_node = Root(0.0)
         for _, partition_row in df.loc[(df.ParentName == root_node.name)].iterrows():
-            partition = Partition(partition_row.Account, 1, 0.0)
+            partition = PartitionNode(partition_row.Account, 1, 0.0)
             root_node.add_child(partition)
 
         for partition_node in root_node.children:

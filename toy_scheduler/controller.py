@@ -7,7 +7,7 @@ from job_queue import Queue
 from priority_sorters import MFPrioritySorter
 
 
-class Controller():
+class Controller:
     def __init__(self, config_file):
         self.config = get_config(config_file)
 
@@ -114,10 +114,7 @@ class Controller():
 
         # NOTE Changes to dependencies and qos implementations should mean I won't have to pass all
         # of this
-        self.queue.step(
-            self.time, self.finished_jobs_step, self.submitted_jobs_step, self.running_jobs,
-            self.job_history
-        )
+        self.queue.step(self.time, self.running_jobs)
 
         if fairtree:
             self.fairtree.fairshare_calc(self.running_jobs, self.time)
