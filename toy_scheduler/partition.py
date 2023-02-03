@@ -7,8 +7,9 @@ from helpers import convert_nodelist_to_node_nums
 
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
-        self.nodes, self.partitions, self.valid_reservations = self._get_nodes_partitions(
-            node_events_dump, res_dump
+        res_tuple = self._get_nodes_partitions(node_events_dump, res_dump)
+        self.nodes, self.partitions, self.valid_reservations, self.hpe_restrictlong_nodes = (
+            res_tuple
         )
 
         self.partitions_by_name = { partition.name : partition for partition in self.partitions }
@@ -54,23 +55,19 @@ class Partitions:
         partitions = {
             "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
         }
-        nodes = []
+        nodes, hpe_restrictlong_nids = [], []
         for nid in range(1000, 6860):
             down_schedule = []
             for _, row in df_events.loc[(df_events.Id == nid)].iterrows():
                 down_schedule.append([row.TimeStart, row.Duration, row.State])
             down_schedule.sort(key=lambda schedule: schedule[0])
 
-            reservation_schedule, job_end_restriction = [], None
+            reservation_schedule = []
             for _, row in df_reservations.loc[(df_reservations.NODELIST == nid)].iterrows():
                 # Think this behaviour is being controlled by a maintenance script running in a
                 # screen session
                 if row.RESV_NAME == "HPE_RestrictLongJobs":
-                    job_end_restriction = (
-                        lambda time: (
-                            (time + timedelta(hours=1, minutes=5)).replace(minute=0, second=0)
-                        )
-                    )
+                    hpe_restrictlong_nids.append(nid)
                     continue
                 reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
             reservation_schedule.sort(key=lambda schedule: schedule[0])
@@ -90,7 +87,6 @@ class Partitions:
                     Node(
                         nid, 1000, down_schedule=down_schedule,
                         reservation_schedule=reservation_schedule,
-                        job_end_restriction=job_end_restriction
                     )
                 )
                 partitions["highmem"].add_node(nodes[-1])
@@ -99,12 +95,14 @@ class Partitions:
                     Node(
                         nid, 0, down_schedule=down_schedule,
                         reservation_schedule=reservation_schedule,
-                        job_end_restriction=job_end_restriction
                     )
                 )
             partitions["standard"].add_node(nodes[-1])
 
-        return nodes, list(partitions.values()), valid_reservations
+        return (
+            nodes, list(partitions.values()), valid_reservations,
+            [ node for node in nodes if node.id in hpe_restrictlong_nids ]
+        )
 
 
 class Partition:
@@ -114,42 +112,16 @@ class Partition:
         self.priority_weight = priority_weight # Normalised s.t. partition with greatest has 1
 
         self.nodes = []
-        self.planned_nodes = []
-        self.always_available_nodes = []
         self.backfill_only_nodes = []
 
-        self.num_available = 0
-        self.num_available_only_backfill = 0
 
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
         self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
-        if not node.job_end_restriction:
-            self.always_available_nodes.append(node)
-            self.num_available += node.free
-        else:
-            self.backfill_only_nodes.append(node)
-            self.num_available_only_backfill += node.free
-
-    def available_nodes(self, backfill=False):
-        if backfill:
-            return self.num_available + self.num_available_only_backfill
-
-        return self.num_available
-
-    def set_planned(self):
-        for node in self.nodes:
-            if node.free:
-                node.set_planned()
-                self.planned_nodes.append(node)
-
-    def set_unplanned(self):
-        while self.planned_nodes:
-            self.planned_nodes.pop(0).set_unplanned()
 
 
-class Node():
+class Node:
     def __init__(
         self, num, weight=0, down_schedule=[], reservation_schedule=[], job_end_restriction=None
     ):
@@ -168,27 +140,7 @@ class Node():
         self.unreserved_time = None
         self.job_end_restriction = job_end_restriction
 
-        self.planned = False
-
         self.partitions = []
-
-    def set_planned(self):
-        self.planned = True
-        self.free = False
-        for partition in self.partitions:
-            if self.job_end_restriction: # NOTE This is so janky but Im desparate, fix in refactor
-                partition.num_available_only_backfill -= 1
-                continue
-            partition.num_available -= 1
-
-    def set_unplanned(self):
-        self.planned = False
-        self.free = True
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill += 1
-                continue
-            partition.num_available += 1
 
     def set_reserved(self, reservation_name, end_time):
         self.reservation = reservation_name
@@ -196,11 +148,6 @@ class Node():
         if self.down or not self.free:
             return
         self.free = False
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill -= 1
-                continue
-            partition.num_available -= 1
 
     def set_unreserved(self):
         self.reservation = ""
@@ -208,11 +155,6 @@ class Node():
         if self.down or self.running_job:
             return
         self.free = True
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill += 1
-                continue
-            partition.num_available += 1
 
     def set_down(self, up_time):
         self.down = True
@@ -221,11 +163,6 @@ class Node():
         if not self.free:
             return
         self.free = False
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill -= 1
-                continue
-            partition.num_available -= 1
 
     def set_up(self):
         self.down = False
@@ -233,27 +170,12 @@ class Node():
         if self.reservation:
             return
         self.free = True
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill += 1
-                continue
-            partition.num_available += 1
 
     def set_free(self):
         if self.down or self.reservation:
             return
         self.free = True
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill += 1
-                continue
-            partition.num_available += 1
 
     def set_busy(self):
         self.free = False
-        for partition in self.partitions:
-            if self.job_end_restriction:
-                partition.num_available_only_backfill -= 1
-                continue
-            partition.num_available -= 1
 
