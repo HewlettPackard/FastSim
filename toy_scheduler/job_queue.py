@@ -9,7 +9,7 @@ from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_r
 
 
 class Queue:
-    def __init__(self, job_data, priority_sorter=None, valid_reservations=[]):
+    def __init__(self, job_data, partitions, priority_sorter=None):
         self.priority_sorter = priority_sorter
 
         # hardcoded for now
@@ -33,8 +33,8 @@ class Queue:
                 job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
                 job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
-                job_row.Partition, job_row.DependencyArg, job_row.JobName, job_row.Reason,
-                job_row.ReservationArg, job_row.BeginArg
+                partitions.get_partition_by_name(job_row.Partition), job_row.DependencyArg,
+                job_row.JobName, job_row.Reason, job_row.ReservationArg, job_row.BeginArg
             ) for _, job_row in df_jobs.iterrows()
         ]
         self.all_jobs.sort(key=lambda job: (job.submit, job.id))
@@ -50,7 +50,7 @@ class Queue:
         self.qos_held = { qos : [] for qos in self.qoss.values() }
         self.qos_submit_held = { qos : [] for qos in self.qoss.values() }
 
-        self._verify_reservations(valid_reservations)
+        self._verify_reservations(partitions.valid_reservations)
         self.reservations = defaultdict(list)
 
     def set_priority_sorter(self, priority_sorter):
@@ -65,12 +65,17 @@ class Queue:
     def step(self, time, running_jobs):
         self.time = time
 
+        pre_step_res_priority_len = {
+            res : len(res_queue) for res, res_queue in self.reservations.items()
+        }
+        pre_step_priority_len = len(self.queue)
+
         self._check_dependencies(running_jobs)
         self._check_qos_holds(running_jobs)
 
         if self.time < self.next_newjob():
-            # Still need to sort as there may be new jobs from dependency and qos releases
-            self.queue = self.priority_sorter.sort(self.queue, self.time)
+            if len(self.queue) != pre_step_priority_len:
+                self.queue = self.priority_sorter.sort(self.queue, self.time)
             return
 
         try:
@@ -101,11 +106,12 @@ class Queue:
         except IndexError: # No more new jobs
             pass
 
-        self.queue = self.priority_sorter.sort(self.queue, self.time)
-        for reservation in list(self.reservations.keys()):
-            self.reservations[reservation] = (
-                self.priority_sorter.sort(self.reservations[reservation], self.time)
-            )
+        if len(self.queue) != pre_step_priority_len:
+            self.queue = self.priority_sorter.sort(self.queue, self.time)
+
+        for res, res_queue in self.reservations.items():
+            if len(res_queue) != pre_step_res_priority_len[res]:
+                self.reservations[res] = self.priority_sorter.sort(res_queue, self.time)
 
     def _check_dependencies(self, running_jobs):
         released = []
