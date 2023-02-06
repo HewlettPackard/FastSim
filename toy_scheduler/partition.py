@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta
 
 import pandas as pd
@@ -13,6 +14,8 @@ class Partitions:
             res_tuple
         )
 
+        self.reservations = defaultdict(list)
+
         self.partitions_by_name = { partition.name : partition for partition in self.partitions }
 
     def get_partition_by_name(self, name):
@@ -20,11 +23,26 @@ class Partitions:
 
     def get_partition_free_nodes(self):
         partition_free_nodes = {
-            partition : list(
-                sorted(partition.free_nodes, key=lambda node: (node.weight, node.id))
+            partition : sorted(
+                partition.free_nodes, key=lambda node: (node.weight, node.id)
             ) for partition in self.partitions
         }
         return partition_free_nodes
+
+    def get_free_nodes(self):
+        return set.union(*( partition.free_nodes for partition in self.partitions ))
+
+    def add_node_reservation(self, node):
+        if node.reservation == "":
+            raise Exception("bruh")
+        self.reservations[node.reservation].append(node)
+        # No partitions for reservations so no priority tier
+        self.reservations[node.reservation].sort(key=lambda node: node.id)
+
+    def remove_node_reservation(self, node, reservation_name):
+        if node.reservation == "":
+            raise Exception("bruh")
+        self.reservations[node.reservation].remove(node)
 
     def _get_nodes_partitions(self, node_events_dump, reservations_dump):
         df_events = pd.read_csv(
@@ -132,9 +150,7 @@ class Partition:
 
 
 class Node:
-    def __init__(
-        self, num, weight=0, down_schedule=[], reservation_schedule=[], job_end_restriction=None
-    ):
+    def __init__(self, num, weight=0, down_schedule=[], reservation_schedule=[]):
         self.id = num
         self.weight = weight
 
@@ -148,7 +164,6 @@ class Node:
         self.reservation_schedule = reservation_schedule
         self.reservation = ""
         self.unreserved_time = None
-        self.job_end_restriction = job_end_restriction
 
         self.partitions = []
 
@@ -192,6 +207,8 @@ class Node:
         self._update_partition_free(False)
 
     def set_busy(self):
+        if self.reservation:
+            return
         self.free = False
         self._update_partition_free(True)
 
