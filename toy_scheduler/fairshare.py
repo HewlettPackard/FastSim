@@ -190,18 +190,13 @@ class FairTree:
 
         self.tot_num_assocs = len(self.levels[-1])
 
-    def __str__(self):
-        ret = (
-            "\t".join(
-                [ "l{} ({})".format(level, len(nodes)) for level, nodes in enumerate(self.levels) ]
-            ) +
-            "\n"
-        )
-        ret += self.levels[0][0].__str__()
-        return ret
-
     def next_calc(self):
         return self.last_calc_time + self.calc_period
+
+    def job_finish_usage_update(self, job):
+        node = self.uniq_users[job.account][job.user]
+        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds()
+        self._update_usages(node, usage)
 
     # Collect usages from running jobs and traverse tree to get fairshare rank and so score
     # (not bothering with ties since they should be extremely rare except for account that submit
@@ -243,11 +238,6 @@ class FairTree:
 
         return rank
 
-    def job_finish_usage_update(self, job):
-        node = self.uniq_users[job.account][job.user]
-        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds()
-        self._update_usages(node, usage)
-
     def _update_usages(self, node, usage):
         node.usage += usage
         while not node.is_root:
@@ -281,4 +271,14 @@ class FairTree:
                         acc_node.add_child(user)
 
         return root_node
+
+    def __str__(self):
+        ret = (
+            "\t".join(
+                [ "l{} ({})".format(level, len(nodes)) for level, nodes in enumerate(self.levels) ]
+            ) +
+            "\n"
+        )
+        ret += self.levels[0][0].__str__()
+        return ret
 

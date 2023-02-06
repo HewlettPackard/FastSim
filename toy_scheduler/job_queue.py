@@ -56,6 +56,207 @@ class Queue:
     def set_priority_sorter(self, priority_sorter):
         self.priority_sorter = priority_sorter
 
+    def next_newjob(self):
+        try:
+            return self.all_jobs[0].submit
+        except IndexError:
+            return datetime.datetime.max
+
+    def step(self, time, running_jobs):
+        self.time = time
+
+        self._check_dependencies(running_jobs)
+        self._check_qos_holds(running_jobs)
+
+        if self.time < self.next_newjob():
+            # Still need to sort as there may be new jobs from dependency and qos releases
+            self.queue = self.priority_sorter.sort(self.queue, self.time)
+            return
+
+        try:
+            while self.all_jobs[0].submit <= self.time:
+                new_job = self.all_jobs.pop(0)
+
+                if new_job.qos.hold_job_submit_usr(new_job):
+                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
+                    continue
+
+                new_job.submit_job()
+
+                if new_job.dependency:
+                    if not new_job.dependency.can_release(self.queue, running_jobs):
+                        self.waiting_dependency.append(new_job.dependency_hold())
+                        continue
+
+                if new_job.qos.hold_job(new_job):
+                    self.qos_held[new_job.qos].append(new_job.qos_resource_hold(self.time))
+                    continue
+
+                if new_job.reservation:
+                    self.reservations[new_job.reservation].append(new_job.priority(self.time))
+                    continue
+
+                self.queue.append(new_job.priority(self.time))
+
+        except IndexError: # No more new jobs
+            pass
+
+        self.queue = self.priority_sorter.sort(self.queue, self.time)
+        for reservation in list(self.reservations.keys()):
+            self.reservations[reservation] = (
+                self.priority_sorter.sort(self.reservations[reservation], self.time)
+            )
+
+    def _check_dependencies(self, running_jobs):
+        released = []
+        for i_job, job in enumerate(self.waiting_dependency):
+            if not job.dependency.can_release(self.queue, running_jobs):
+                continue
+
+            released_job = self.waiting_dependency[i_job]
+            if released_job.qos.hold_job(released_job):
+                self.qos_held[released_job.qos].append(released_job.qos_resource_hold(self.time))
+            elif released_job.reservation:
+                self.reservations[released_job.reservation].append(
+                    released_job.priority(self.time)
+                )
+            else:
+                self.queue.append(released_job.priority(self.time))
+            released.append(i_job)
+
+        for i_job in sorted(released, reverse=True):
+            self.waiting_dependency.pop(i_job)
+
+    def _check_qos_holds(self, running_jobs):
+        for qos in self.qos_submit_held.keys():
+            if not self.qos_submit_held[qos]:
+                continue
+
+            released = []
+            for i_job, job in enumerate(self.qos_submit_held[qos]):
+                if job.qos.hold_job_submit_usr(job):
+                    continue
+
+                # Pretend the job is now resubmitted
+                job.submit_job(self.time)
+                released.append(i_job)
+
+                if job.dependency:
+                    if not job.dependency.can_release(self.queue, running_jobs):
+                        self.waiting_dependency.append(job.dependency_hold())
+                        continue
+
+                if job.qos.hold_job(job):
+                    self.qos_held[job.qos].append(job.qos_resource_hold(self.time))
+                    continue
+
+                if job.reservation:
+                    self.reservations[job.reservation].append(job.priority(self.time))
+                else:
+                    self.queue.append(job.priority(self.time))
+
+            for i_job in sorted(released, reverse=True):
+                self.qos_submit_held[qos].pop(i_job)
+
+        for qos in self.qos_held.keys():
+            # Dont need to check if we know nothing will be released
+            if (
+                not self.qos_held[qos] or
+                not qos.job_quota_remaining or
+                not qos.node_quota_remaining
+            ):
+                continue
+            self.qos_held[qos] = self.priority_sorter.sort(self.qos_held[qos], self.time)
+
+            released = []
+            for i_job, job in enumerate(self.qos_held[qos]):
+                if job.qos.hold_job_grp(job):
+                    break
+
+                # Lower priority jobs can be released if the job infront is only held by a per user
+                # limit
+                if job.qos.hold_job_usr(job):
+                    continue
+
+                if job.reservation:
+                    self.reservations[job.reservation].append(job.priority(self.time))
+                else:
+                    self.queue.append(job.priority(self.time))
+
+                released.append(i_job)
+
+            for i_job in sorted(released, reverse=True):
+                self.qos_held[qos].pop(i_job)
+
+    def _verify_reservations(self, valid_reservations):
+        removed_res, removed_res_cnt = set(), 0
+        for job in self.all_jobs:
+            if not job.reservation:
+                # short qos is reservationrequired
+                if job.qos.name == "short":
+                    job.reservation = "shortqos"
+                continue
+
+            if job.reservation not in valid_reservations:
+                removed_res.add(job.reservation)
+                removed_res_cnt += 1
+                job.reservation = ""
+                job.ignore_in_eval = True
+
+        print(
+            "Missing reservation records for {} resulting in ignoring reservations for" \
+            "{} jobs".format(removed_res, removed_res_cnt)
+        )
+
+    def _verify_dependencies(self):
+        removed_dep_cnt, ignored_dep_cnt = 0, 0
+        all_ids = { job.id for job in self.all_jobs }
+        for job in self.all_jobs:
+            if not job.dependency:
+                # Dependency hidden in batch file or just removed
+                if job.reason == "Dependency":
+                    job.ignore_in_eval = True
+                    ignored_dep_cnt += 1
+                continue
+
+            for dep_type, ids in job.dependency.conditions.items():
+                intersection = ids.intersection(all_ids)
+                job.dependency.conditions[dep_type] = intersection
+
+                # Job arrays need to be expanded into individual JobIDs
+                for unmatched_id in ids.difference(intersection):
+                    array_ids = {
+                        id for id in all_ids if re.match("{}_[0-9]".format(unmatched_id), id)
+                    }
+                    if array_ids:
+                        if job.dependency.delimiter == "?":
+                            raise NotImplemetedError(
+                                "Not implemented expanding job array ids for OR dependencies"
+                            )
+                        job.dependency.conditions[dep_type].update(array_ids)
+
+            job.dependency.conditions_met = not any(job.dependency.conditions.values())
+            if job.dependency.conditions_met and not job.dependency.singleton:
+                removed_dep_cnt += 1
+                job.dependency = None
+                if job.reason == "Dependency":
+                    job.ignore_in_eval = True
+                    ignored_dep_cnt += 1
+
+        print(
+            (
+                "Removed {} dependencies that cannot be satisfied from workload trace\n".format(
+                    removed_dep_cnt
+                )
+            ) +
+            (
+                "Ignored {} in evaulation due to dependency not being in SubmitLine or missing " \
+                "from workload trace".format(
+                    ignored_dep_cnt
+                )
+            )
+        )
+
     def _prep_job_data(self, data_path):
         df_jobs = pd.read_csv(
             data_path, delimiter='|', lineterminator='\n', header=0,
@@ -144,207 +345,6 @@ class Queue:
         ))
 
         return df_jobs
-
-    def _verify_reservations(self, valid_reservations):
-        removed_res, removed_res_cnt = set(), 0
-        for job in self.all_jobs:
-            if not job.reservation:
-                # short qos is reservationrequired
-                if job.qos.name == "short":
-                    job.reservation = "shortqos"
-                continue
-
-            if job.reservation not in valid_reservations:
-                removed_res.add(job.reservation)
-                removed_res_cnt += 1
-                job.reservation = ""
-                job.ignore_in_eval = True
-
-        print(
-            "Missing reservation records for {} resulting in ignoring reservations for" \
-            "{} jobs".format(removed_res, removed_res_cnt)
-        )
-
-    def _verify_dependencies(self):
-        removed_dep_cnt, ignored_dep_cnt = 0, 0
-        all_ids = { job.id for job in self.all_jobs }
-        for job in self.all_jobs:
-            if not job.dependency:
-                # Dependency hidden in batch file or just removed
-                if job.reason == "Dependency":
-                    job.ignore_in_eval = True
-                    ignored_dep_cnt += 1
-                continue
-
-            for dep_type, ids in job.dependency.conditions.items():
-                intersection = ids.intersection(all_ids)
-                job.dependency.conditions[dep_type] = intersection
-
-                # Job arrays need to be expanded into individual JobIDs
-                for unmatched_id in ids.difference(intersection):
-                    array_ids = {
-                        id for id in all_ids if re.match("{}_[0-9]".format(unmatched_id), id)
-                    }
-                    if array_ids:
-                        if job.dependency.delimiter == "?":
-                            raise NotImplemetedError(
-                                "Not implemented expanding job array ids for OR dependencies"
-                            )
-                        job.dependency.conditions[dep_type].update(array_ids)
-
-            job.dependency.conditions_met = not any(job.dependency.conditions.values())
-            if job.dependency.conditions_met and not job.dependency.singleton:
-                removed_dep_cnt += 1
-                job.dependency = None
-                if job.reason == "Dependency":
-                    job.ignore_in_eval = True
-                    ignored_dep_cnt += 1
-
-        print(
-            (
-                "Removed {} dependencies that cannot be satisfied from workload trace\n".format(
-                    removed_dep_cnt
-                )
-            ) +
-            (
-                "Ignored {} in evaulation due to dependency not being in SubmitLine or missing " \
-                "from workload trace".format(
-                    ignored_dep_cnt
-                )
-            )
-        )
-
-    def _check_dependencies(self, running_jobs):
-        released = []
-        for i_job, job in enumerate(self.waiting_dependency):
-            if not job.dependency.can_release(self.queue, running_jobs):
-                continue
-
-            released_job = self.waiting_dependency[i_job]
-            if released_job.qos.hold_job(released_job):
-                self.qos_held[released_job.qos].append(released_job.qos_resource_hold(self.time))
-            elif released_job.reservation:
-                self.reservations[released_job.reservation].append(
-                    released_job.priority(self.time)
-                )
-            else:
-                self.queue.append(released_job.priority(self.time))
-            released.append(i_job)
-
-        for i_job in sorted(released, reverse=True):
-            self.waiting_dependency.pop(i_job)
-
-    def _check_qos_holds(self, running_jobs):
-        for qos in self.qos_submit_held.keys():
-            if not self.qos_submit_held[qos]:
-                continue
-
-            released = []
-            for i_job, job in enumerate(self.qos_submit_held[qos]):
-                if job.qos.hold_job_submit_usr(job):
-                    continue
-
-                # Pretend the job is now resubmitted
-                job.submit_job(self.time)
-                released.append(i_job)
-
-                if job.dependency:
-                    if not job.dependency.can_release(self.queue, running_jobs):
-                        self.waiting_dependency.append(job.dependency_hold())
-                        continue
-
-                if job.qos.hold_job(job):
-                    self.qos_held[job.qos].append(job.qos_resource_hold(self.time))
-                    continue
-
-                if job.reservation:
-                    self.reservations[job.reservation].append(job.priority(self.time))
-                else:
-                    self.queue.append(job.priority(self.time))
-
-            for i_job in sorted(released, reverse=True):
-                self.qos_submit_held[qos].pop(i_job)
-
-        for qos in self.qos_held.keys():
-            # Dont need to check if we know nothing will be released
-            if (
-                not self.qos_held[qos] or
-                not qos.job_quota_remaining or
-                not qos.node_quota_remaining
-            ):
-                continue
-            self.qos_held[qos] = self.priority_sorter.sort(self.qos_held[qos], self.time)
-
-            released = []
-            for i_job, job in enumerate(self.qos_held[qos]):
-                if job.qos.hold_job_grp(job):
-                    break
-
-                # Lower priority jobs can be released if the job infront is only held by a per user
-                # limit
-                if job.qos.hold_job_usr(job):
-                    continue
-
-                if job.reservation:
-                    self.reservations[job.reservation].append(job.priority(self.time))
-                else:
-                    self.queue.append(job.priority(self.time))
-
-                released.append(i_job)
-
-            for i_job in sorted(released, reverse=True):
-                self.qos_held[qos].pop(i_job)
-
-    def step(self, time, running_jobs):
-        self.time = time
-
-        self._check_dependencies(running_jobs)
-        self._check_qos_holds(running_jobs)
-
-        if self.time < self.next_newjob():
-            # Still need to sort as there may be new jobs from dependency and qos releases
-            self.queue = self.priority_sorter.sort(self.queue, self.time)
-            return
-
-        try:
-            while self.all_jobs[0].submit <= self.time:
-                new_job = self.all_jobs.pop(0)
-
-                if new_job.qos.hold_job_submit_usr(new_job):
-                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
-                    continue
-
-                new_job.submit_job()
-
-                if new_job.dependency:
-                    if not new_job.dependency.can_release(self.queue, running_jobs):
-                        self.waiting_dependency.append(new_job.dependency_hold())
-                        continue
-
-                if new_job.qos.hold_job(new_job):
-                    self.qos_held[new_job.qos].append(new_job.qos_resource_hold(self.time))
-                    continue
-
-                if new_job.reservation:
-                    self.reservations[new_job.reservation].append(new_job.priority(self.time))
-                    continue
-
-                self.queue.append(new_job.priority(self.time))
-
-        except IndexError: # No more new jobs
-            pass
-
-        self.queue = self.priority_sorter.sort(self.queue, self.time)
-        for reservation in list(self.reservations.keys()):
-            self.reservations[reservation] = (
-                self.priority_sorter.sort(self.reservations[reservation], self.time)
-            )
-
-    def next_newjob(self):
-        try:
-            return self.all_jobs[0].submit
-        except IndexError:
-            return datetime.datetime.max
 
 
 class QOS:

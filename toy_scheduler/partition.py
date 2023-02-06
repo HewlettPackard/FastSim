@@ -5,6 +5,7 @@ import pandas as pd
 from helpers import convert_nodelist_to_node_nums
 
 
+# NOTE Do I really need this partitions class, not doing anything but hiding the data prep atm
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
         res_tuple = self._get_nodes_partitions(node_events_dump, res_dump)
@@ -112,8 +113,6 @@ class Partition:
         self.priority_weight = priority_weight # Normalised s.t. partition with greatest has 1
 
         self.nodes = []
-        self.backfill_only_nodes = []
-
 
     def add_node(self, node):
         node.partitions.append(self)

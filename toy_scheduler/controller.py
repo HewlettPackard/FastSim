@@ -238,85 +238,6 @@ class Controller:
 
         self._print_stats()
 
-    def _print_stats(self):
-        if not (self.time.hour != self.previous_print_hour and not self.time.hour % 3):
-            return
-
-        self.previous_print_hour = self.time.hour
-        print(
-            "{} (step {}):\n".format(self.time, self.step_cnt) +
-            "Idle Nodes = {} (highmem {})\tNodesReserved = {}(Idle = {})\t" \
-            "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
-            "NodesDown = {}\tPower = {:.4f} MW\n".format(
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.free and "standard" in [
-                            partition.name for partition in node.partitions
-                        ]
-                    )
-                ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.free and "highmem" in [
-                            partition.name for partition in node.partitions
-                        ]
-                    )
-                ),
-                sum(1 for node in self.partitions.nodes if node.reservation),
-                sum(
-                   1 for node in self.partitions.nodes if (
-                        node.reservation and not node.running_job and not node.down
-                    )
-                ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.reservation_schedule and
-                        "HPE_RestricLongJobs" in [
-                            res_sched[2] for res_sched in node.reservation_schedule
-                        ]
-                    )
-                ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.reservation_schedule and
-                        "HPE_RestricLongJobs" in [
-                            res_sched[2] for res_sched in node.reservation_schedule
-                        ] and
-                        not node.running_job and not node.down
-                    )
-                ),
-                sum(1 for node in self.down_nodes if not node.running_job),
-                self.power_usage
-            ) +
-            "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) " \
-            "dependency {} qos holds {} (".format(
-                (
-                    len(self.queue.queue) +
-                    len(self.queue.waiting_dependency) +
-                    sum(len(jobs) for jobs in self.queue.qos_held.values())
-                ),
-                len(self.queue.queue),
-                sum(1 for job in self.queue.queue if job.partition == "highmem"),
-                sum(1 for job in self.queue.queue if job.qos.name == "lowpriority"),
-                len(self.queue.waiting_dependency),
-                sum(len(jobs) for jobs in self.queue.qos_held.values())
-            ) +
-            " ".join(
-                "{}={}".format(
-                    qos.name, len(jobs)
-                ) for qos, jobs in self.queue.qos_held.items() if len(jobs)
-            ) +
-            ") qos submit holds {} (".format(
-                sum(len(jobs) for jobs in self.queue.qos_submit_held.values())
-            ) +
-            " ".join(
-                "{}={}".format(
-                    qos.name, len(jobs)
-                ) for qos, jobs in self.queue.qos_submit_held.items() if len(jobs)
-            ) +
-            "))\tRunningJobs = {}\n".format(len(self.running_jobs))
-        )
-
     def _submit(self, job, nodes=None):
         self.running_jobs.append(job)
         self.power_usage += job.true_node_power * job.nodes / 1e+6
@@ -344,6 +265,12 @@ class Controller:
             raise Exception("bruh")
 
         return True
+
+    def _check_finished_jobs(self):
+        self.finished_jobs_step = []
+        while self.running_jobs and self.running_jobs[0].end <= self.time:
+            self.finished_jobs_step.append(self.running_jobs.pop(0))
+            self.finished_jobs_step[-1].end_job()
 
     def _get_backfill_jobs(self, partition_free_nodes):
         backfill_now = []
@@ -489,12 +416,6 @@ class Controller:
 
         return backfill_now
 
-    def _check_finished_jobs(self):
-        self.finished_jobs_step = []
-        while self.running_jobs and self.running_jobs[0].end <= self.time:
-            self.finished_jobs_step.append(self.running_jobs.pop(0))
-            self.finished_jobs_step[-1].end_job()
-
     def _check_down_nodes(self):
         try:
             while self.down_nodes and self.down_nodes[0].up_time <= self.time:
@@ -576,4 +497,83 @@ class Controller:
 
             self.reserved_nodes.append(node)
             self.reserved_nodes.sort(key=lambda node: node.unreserved_time)
+
+    def _print_stats(self):
+        if not (self.time.hour != self.previous_print_hour and not self.time.hour % 3):
+            return
+
+        self.previous_print_hour = self.time.hour
+        print(
+            "{} (step {}):\n".format(self.time, self.step_cnt) +
+            "Idle Nodes = {} (highmem {})\tNodesReserved = {}(Idle = {})\t" \
+            "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
+            "NodesDown = {}\tPower = {:.4f} MW\n".format(
+                sum(
+                    1 for node in self.partitions.nodes if (
+                        node.free and "standard" in [
+                            partition.name for partition in node.partitions
+                        ]
+                    )
+                ),
+                sum(
+                    1 for node in self.partitions.nodes if (
+                        node.free and "highmem" in [
+                            partition.name for partition in node.partitions
+                        ]
+                    )
+                ),
+                sum(1 for node in self.partitions.nodes if node.reservation),
+                sum(
+                   1 for node in self.partitions.nodes if (
+                        node.reservation and not node.running_job and not node.down
+                    )
+                ),
+                sum(
+                    1 for node in self.partitions.nodes if (
+                        node.reservation_schedule and
+                        "HPE_RestricLongJobs" in [
+                            res_sched[2] for res_sched in node.reservation_schedule
+                        ]
+                    )
+                ),
+                sum(
+                    1 for node in self.partitions.nodes if (
+                        node.reservation_schedule and
+                        "HPE_RestricLongJobs" in [
+                            res_sched[2] for res_sched in node.reservation_schedule
+                        ] and
+                        not node.running_job and not node.down
+                    )
+                ),
+                sum(1 for node in self.down_nodes if not node.running_job),
+                self.power_usage
+            ) +
+            "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) " \
+            "dependency {} qos holds {} (".format(
+                (
+                    len(self.queue.queue) +
+                    len(self.queue.waiting_dependency) +
+                    sum(len(jobs) for jobs in self.queue.qos_held.values())
+                ),
+                len(self.queue.queue),
+                sum(1 for job in self.queue.queue if job.partition == "highmem"),
+                sum(1 for job in self.queue.queue if job.qos.name == "lowpriority"),
+                len(self.queue.waiting_dependency),
+                sum(len(jobs) for jobs in self.queue.qos_held.values())
+            ) +
+            " ".join(
+                "{}={}".format(
+                    qos.name, len(jobs)
+                ) for qos, jobs in self.queue.qos_held.items() if len(jobs)
+            ) +
+            ") qos submit holds {} (".format(
+                sum(len(jobs) for jobs in self.queue.qos_submit_held.values())
+            ) +
+            " ".join(
+                "{}={}".format(
+                    qos.name, len(jobs)
+                ) for qos, jobs in self.queue.qos_submit_held.items() if len(jobs)
+            ) +
+            "))\tRunningJobs = {}\n".format(len(self.running_jobs))
+        )
 
