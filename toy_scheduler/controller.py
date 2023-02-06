@@ -317,21 +317,13 @@ class Controller:
         )
 
         max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
-        partition_num_tested = defaultdict(int)
-        # Dont consider jobs that require partitions with no available nodes
-        partition_maxes = {
-            partition.name : (
-                self.config.bf_max_job_test if partition_free_nodes[partition] else 0
-            ) for partition in self.partitions.partitions
-        }
         for i_job, job in enumerate(self.queue.queue):
             # break if no blocks or only <= min blocks available for immediate backfill
             if max_block_time < min_required_block_time:
                 break
 
-            if partition_num_tested[job.partition] >= partition_maxes[job.partition]:
-                continue
-            partition_num_tested[job.partition] += 1
+            if i_job >= self.config.bf_max_job_test:
+                break
 
             reqtime = job.reqtime + self.config.bf_resolution
             # Only need to plan nodes for jobs that may be relevant to immediate scheduling
@@ -342,10 +334,15 @@ class Controller:
             selected_intervals = {}
 
             # for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
-            # NOTE Earliest starting first, then sort by earliest end for reproducibility 
-            for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0]):
+            # NOTE Earliest starting first, then sort by earliest end for reproducibility
+            for interval, nodes in sorted(free_blocks.items(), key=lambda block: block[0]):
+                # valid_nodes = [
+                #         node for node in sorted(nodes, key=lambda node: node.id) if (
+                #         self.partitions.get_partition_by_name(job.partition) in node.partitions
+                #     )
+                # ]
                 valid_nodes = [
-                        node for node in sorted(nodes, key=lambda node: node.id) if (
+                        node for node in nodes if (
                         self.partitions.get_partition_by_name(job.partition) in node.partitions
                     )
                 ]
@@ -366,9 +363,14 @@ class Controller:
 
                     usage_block_end = usage_block_start + reqtime
 
-                    # Remove nodes we don't need from the latest interval added
-                    for i in range(num_free_nodes - job.nodes):
-                        selected_intervals[latest_interval].pop()
+                    # Remove nodes we don't need from the latest interval added, sort first for
+                    # reproducibility
+                    if num_free_nodes != job.nodes:
+                        selected_intervals[latest_interval] = set(
+                                sorted(
+                                    selected_intervals[latest_interval], key=lambda node: node.id
+                                )[num_free_nodes - job.nodes:]
+                        )
 
                     if usage_block_start == self.time:
                         backfill_now.append(
@@ -378,25 +380,27 @@ class Controller:
                             )
                         )
 
-                    for key, nodes in selected_intervals.items():
-                        free_blocks[key] -= set(nodes)
+                    for selected_interval, nodes in selected_intervals.items():
+                        free_blocks[selected_interval] -= set(nodes)
 
                         # The original ready now block has been broken and the interval needs
                         # redefining
-                        if key[0] == self.time:
-                            if not free_blocks[key]:
-                                free_blocks_ready_intervals.remove((key[0], key[1]))
-                            if key[0] != usage_block_start:
-                                free_blocks_ready_intervals.add((key[0], usage_block_start))
+                        if selected_interval[0] == self.time:
+                            if not free_blocks[selected_interval]:
+                                free_blocks_ready_intervals.remove(selected_interval)
+                            if interval[0] != usage_block_start:
+                                free_blocks_ready_intervals.add(
+                                    (selected_interval[0], usage_block_start)
+                                )
 
-                        if key[0] != usage_block_start:
-                            free_blocks[(key[0], usage_block_start)].update(nodes)
-                        if key[1] != usage_block_end:
-                            free_blocks[(usage_block_end, key[1])].update(nodes)
+                        if selected_interval[0] != usage_block_start:
+                            free_blocks[(selected_interval[0], usage_block_start)].update(nodes)
+                        if selected_interval[1] != usage_block_end:
+                            free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
 
-                        # These nodes are now reserved, delete block if this leaves nothing left
-                        if not free_blocks[key]:
-                            free_blocks.pop(key)
+                        # These nodes are now planned, delete block if this leaves nothing left
+                        if not free_blocks[selected_interval]:
+                            free_blocks.pop(selected_interval)
 
                     if not free_blocks_ready_intervals:
                         return backfill_now
