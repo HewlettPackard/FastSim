@@ -15,6 +15,14 @@ def main(args):
 
     controller.run_sim()
 
+    print_sim_result(controller)
+
+    if args.dump_sim_to:
+        with open(args.dump_sim_to, "wb") as f:
+            pickle.dump(data, f)
+
+
+def print_sim_result(controller):
     max_submit = max(controller.job_history, key=lambda job: job.submit).true_submit
     job_history = [
         job for job in controller.job_history if (
@@ -70,6 +78,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("config_file", type=str)
+
+    parser.add_argument("--dump_sim_to", type=str, default="", help="Pickle Controller after sim")
 
     args = parser.parse_args()
 
