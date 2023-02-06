@@ -9,10 +9,8 @@ from helpers import convert_nodelist_to_node_nums
 # NOTE Do I really need this partitions class, not doing anything but hiding the data prep atm
 class Partitions:
     def __init__(self, node_events_dump, res_dump):
-        res_tuple = self._get_nodes_partitions(node_events_dump, res_dump)
-        self.nodes, self.partitions, self.valid_reservations, self.hpe_restrictlong_nodes = (
-            res_tuple
-        )
+        ret_tuple = self._get_nodes_partitions(node_events_dump, res_dump)
+        self.nodes, self.partitions, self.valid_reservations = ret_tuple
 
         self.reservations = defaultdict(list)
 
@@ -82,7 +80,7 @@ class Partitions:
         partitions = {
             "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
         }
-        nodes, hpe_restrictlong_nids = [], []
+        nodes = []
         for nid in range(1000, 6860):
             down_schedule = []
             for _, row in df_events.loc[(df_events.Id == nid)].iterrows():
@@ -94,7 +92,6 @@ class Partitions:
                 # Think this behaviour is being controlled by a maintenance script running in a
                 # screen session
                 if row.RESV_NAME == "HPE_RestrictLongJobs":
-                    hpe_restrictlong_nids.append(nid)
                     continue
                 reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
             reservation_schedule.sort(key=lambda schedule: schedule[0])
@@ -126,10 +123,7 @@ class Partitions:
                 )
             partitions["standard"].add_node(nodes[-1])
 
-        return (
-            nodes, list(partitions.values()), valid_reservations,
-            [ node for node in nodes if node.id in hpe_restrictlong_nids ]
-        )
+        return nodes, list(partitions.values()), valid_reservations
 
 
 class Partition:

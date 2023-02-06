@@ -11,7 +11,7 @@ defaults = {
     "bf_max_job_test" : 500, "bf_window" : 1440, "bf_interval" : 30, "bf_max_time" : 30,
     "bf_yield_interval" : 2000000, "bf_yield_sleep" : 500000, "bf_continue" : False,
     "slowdown_with_queuesize" : False, "sched_interval_perpendingjob" : 0.028,
-    "bf_time_perpriorityjob" : 0.1125
+    "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlongjobs_sliding_reservations" : ""
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
@@ -23,7 +23,7 @@ vals_min=["bd_threshold", "PriorityCalcPeriod", "bf_window"]
 
 # TODO Include node/partition information dump once setup to read this
 mandatory_fields = set(
-    ["plot_dir", "assocs_dump", "node_events_dump", "reservations_dump", "job_dump" ]
+    ["plot_dir", "assocs_dump", "node_events_dump", "reservations_dump", "job_dump"]
 )
 
 
