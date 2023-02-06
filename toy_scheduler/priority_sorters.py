@@ -40,7 +40,7 @@ class MFPrioritySorter:
             self.priority_factors.append(self._qos_priority)
 
     def sort(self, queue, time):
-        # The key means first sort by partition priority tier, them sort my MF priority
+        # The key means first sort by partition priority tier, then sort my MF priority
         # Should probably sort this out -_-
         self.time = time
         if self.no_partition_priority_tiers:

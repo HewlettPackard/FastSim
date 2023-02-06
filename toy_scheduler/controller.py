@@ -145,16 +145,6 @@ class Controller:
         if fairtree:
             self.fairtree.fairshare_calc(self.running_jobs, self.time)
 
-        # TODO A way to not have iterate over all nodes everytime. Need to store which nodes are
-        # free as they go free or not free without needing to resort to maintain correct node
-        # weights
-        if sched or bf:
-            partition_free_nodes = {
-                partition : [ node for node in partition.nodes if node.free ] for partition in (
-                    self.partitions.partitions
-                )
-            }
-
         # NOTE Put these into methods
         self.submitted_jobs_step = []
         if sched:
@@ -182,8 +172,8 @@ class Controller:
 
                     self.submitted_jobs_step.append(job)
 
+            partition_free_nodes = self.partitions.get_partition_free_nodes()
             partitions_full = set()
-
             jobs_submitted = []
             # NOTE This implementation is a little weird since I need to maintain node ordering
             # according to its weight in a partition
@@ -219,8 +209,8 @@ class Controller:
             for i in sorted(jobs_submitted, reverse=True):
                 self.submitted_jobs_step.append(self.queue.queue.pop(i))
 
-        if bf and self.queue.queue and any(partition_free_nodes.values()):
-            backfill_now = self._get_backfill_jobs(partition_free_nodes)
+        if bf and self.queue.queue:
+            backfill_now = self._get_backfill_jobs(self.partitions.get_partition_free_nodes())
             for i_job, nodes in backfill_now:
                 job_ready = self.queue.queue[i_job]
                 self._submit(job_ready.start_job(self.time), nodes=nodes)
@@ -351,7 +341,9 @@ class Controller:
             num_free_nodes = 0
             selected_intervals = {}
 
-            for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
+            # for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
+            # NOTE Earliest starting first, then sort by earliest end for reproducibility 
+            for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0]):
                 valid_nodes = [
                         node for node in sorted(nodes, key=lambda node: node.id) if (
                         self.partitions.get_partition_by_name(job.partition) in node.partitions
