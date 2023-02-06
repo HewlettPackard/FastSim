@@ -31,7 +31,6 @@ class Controller:
 
         self.job_history = []
         self.running_jobs = []
-        self.finished_jobs_step = []
         self.submitted_jobs_step = []
 
         self.down_nodes = []
@@ -125,18 +124,9 @@ class Controller:
         # time at the correct time
 
         self._check_finished_jobs()
-        for job in self.finished_jobs_step:
-            self.fairtree.job_finish_usage_update(job)
-            self.job_history.append(job)
-            self.power_usage -= job.true_node_power * job.nodes / 1e+6
-            self.total_energy += (
-                job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
-            )
 
         self._check_down_nodes()
         self._check_reservations()
-
-        self.running_jobs.sort(key=lambda job: job.end)
 
         # NOTE Changes to dependencies and qos implementations should mean I won't have to pass all
         # of this
@@ -257,10 +247,15 @@ class Controller:
         return True
 
     def _check_finished_jobs(self):
-        self.finished_jobs_step = []
         while self.running_jobs and self.running_jobs[0].end <= self.time:
-            self.finished_jobs_step.append(self.running_jobs.pop(0))
-            self.finished_jobs_step[-1].end_job()
+            job = self.running_jobs.pop(0)
+            job.end_job()
+            self.fairtree.job_finish_usage_update(job)
+            self.job_history.append(job)
+            self.power_usage -= job.true_node_power * job.nodes / 1e+6
+            self.total_energy += (
+                job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
+            )
 
     def _get_backfill_jobs(self, partition_free_nodes):
         backfill_now = []
@@ -298,6 +293,7 @@ class Controller:
 
         if not free_blocks_ready_intervals:
             return backfill_now
+
         for job in self.running_jobs:
             # Some jobs exceeding timelimit and some with zero reqtime
             if job.endlimit <= self.time:
@@ -336,27 +332,24 @@ class Controller:
             # for interval, nodes in sorted(free_blocks.items(), key=lambda entry: entry[0][0]):
             # NOTE Earliest starting first, then sort by earliest end for reproducibility
             for interval, nodes in sorted(free_blocks.items(), key=lambda block: block[0]):
-                # valid_nodes = [
-                #         node for node in sorted(nodes, key=lambda node: node.id) if (
-                #         self.partitions.get_partition_by_name(job.partition) in node.partitions
-                #     )
-                # ]
-                valid_nodes = [
-                        node for node in nodes if (
+                valid_nodes = {
+                    node for node in nodes if (
                         self.partitions.get_partition_by_name(job.partition) in node.partitions
                     )
-                ]
+                }
                 if valid_nodes:
                     selected_intervals[interval] = valid_nodes
                     num_free_nodes += len(valid_nodes)
-                    latest_interval = interval
 
                 if job.nodes <= num_free_nodes:
-                    usage_block_start = max(selected_intervals.keys(), key=lambda key: key[0])[0]
+                    usage_block_start = max(
+                        selected_intervals.keys(),
+                        key=lambda selected_interval: selected_interval[0]
+                    )[0]
 
-                    for interval in list(selected_intervals.keys()):
-                        if usage_block_start + reqtime > interval[1]:
-                            num_free_nodes -= len(selected_intervals.pop(interval))
+                    for selected_interval in list(selected_intervals.keys()):
+                        if usage_block_start + reqtime > selected_interval[1]:
+                            num_free_nodes -= len(selected_intervals.pop(selected_interval))
 
                     if job.nodes > num_free_nodes:
                         continue
@@ -366,9 +359,9 @@ class Controller:
                     # Remove nodes we don't need from the latest interval added, sort first for
                     # reproducibility
                     if num_free_nodes != job.nodes:
-                        selected_intervals[latest_interval] = set(
+                        selected_intervals[interval] = set(
                                 sorted(
-                                    selected_intervals[latest_interval], key=lambda node: node.id
+                                    selected_intervals[interval], key=lambda node: node.id
                                 )[num_free_nodes - job.nodes:]
                         )
 
@@ -381,14 +374,14 @@ class Controller:
                         )
 
                     for selected_interval, nodes in selected_intervals.items():
-                        free_blocks[selected_interval] -= set(nodes)
+                        free_blocks[selected_interval] -= nodes
 
                         # The original ready now block has been broken and the interval needs
                         # redefining
                         if selected_interval[0] == self.time:
                             if not free_blocks[selected_interval]:
                                 free_blocks_ready_intervals.remove(selected_interval)
-                            if interval[0] != usage_block_start:
+                            if selected_interval[0] != usage_block_start:
                                 free_blocks_ready_intervals.add(
                                     (selected_interval[0], usage_block_start)
                                 )
@@ -413,13 +406,9 @@ class Controller:
         return backfill_now
 
     def _check_down_nodes(self):
-        try:
-            while self.down_nodes and self.down_nodes[0].up_time <= self.time:
-                node = self.down_nodes.pop(0)
-                node.set_up()
-        except:
-            print(self.down_nodes[0].id, self.down_nodes, self.down_nodes[0].up_time, self.time)
-            raise TypeError
+        while self.down_nodes and self.down_nodes[0].up_time <= self.time:
+            node = self.down_nodes.pop(0)
+            node.set_up()
 
         while self.node_down_order and self.node_down_order[0].down_schedule[0][0] <= self.time:
             node = self.node_down_order[0]

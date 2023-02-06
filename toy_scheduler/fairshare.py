@@ -205,9 +205,9 @@ class FairTree:
     def fairshare_calc(self, running_jobs, time):
         # Collect usages from running jobs
         for job in running_jobs:
-            node = self.uniq_users[job.account][job.user]
-            usage = job.nodes * (time - max(self.last_calc_time, job.start)).total_seconds() # TODO node->cpu seconds
-            self._update_usages(node, usage)
+            user_node = self.uniq_users[job.account][job.user]
+            usage = job.nodes * (time - max(self.last_calc_time, job.start)).total_seconds()
+            self._update_usages(user_node, usage)
 
         self.current_period_num += 1
         self.last_calc_time = time
