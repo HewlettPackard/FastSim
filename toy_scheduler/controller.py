@@ -61,12 +61,35 @@ class Controller:
                     submitted + timedelta(hours=1, minutes=5),
                     submitted + timedelta(days=365, hours=1, minutes=5),
                     [ nid_to_node[nid] for nid in hpe_restrictlong_res[submitted] ],
-                    "HPE_RestricLongJobs"
+                    "HPE_RestrictLongJobs"
                 ] for submitted in sorted(hpe_restrictlong_res)
             ]
 
         else:
-            self.sliding_reservations = []
+            self.sliding_reservations = [
+                [
+                    submitted, submitted, submitted + timedelta(hours=1),
+                    submitted + timedelta(hours=1, minutes=5),
+                    submitted + timedelta(days=365, hours=1, minutes=5),
+                    self.partitions.hpe_restrictlong_nodes, "HPE_RestrictLongJobs"
+                ] for submitted in [
+                    (
+                        self.init_time.replace(minute=0, second=0) - timedelta(minutes=5) +
+                        timedelta(hours=hr_num)
+                    ) for hr_num in (
+                        range(int(
+                            (
+                                max(
+                                    self.queue.all_jobs,
+                                    key=lambda job: job.true_job_start
+                                ).true_job_start -
+                                self.time
+                            ).total_seconds() /
+                            (60 * 60)
+                        ))
+                    )
+                ]
+            ]
 
         self.step_cnt = 0
         self.previous_print_hour = self.time.hour
@@ -406,80 +429,84 @@ class Controller:
             selected_intervals = {}
 
             # NOTE Earliest starting first, then sort by earliest end for reproducibility
-            for interval, nodes in sorted(free_blocks.items(), key=lambda block: block[0]):
-                valid_nodes = { node for node in nodes if job.partition in node.partitions }
-                if valid_nodes:
-                    selected_intervals[interval] = valid_nodes
-                    num_free_nodes += len(valid_nodes)
+            try:
+                for interval, nodes in sorted(free_blocks.items(), key=lambda block: block[0]):
+                    valid_nodes = { node for node in nodes if job.partition in node.partitions }
+                    if valid_nodes:
+                        selected_intervals[interval] = valid_nodes
+                        num_free_nodes += len(valid_nodes)
 
-                if job.nodes <= num_free_nodes:
-                    usage_block_start = max(
-                        selected_intervals.keys(),
-                        key=lambda selected_interval: selected_interval[0]
-                    )[0]
-                    usage_block_end = usage_block_start + reqtime
+                    if job.nodes <= num_free_nodes:
+                        usage_block_start = max(
+                            selected_intervals.keys(),
+                            key=lambda selected_interval: selected_interval[0]
+                        )[0]
+                        usage_block_end = usage_block_start + reqtime
 
-                    # Remove blocks that do not remain free long enough for job to run
-                    for selected_interval in list(selected_intervals.keys()):
-                        if usage_block_end > selected_interval[1]:
-                            num_free_nodes -= len(selected_intervals.pop(selected_interval))
+                        # Remove blocks that do not remain free long enough for job to run
+                        for selected_interval in list(selected_intervals.keys()):
+                            if usage_block_end > selected_interval[1]:
+                                num_free_nodes -= len(selected_intervals.pop(selected_interval))
 
-                    if job.nodes > num_free_nodes:
-                        continue
+                        if job.nodes > num_free_nodes:
+                            continue
 
-                    # Remove nodes we don't need from the latest interval added, sort first for
-                    # reproducibility
-                    if num_free_nodes != job.nodes:
-                        selected_intervals[interval] = set(
-                                sorted(
-                                    selected_intervals[interval], key=lambda node: node.id
-                                )[num_free_nodes - job.nodes:]
-                        )
-
-                    if usage_block_start == self.time:
-                        backfill_now.append(
-                            (
-                                i_job,
-                                { node for nodes in selected_intervals.values() for node in nodes }
+                        # Remove nodes we don't need from the latest interval added, sort first for
+                        # reproducibility
+                        if num_free_nodes != job.nodes:
+                            selected_intervals[interval] = set(
+                                    sorted(
+                                        selected_intervals[interval], key=lambda node: node.id
+                                    )[num_free_nodes - job.nodes:]
                             )
-                        )
 
-                    for selected_interval, nodes in selected_intervals.items():
-                        free_blocks[selected_interval] -= nodes
+                        if usage_block_start == self.time:
+                            backfill_now.append(
+                                (
+                                    i_job,
+                                    { node for nodes in selected_intervals.values() for node in nodes }
+                                )
+                            )
 
-                        # The original ready now block has been broken and the interval needs
-                        # redefining
-                        if selected_interval[0] == self.time:
+                        for selected_interval, nodes in selected_intervals.items():
+                            free_blocks[selected_interval] -= nodes
+
+                            # The original ready now block has been broken and the interval needs
+                            # redefining
+                            if selected_interval[0] == self.time:
+                                if not free_blocks[selected_interval]:
+                                    free_blocks_ready_intervals.remove(selected_interval)
+                                if selected_interval[0] != usage_block_start:
+                                    free_blocks_ready_intervals.add(
+                                        (selected_interval[0], usage_block_start)
+                                    )
+
+                            # Dont consider free blocks starting beyond bf_max_window
+                            if selected_interval[0] < window_end:
+                                if selected_interval[0] != usage_block_start:
+                                    free_blocks[(selected_interval[0], usage_block_start)].update(
+                                        nodes
+                                    )
+                                if (
+                                    selected_interval[1] != usage_block_end and
+                                    usage_block_end < window_end
+                                ):
+                                    free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
+
+                            # These nodes are now planned, delete block if this leaves nothing left
                             if not free_blocks[selected_interval]:
-                                free_blocks_ready_intervals.remove(selected_interval)
-                            if selected_interval[0] != usage_block_start:
-                                free_blocks_ready_intervals.add(
-                                    (selected_interval[0], usage_block_start)
-                                )
+                                free_blocks.pop(selected_interval)
 
-                        # Dont consider free blocks starting beyond bf_max_window
-                        if selected_interval[0] < window_end:
-                            if selected_interval[0] != usage_block_start:
-                                free_blocks[(selected_interval[0], usage_block_start)].update(
-                                    nodes
-                                )
-                            if (
-                                selected_interval[1] != usage_block_end and
-                                usage_block_end < window_end
-                            ):
-                                free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
+                        if not free_blocks_ready_intervals:
+                            return backfill_now
+                        max_block_time = max(
+                            free_blocks_ready_intervals, key=lambda interval: interval[1]
+                        )[1]
 
-                        # These nodes are now planned, delete block if this leaves nothing left
-                        if not free_blocks[selected_interval]:
-                            free_blocks.pop(selected_interval)
+                        break
+            except:
+                print(free_blocks.keys())
 
-                    if not free_blocks_ready_intervals:
-                        return backfill_now
-                    max_block_time = max(
-                        free_blocks_ready_intervals, key=lambda interval: interval[1]
-                    )[1]
-
-                    break
 
         return backfill_now
 
@@ -570,7 +597,7 @@ class Controller:
         self.previous_print_hour = self.time.hour
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
-            "Idle Nodes = {} (highmem {})\tNodesReserved = {}(Idle = {})\t" \
+            "Idle Nodes = {} (highmem {})\tNodesReserved = {} (Idle = {})\t" \
             "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
                 sum(
@@ -596,7 +623,7 @@ class Controller:
                 sum(
                     1 for node in self.partitions.nodes if (
                         node.reservation_schedule and
-                        "HPE_RestricLongJobs" in [
+                        "HPE_RestrictLongJobs" in [
                             res_sched[2] for res_sched in node.reservation_schedule
                         ]
                     )
@@ -604,7 +631,7 @@ class Controller:
                 sum(
                     1 for node in self.partitions.nodes if (
                         node.reservation_schedule and
-                        "HPE_RestricLongJobs" in [
+                        "HPE_RestrictLongJobs" in [
                             res_sched[2] for res_sched in node.reservation_schedule
                         ] and
                         not node.running_job and not node.down

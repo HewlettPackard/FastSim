@@ -2,7 +2,7 @@ plot_dir: "/work/y02/y02/awilkins/archer2_jobdata/plots"
 assocs_dump: "/work/y02/y02/awilkins/sacct_archer2_assocs_230129.csv"
 node_events_dump: "/work/y02/y02/awilkins/sacctmgr_events_221019-230129.csv"
 reservations_dump: "/work/y02/y02/awilkins/sinfo_reservations_070223.csv"
-job_dump: "/work/y02/y02/awilkins/sacct_2022-10-19_2022-11-09_allocations_noconvert.txt"
+job_dump: "/work/y02/y02/awilkins/sacct_2022-10-19_2023-01-29_allocations_noconvert.txt"
 
 # "hpe_restrictlongjobs_sliding_reservations" : "/work/y02/y02/awilkins/archer2_jobdata/hpe_restrictlongjobs_schedule/sacct_2022-10-19_2022-11-09_allocations_noconvert_nids_hperestrictlongjobs_slidingres.pkl"
 

@@ -55,6 +55,7 @@ def timelimit_str_to_timedelta(t_str):
     elif t_str.count(":") == 2: ## HH:MM:SS (SS has no decimal place for these ones)
         hrs, mins, secs = map(int, t_str.split(":"))
     else:
+        print(t_str)
         raise NotImplementedError("Bruh")
 
     return timedelta(days=days, hours=hrs, minutes=mins, seconds=secs)

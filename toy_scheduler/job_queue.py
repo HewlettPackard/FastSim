@@ -338,7 +338,7 @@ class Queue:
         )
 
         # Some error in slurm accounting, can correct for case of one other user in account
-        num_fixed = 0
+        num_broken, num_fixed = len(df_jobs.loc[(df_jobs.User == "00:00:00")]), 0
         for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
             acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
             if len(acc_users) == 2:
@@ -346,9 +346,7 @@ class Queue:
                 df_jobs.at[i, "User"] = (
                     acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
                 )
-        print("Corrected {} of {} users with name 00:00:00".format(
-            num_fixed, len(df_jobs.loc[(df_jobs.User == "00:00:00")])
-        ))
+        print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
 
         return df_jobs
 
@@ -562,7 +560,7 @@ class Dependency:
 
             if "after" in self.conditions.keys():
                 for job in list(self.conditions["after"]):
-                    if job.state != JobState.COMPLETED and job.state != RUNNING:
+                    if job.state != JobState.COMPLETED and job.state != JobState.RUNNING:
                         continue
                     self.conditions["after"].remove(job)
                     if self.delimiter == "?":

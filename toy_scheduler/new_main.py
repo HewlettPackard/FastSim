@@ -1,5 +1,6 @@
 import argparse
 from datetime import timedelta
+import dill as pickle
 
 import numpy as np
 
@@ -19,7 +20,7 @@ def main(args):
 
     if args.dump_sim_to:
         with open(args.dump_sim_to, "wb") as f:
-            pickle.dump(data, f)
+            pickle.dump(controller, f)
 
 
 def print_sim_result(controller):
