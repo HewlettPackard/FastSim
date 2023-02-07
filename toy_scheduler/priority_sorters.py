@@ -7,7 +7,7 @@ from partition import Partition
 class MFPrioritySorter:
     def __init__(
         self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
-        fairshare_weight, max_age, partition_weight, qos_weight
+        fairshare_weight, max_age, partition_weight, qos_weight, no_partition_priority_tiers
     ):
         self.size_weight = size_weight / 5860
         self.age_weight = age_weight
@@ -19,14 +19,8 @@ class MFPrioritySorter:
 
         self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
 
-        # NOTE Hardcoded for now - sort this out
-        self.partitions = {
-            "standard" : Partition("standard", 1, 1.0), "highmem" : Partition("highmem", 1, 1.0)
-        }
-
-        self.no_partition_priority_tiers = (
-            len({ partition.priority_tier for partition in self.partitions.values() }) == 1
-        )
+        # Relevant for ARCHER2
+        self.no_partition_priority_tiers = no_partition_priority_tiers
         self.priority_factors = []
         if size_weight:
             self.priority_factors.append(self._size_priority)
@@ -40,32 +34,26 @@ class MFPrioritySorter:
             self.priority_factors.append(self._qos_priority)
 
     def sort(self, queue, time):
-        # The key means first sort by partition priority tier, then sort my MF priority
-        # Should probably sort this out -_-
         self.time = time
         if self.no_partition_priority_tiers:
-            sorted_queue = sorted(
-                queue,
+            queue.sort(
                 key=lambda job: (
                     sum(priority_calc(job) for priority_calc in self.priority_factors), job.id
-                ),
-                reverse=True
+                )
             )
-            return sorted_queue
+            return
 
-        sorted_queue = sorted(
-            queue,
+        queue.sort(
             key=lambda job: (
                 self._partition_priority_tier(job),
                 sum(priority_calc(job) for priority_calc in self.priority_factors),
                 job.id
             ),
-            reverse=True
         )
-        return sorted_queue
+        return
 
     def _partition_priority_tier(self, job):
-        return self.partitions[job.partition].priority_tier
+        return job.partition.priority_tier
 
     def _age_priority(self, job):
         return (

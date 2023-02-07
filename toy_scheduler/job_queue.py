@@ -13,7 +13,6 @@ class Queue:
         self.priority_sorter = priority_sorter
 
         # hardcoded for now
-        # Don't have a proper way to simulate reservations as I can't see a history of deleted ones
         self.qoss = {
             "normal" : QOS("normal", 0, -1, -1, -1, -1, -1),
             "reservation" : QOS("reservation", 0.1, -1, -1, -1, -1, -1),
@@ -37,7 +36,7 @@ class Queue:
                 job_row.JobName, job_row.Reason, job_row.ReservationArg, job_row.BeginArg
             ) for _, job_row in df_jobs.iterrows()
         ]
-        self.all_jobs.sort(key=lambda job: (job.submit, job.id))
+        self.all_jobs.sort(key=lambda job: (job.submit, job.id), reverse=True)
         # NOTE verify with jid first to ensure all jids have a Job in the data
         self._verify_dependencies()
         jid_to_job = { job.id : job for job in self.all_jobs }
@@ -58,7 +57,7 @@ class Queue:
 
     def next_newjob(self):
         try:
-            return self.all_jobs[0].submit
+            return self.all_jobs[-1].submit
         except IndexError:
             return datetime.datetime.max
 
@@ -75,12 +74,12 @@ class Queue:
 
         if self.time < self.next_newjob():
             if len(self.queue) != pre_step_priority_len:
-                self.queue = self.priority_sorter.sort(self.queue, self.time)
+                self.priority_sorter.sort(self.queue, self.time)
             return
 
         try:
-            while self.all_jobs[0].submit <= self.time:
-                new_job = self.all_jobs.pop(0)
+            while self.all_jobs[-1].submit <= self.time:
+                new_job = self.all_jobs.pop()
 
                 if new_job.qos.hold_job_submit_usr(new_job):
                     self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
@@ -107,11 +106,11 @@ class Queue:
             pass
 
         if len(self.queue) != pre_step_priority_len:
-            self.queue = self.priority_sorter.sort(self.queue, self.time)
+            self.priority_sorter.sort(self.queue, self.time)
 
         for res, res_queue in self.reservations.items():
             if len(res_queue) != pre_step_res_priority_len[res]:
-                self.reservations[res] = self.priority_sorter.sort(res_queue, self.time)
+                self.priority_sorter.sort(res_queue, self.time)
 
     def _check_dependencies(self, running_jobs):
         released = []
@@ -130,7 +129,7 @@ class Queue:
                 self.queue.append(released_job.priority(self.time))
             released.append(i_job)
 
-        for i_job in sorted(released, reverse=True):
+        for i_job in reversed(released):
             self.waiting_dependency.pop(i_job)
 
     def _check_qos_holds(self, running_jobs):
@@ -161,7 +160,7 @@ class Queue:
                 else:
                     self.queue.append(job.priority(self.time))
 
-            for i_job in sorted(released, reverse=True):
+            for i_job in reversed(released):
                 self.qos_submit_held[qos].pop(i_job)
 
         for qos in self.qos_held.keys():
@@ -172,10 +171,10 @@ class Queue:
                 not qos.node_quota_remaining
             ):
                 continue
-            self.qos_held[qos] = self.priority_sorter.sort(self.qos_held[qos], self.time)
+            self.priority_sorter.sort(self.qos_held[qos], self.time)
 
             released = []
-            for i_job, job in enumerate(self.qos_held[qos]):
+            for i_job_rev, job in enumerate(reversed(self.qos_held[qos])):
                 if job.qos.hold_job_grp(job):
                     break
 
@@ -189,9 +188,9 @@ class Queue:
                 else:
                     self.queue.append(job.priority(self.time))
 
-                released.append(i_job)
+                released.append(-(i_job_rev + 1))
 
-            for i_job in sorted(released, reverse=True):
+            for i_job in reversed(released):
                 self.qos_held[qos].pop(i_job)
 
     def _verify_reservations(self, valid_reservations):
@@ -572,6 +571,8 @@ class Dependency:
         if self.conditions_met and not self.singleton:
             return True
 
+        # NOTE Might be inefficient to keep makeing lauched_jobs in the case of multiple singletons
+        # Singletons are rare in ARCHER2 data so not worrying for now
         if self.conditions_met and self.singleton:
             launched_jobs = running_jobs + queued_jobs
             if self.job_user_name in { (job.user, job.name) for job in launched_jobs }:

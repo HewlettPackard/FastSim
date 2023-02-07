@@ -24,7 +24,7 @@ class Partitions:
     def get_partition_free_nodes(self):
         partition_free_nodes = {
             partition : sorted(
-                partition.free_nodes, key=lambda node: (node.weight, node.id)
+                partition.free_nodes, key=lambda node: (node.weight, node.id), reverse=True
             ) for partition in self.partitions
         }
         return partition_free_nodes

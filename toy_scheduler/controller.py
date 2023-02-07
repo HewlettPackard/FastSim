@@ -1,7 +1,9 @@
 import os
 import datetime; from datetime import timedelta
-from collections import defaultdict
+from collections import defaultdict, Counter
 import dill as pickle
+
+import pandas as pd
 
 from config import get_config
 from partition import Partitions
@@ -20,7 +22,8 @@ class Controller:
         self.time = self.queue.time
         priority_sorter = MFPrioritySorter(
             self.config.assocs_dump, timedelta(minutes=5), timedelta(days=2), self.init_time, 100,
-            500, 300, timedelta(days=14), 0, 10000
+            500, 300, timedelta(days=14), 0, 10000,
+            len({ partition.priority_tier for partition in self.partitions.partitions }) == 1
         )
         self.queue.set_priority_sorter(priority_sorter)
         self.fairtree = priority_sorter.fairtree
@@ -98,15 +101,19 @@ class Controller:
         if not self.running_jobs:
             return datetime.datetime.max
 
-        return self.running_jobs[0].end
+        return self.running_jobs[-1].end
 
     def run_sim(self):
+        import numpy as np; import time
+        times_sched, times_bf = [], []
+
         # TODO Non-defer implementation
         previous_small_sched = self.time
         next_bf_time = self.time + self.config.bf_interval
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
+            start = time.time()
             self.time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
                 self.queue.next_newjob()
@@ -135,6 +142,13 @@ class Controller:
 
             self._step(sched, sched_depth, bf, fairtree)
             self.step_cnt += 1
+            if bf and not sched:
+                times_bf.append(time.time() - start)
+            if sched and not bf:
+                times_sched.append(time.time() - start)
+            if self.step_cnt % 1000 == 0:
+                print("bf: ", np.mean(times_bf))
+                print("sched: ", np.mean(times_sched))
 
     def _step(self, sched, sched_depth, bf, fairtree):
         # NOTE Regardless of sched or bf still need to:
@@ -159,7 +173,6 @@ class Controller:
 
         pre_submit_running_jobs_len = len(self.running_jobs)
 
-        # NOTE Put these into methods
         if sched:
             self.num_sched_test_step = 0
             sched_depth = sched_depth if sched_depth is not None else (
@@ -176,7 +189,7 @@ class Controller:
             self._backfill()
 
         if len(self.running_jobs) != pre_submit_running_jobs_len:
-            self.running_jobs.sort(key=lambda job: job.end)
+            self.running_jobs.sort(key=lambda job: job.end, reverse=True)
 
         self.times.append(self.time)
 
@@ -205,8 +218,8 @@ class Controller:
         return True
 
     def _check_finished_jobs(self):
-        while self.running_jobs and self.running_jobs[0].end <= self.time:
-            job = self.running_jobs.pop(0)
+        while self.running_jobs and self.running_jobs[-1].end <= self.time:
+            job = self.running_jobs.pop()
             job.end_job()
             self.fairtree.job_finish_usage_update(job)
             self.job_history.append(job)
@@ -223,85 +236,109 @@ class Controller:
             # Reservation ended, delete stray jobs. Could be a problem if the same reservation
             # comes back but *shrug*
             if not self.partitions.reservations[reservation]:
+                print(
+                    "!!!\nReservation {} has no nodes, deleting {} job\n!!!".format(
+                        reservation, len(self.queue.reservation[reservation])
+                    )
+                )
                 self.queue.reservations[reservation] = []
                 continue
 
-            # TODO Refactor of scheduling in reserved blocks, want to be able to backfill if
-            # needed, also might be work rethinking what node "free" means in context of
-            # reservations
-            # NOTE Reservations must be a single partition
+            # NOTE Reservations must be a single partition so don't need to worry about order
             free_nodes_res = [
                 node for node in self.partitions.reservations[reservation] if (
                     not node.running_job and not node.down
                 )
             ]
             jobs_submitted = []
-            for i_job, job in enumerate(res_queue):
-                valid_nodes, i_free_node = [], 0
-                while len(valid_nodes) < job.nodes and i_free_node < len(free_nodes_res):
+            for i_job_rev, job in enumerate(reversed(res_queue)):
+                valid_nodes, i_free_node = [], len(free_nodes_res)
+                while len(valid_nodes) < job.nodes and i_free_node:
+                    i_free_node -= 1
                     node = free_nodes_res[i_free_node]
                     if self.time + job.reqtime > node.unreserved_time:
-                        i_free_node += 1
                         continue
                     valid_nodes.append(free_nodes_res.pop(i_free_node))
 
                 if len(valid_nodes) == job.nodes:
                     self._submit(job.start_job(self.time), nodes=valid_nodes)
-                    jobs_submitted.append(i_job)
+                    jobs_submitted.append(-(i_job_rev + 1))
                 else:
                     break
 
-            for i_job in sorted(jobs_submitted, reverse=True):
+            for i_job in reversed(jobs_submitted):
                self.queue.reservations[reservation].pop(i_job)
-
-                # while job.nodes < len(free_nodes_res):
-                #     if self.num_sched_test_step >= sched_depth:
-                #         break
-                #     self.num_sched_test_step += 1
-
-                #     job = res_queue.pop(0).start_job(self.time)
-                #     self._submit(job, nodes=[ free_nodes_res.pop(0) for _ in range(job.nodes) ])
 
     def _sched_main(self, sched_depth):
         partition_free_nodes = self.partitions.get_partition_free_nodes()
-        partitions_full = set()
+
+        # NOTE All of this weird counting is to prevent iterating over and verifying that jobs
+        # cannot run on nodes we can know before hand that they can't. This makes the sim much
+        # faster when the HPE_RestrictLongJobs reservation is included
+        partition_always_free_num_nodes = defaultdict(int)
+        partition_free_time_num_nodes = defaultdict(lambda: defaultdict(int))
+        for partition, free_nodes in partition_free_nodes.items():
+            for node in free_nodes:
+                if node.reservation_schedule:
+                    partition_free_time_num_nodes[partition][node.reservation_schedule[0][0]] += 1
+                else:
+                    partition_always_free_num_nodes[partition] += 1
+
+        partitions_with_space = {
+            partition for partition, free_nodes in partition_free_nodes.items() if free_nodes
+        }
         jobs_submitted = []
         # NOTE This implementation is a little weird since I need to maintain node ordering
         # according to its weight in a partition
-        for i_job, job in enumerate(self.queue.queue):
+        for i_job_rev, job in enumerate(reversed(self.queue.queue)):
             if self.num_sched_test_step >= sched_depth:
                 break
             self.num_sched_test_step += 1
 
-            if job.partition in partitions_full:
+            if job.partition not in partitions_with_space:
                 continue
 
-            valid_nodes, i_free_node = [], 0
-            while (
-                len(valid_nodes) < job.nodes and
-                i_free_node < len(partition_free_nodes[job.partition])
+            if (
+                not partition_always_free_num_nodes[job.partition] and
+                self.time + job.reqtime >= max(partition_free_time_num_nodes[job.partition].keys())
             ):
+                continue
+
+            valid_nodes, i_free_node = [], len(partition_free_nodes[job.partition])
+            while len(valid_nodes) < job.nodes and i_free_node:
+                i_free_node -= 1
                 node = partition_free_nodes[job.partition][i_free_node]
                 if (
                     node.reservation_schedule and
                     self.time + job.reqtime > node.reservation_schedule[0][0]
                 ):
-                    i_free_node += 1
                     continue
                 valid_nodes.append(partition_free_nodes[job.partition].pop(i_free_node))
-                for other_partition in set(node.partitions) - { job.partition }:
-                    partition_free_nodes[other_partition].remove(node)
+
+                # Node is going to be allocated/planned, update counters and shared partitions
+                for partition in node.partitions:
+                    res_sched = node.reservation_schedule
+                    if res_sched:
+                        partition_free_time_num_nodes[partition][res_sched[0][0]] -= 1
+                        if not partition_free_time_num_nodes[partition][res_sched[0][0]]:
+                            partition_free_time_num_nodes[partition].pop(res_sched[0][0])
+                    else:
+                        partition_always_free_num_nodes[partition] -= 1
+
+                    if partition != job.partition:
+                        partition_free_nodes[partition].remove(node)
+
+                    if not partition_free_nodes[partition]:
+                        partitions_with_space.remove(partition)
 
             if len(valid_nodes) == job.nodes:
                 self._submit(job.start_job(self.time), nodes=valid_nodes)
-                jobs_submitted.append(i_job)
+                jobs_submitted.append(-(i_job_rev + 1))
 
-            elif not partition_free_nodes[job.partition]:
-                partitions_full.add(job.partition)
-                if len(partitions_full) == len(self.partitions.partitions):
-                    break
+            if not partitions_with_space:
+                break
 
-        for i_job in sorted(jobs_submitted, reverse=True):
+        for i_job in reversed(jobs_submitted):
             self.queue.queue.pop(i_job)
 
     def _backfill(self):
@@ -316,11 +353,12 @@ class Controller:
                     )
                 },
                 queue=res_queue,
-                running_jobs={
-                    node.running_job for node in self.partitions.reservations[reservation] if (
-                        node.running_job
-                    )
-                },
+                running_jobs= (
+                    {
+                        node.running_job for node in self.partitions.reservations[reservation]
+                    } -
+                    { None }
+                ),
                 reservation=True
             )
             for i_job, nodes in backfill_now:
@@ -330,7 +368,7 @@ class Controller:
             # if backfill_now:
             #     print(reservation, [ (i_job, len(nodes)) for i_job, nodes in backfill_now ])
 
-            for i_job, _ in sorted(backfill_now, key=lambda job_nodes: job_nodes[0], reverse=True):
+            for i_job, _ in reversed(backfill_now):
                self.queue.reservations[reservation].pop(i_job)
 
         if self.queue.queue:
@@ -342,7 +380,8 @@ class Controller:
             # if backfill_now:
             #     print([ (i_job, len(nodes)) for i_job, nodes in backfill_now ])
 
-            for i_job, _ in sorted(backfill_now, key=lambda job_nodes: job_nodes[0], reverse=True):
+            # NOTE i_job here are negative so need to pop deepest indices first
+            for i_job, _ in reversed(backfill_now):
                self.queue.queue.pop(i_job)
 
     # def _get_backfill_jobs(self, partition_free_nodes):
@@ -411,7 +450,7 @@ class Controller:
         )
         max_block_time = max(free_blocks_ready_intervals, key=lambda interval: interval[1])[1]
 
-        for i_job, job in enumerate(queue):
+        for i_job_rev, job in enumerate(reversed(queue)):
             # break if no blocks or only <= min blocks available for immediate backfill
             if max_block_time < min_required_block_time:
                 break
@@ -463,7 +502,7 @@ class Controller:
                         if usage_block_start == self.time:
                             backfill_now.append(
                                 (
-                                    i_job,
+                                    -(i_job_rev + 1),
                                     { node for nodes in selected_intervals.values() for node in nodes }
                                 )
                             )
@@ -551,7 +590,7 @@ class Controller:
                 if submit is not None: # At a event where submitting new block
                     node.reservation_schedule.append((start, end, name))
                     node.reservation_schedule.sort(key=lambda schedule: schedule[0])
-                else: # At event where clearning block that is about to start
+                else: # At event where clearing block that is about to start
                     for i_res_sched, res_sched in enumerate(node.reservation_schedule):
                         if res_sched[2] == name:
                             node.reservation_schedule.pop(i_res_sched)
