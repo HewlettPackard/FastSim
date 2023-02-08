@@ -200,6 +200,8 @@ class Queue:
                 # short qos is reservationrequired
                 if job.qos.name == "short":
                     job.reservation = "shortqos"
+                else:
+                    job.reservation = ""
                 continue
 
             if job.reservation not in valid_reservations:
@@ -209,7 +211,7 @@ class Queue:
                 job.ignore_in_eval = True
 
         print(
-            "Missing reservation records for {} resulting in ignoring reservations for" \
+            "Missing reservation records for {} resulting in ignoring reservations for " \
             "{} jobs".format(removed_res, removed_res_cnt)
         )
 
@@ -449,7 +451,7 @@ class Job:
         self.launch_time = None
         self.start = None
         self.end = None
-        self.assigned_nodes = []
+        self.assigned_nodes = set()
 
         self.state = JobState.FUTURE
 
@@ -472,7 +474,7 @@ class Job:
 
     def assign_node(self, node):
         node.set_busy()
-        self.assigned_nodes.append(node)
+        self.assigned_nodes.add(node)
         node.running_job = self
         if len(self.assigned_nodes) >= self.nodes:
             return True

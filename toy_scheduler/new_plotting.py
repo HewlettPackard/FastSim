@@ -1,28 +1,43 @@
 import os, argparse
+from datetime import timedelta
 import dill as pickle
 
 import matplotlib.dates
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes, mark_inset
+import numpy as np
 
 from controller import Controller
 from fairshare import FairTree
 
+
+def mkdir_p(dir):
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+        return dir
+    return False
+
+
 def main(args):
+    PLOT_DIR = os.path.join(
+        "/work/y02/y02/awilkins/archer2_jobdata/plots", os.path.basename(args.sim).split(".")[0]
+    )
+    mkdir_p(PLOT_DIR)
+
     # TODO Redo this baseline fifo to not count the ignore in eval jobs, this will require
     # turning off partitions, QOS, and dependencies. This will be easier once a lot of this
     # is moved in a consts global. Wait to do this so I dont have to hack away at code
-    print("Reading baseline fifo sim results")
-    with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as (
-        f
-    ):
-        data = pickle.load(f)
-    archer_fifo = data["archer"][0]
+    # print("Reading baseline fifo sim results")
+    # with open("/work/y02/y02/awilkins/pandas_cache/toy_scheduler/fifo_baseline.pkl", "rb") as (
+    #     f
+    # ):
+    #     data = pickle.load(f)
+    # archer_fifo = data["archer"][0]
 
     # XXX Temporary until I get time to redo this plotting script
     with open(args.sim, "rb") as f:
-        sim = pickle.load(f)
-    archer = { 0 : sim }
+        sim_controller = pickle.load(f)
+    archer = { 0 : sim_controller }
 
     max_submit = max(archer[0].job_history, key=lambda job: job.submit).true_submit
     job_history = [
@@ -49,12 +64,12 @@ def main(args):
             (job.start + job.runtime - job.submit) / max(job.runtime, archer[0].config.bd_threshold), 1
         ) for job in job_history if not job.ignore_in_eval
     ]
-    no_eval_ids = [ job.id for job in job_history if job.ignore_in_eval ]
-    fifo_bd_slowdowns = [
-        max(
-            (job.start + job.runtime - job.submit) / max(job.runtime, archer[0].config.bd_threshold), 1
-        ) for job in archer_fifo.job_history if job.id not in no_eval_ids
-    ]
+    # no_eval_ids = [ job.id for job in job_history if job.ignore_in_eval ]
+    # fifo_bd_slowdowns = [
+    #     max(
+    #         (job.start + job.runtime - job.submit) / max(job.runtime, archer[0].config.bd_threshold), 1
+    #     ) for job in archer_fifo.job_history if job.id not in no_eval_ids
+    # ]
     data_wait_times = [
         (
             (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
@@ -65,11 +80,11 @@ def main(args):
             (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
         ) for job in job_history if not job.ignore_in_eval
     ]
-    fifo_wait_times = [
-        (
-            (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-        ) for job in archer_fifo.job_history if job.id not in no_eval_ids
-    ]
+    # fifo_wait_times = [
+    #     (
+    #         (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
+    #     ) for job in archer_fifo.job_history if job.id not in no_eval_ids
+    # ]
     print(
         "True starts mean bd slowdown={}+-{} (total = {})\n".format(
             np.mean(data_bd_slowdowns), np.std(data_bd_slowdowns), np.sum(data_bd_slowdowns)
@@ -77,44 +92,45 @@ def main(args):
         "Scheduling sim mean bd slowdown={}+-{} (total = {})\n".format(
             np.mean(sim_bd_slowdowns), np.std(sim_bd_slowdowns), np.sum(sim_bd_slowdowns)
         ) +
-        "FIFO baseline sim mean bd slowdown={}+-{}\n".format(
-            np.mean(fifo_bd_slowdowns), np.std(fifo_bd_slowdowns)
-        ) +
+        # "FIFO baseline sim mean bd slowdown={}+-{}\n".format(
+        #     np.mean(fifo_bd_slowdowns), np.std(fifo_bd_slowdowns)
+        # ) +
         "True starts mean wait time={}+-{} hrs (total = {} hrs)\n".format(
             np.mean(data_wait_times), np.std(data_wait_times), np.sum(data_wait_times)
         ) +
         "Scheduling sim mean wait time={}+-{}hrs (total = {} hrs)\n".format(
             np.mean(sim_wait_times), np.std(sim_wait_times), np.sum(sim_wait_times)
-        ) +
-        "FIFO baseline sim mean wait time={}+-{}hr\n".format(
-            np.mean(fifo_wait_times), np.std(fifo_wait_times)
         )
+        # "FIFO baseline sim mean wait time={}+-{}hr\n".format(
+        #     np.mean(fifo_wait_times), np.std(fifo_wait_times)
+        # )
     )
 
-    data_allocnodes = [ job.nodes for job in job_history if not job.ignore_in_eval ]
-    fifo_allocnodes = [
-        job.nodes for job in archer_fifo.job_history if job.id not in no_eval_ids
-    ]
-    fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf_noclass(
-        data_bd_slowdowns, data_allocnodes, sim_bd_slowdowns, data_allocnodes,
-        fifo_bd_slowdowns, fifo_allocnodes
-    )
-    fig.savefig(os.path.join(
-        args.out_dir,
-        "toyscheduler_test_refactor_withfifobaseline_bdslowdowns_allocnodes{}.pdf".format(
-            save_suffix
-        )
-    ))
-    if batch:
-        plt.close()
-    else:
-        plt.show()
+    # data_allocnodes = [ job.nodes for job in job_history if not job.ignore_in_eval ]
+    # fifo_allocnodes = [
+    #     job.nodes for job in archer_fifo.job_history if job.id not in no_eval_ids
+    # ]
+    # fig, ax = bdslowdowns_allocnodes_hist2d_true_fifo_mf_noclass(
+    #     data_bd_slowdowns, data_allocnodes, sim_bd_slowdowns, data_allocnodes,
+    #     fifo_bd_slowdowns, fifo_allocnodes
+    # )
+    # fig.savefig(os.path.join(
+    #     PLOT_DIR,
+    #     "toyscheduler_test_refactor_withfifobaseline_bdslowdowns_allocnodes{}.pdf".format(
+    #         save_suffix
+    #     )
+    # ))
+    # if batch:
+    #     plt.close()
+    # else:
+    #     plt.show()
 
     start_time = archer[0].init_time + timedelta(days=20)
 
 
     assoc_tree = FairTree(
-        ASSOCS_FILE, timedelta(minutes=1), timedelta(minutes=1), archer[0].init_time
+        sim_controller.config.assocs_dump, timedelta(minutes=1), timedelta(minutes=1),
+        archer[0].init_time
     )
 
     # print("Jobs from proj-e761 or proj-e697:")
@@ -254,7 +270,7 @@ def main(args):
     ax.bar_label(data_bars, padding=3, fmt="%.1f")
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_top_projs_mean_waits{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_top_projs_mean_waits{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -275,7 +291,7 @@ def main(args):
     ax.bar_label(data_bars, padding=3, fmt="%.1f")
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_top_projs_nolowprio_mean_waits{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_top_projs_nolowprio_mean_waits{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -310,7 +326,7 @@ def main(args):
     ax.bar_label(data_bars, padding=3, fmt="%.1f")
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "
+        PLOT_DIR, "test_refactor_qos_mean_waits{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -405,7 +421,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_wait_times_rolling_window{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_wait_times_rolling_window{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -426,7 +442,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_wait_times_rolling_window_noerr{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_wait_times_rolling_window_noerr{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -520,7 +536,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_bd_slowdowns_rolling_window{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_bd_slowdowns_rolling_window{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -541,7 +557,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_bd_slowdowns_rolling_window_noerr{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_bd_slowdowns_rolling_window_noerr{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -609,7 +625,7 @@ def main(args):
     plt.draw()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_throughput_cumulative{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_throughput_cumulative{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -682,7 +698,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_total_allocnodes_bytime{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_total_allocnodes_bytime{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -749,7 +765,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_queue_size_jobs{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_queue_size_jobs{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -766,7 +782,7 @@ def main(args):
     plt.legend()
     fig.tight_layout()
     fig.savefig(os.path.join(
-        args.out_dir, "test_refactor_queue_size_nodes{}.pdf".format(save_suffix)
+        PLOT_DIR, "test_refactor_queue_size_nodes{}.pdf".format(save_suffix)
     ))
     if batch:
         plt.close()
@@ -844,11 +860,12 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("sim", type=str)
-    parser.add_argument("out_dir", type=str)
 
     args = parser.parse_args()
 
     return args
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main(parse_arguments())
+

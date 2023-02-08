@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import timedelta
+import datetime; from datetime import timedelta
 
 import pandas as pd
 
@@ -17,6 +17,13 @@ class Partitions:
         self.reservations = defaultdict(list)
 
         self.partitions_by_name = { partition.name : partition for partition in self.partitions }
+
+        # { reservation : { interval : nodes, ... }, ... }
+        self.free_blocks = defaultdict(lambda: defaultdict(set))
+        for node in self.nodes:
+            self.free_blocks[node.reservation][node.free_block_interval].add(node)
+        # { reservation : intervals, ... }
+        self.free_blocks_ready_intervals = defaultdict(list)
 
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
@@ -97,7 +104,7 @@ class Partitions:
                     hpe_restrictlong_nids.append(nid)
                     continue
                 reservation_schedule.append((row.START_TIME, row.END_TIME, row.RESV_NAME))
-            reservation_schedule.sort(key=lambda schedule: schedule[0])
+            reservation_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
 
             # Merge any adjacent events
             i_event = 0
@@ -108,6 +115,8 @@ class Partitions:
                     down_schedule.pop(i_event + 1)
                     continue
                 i_event += 1
+            # Now reverse so that we can pop from the end
+            down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
 
             if (2756 <= nid <= 3047) or (6376 <= nid <= 6667):
                 nodes.append(
@@ -145,8 +154,7 @@ class Partition:
         node.partitions.append(self)
         self.nodes.append(node)
         self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
-        if node.free:
-            self.free_nodes.add(node)
+        self.free_nodes.add(node)
 
 
 class Node:
@@ -166,6 +174,11 @@ class Node:
         self.unreserved_time = None
 
         self.partitions = []
+
+        self.free_block_interval = (
+            datetime.datetime.min,
+            datetime.datetime.max if not reservation_schedule else reservation_schedule[-1][0]
+        )
 
     def set_reserved(self, reservation_name, end_time):
         self.reservation = reservation_name

@@ -1,4 +1,4 @@
-import argparse, sys, os
+import argparse, sys, os, random
 from collections import defaultdict
 from datetime import timedelta
 import dill as pickle
@@ -19,7 +19,8 @@ def main(args):
     df_jobs = df_jobs.loc[
         (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
         (df_jobs.End.notna()) & (df_jobs.NodeList.notna()) & (df_jobs.NodeList != "") &
-        (df_jobs.NodeList != "None assigned") & (df_jobs.Partition != "serial")
+        (df_jobs.NodeList != "None assigned") & (df_jobs.Partition != "serial") &
+        (df_jobs.Timelimit != "standard")
     ]
     df_jobs.Start = pd.to_datetime(df_jobs.Start, format="%Y-%m-%dT%H:%M:%S")
     df_jobs.End = pd.to_datetime(df_jobs.End, format="%Y-%m-%dT%H:%M:%S")
@@ -52,9 +53,10 @@ def main(args):
                 )
             else:
                 earliest_start = start_endlim[1].replace(minute=0, second=0) - timedelta(minutes=5)
+
             if start_endlim[0] < earliest_start:
                 if res_start:
-                    if start_endlim[0] - res_start >= timedelta(hours=6):
+                    if start_endlim[0] - res_start >= timedelta(hours=24):
                         nid_in_res[nid].append((res_start, start_endlim[0]))
                     res_start = None
                 cnt = 0
@@ -65,7 +67,7 @@ def main(args):
                 res_start = earliest_start
 
         if res_start:
-            if start_endlim[0] - res_start >= timedelta(hours=6):
+            if start_endlim[0] - res_start >= timedelta(hours=24):
                 nid_in_res[nid].append((res_start, start_endlim[0]))
 
     sliding_res = defaultdict(list)
@@ -75,6 +77,23 @@ def main(args):
             while submitted < schedule[1]:
                 sliding_res[submitted].append(nid)
                 submitted += timedelta(hours=1)
+
+    if args.fudge_factor:
+        all_nids = set(nid_in_res.keys())
+        submitted = min(sliding_res.keys())
+        while submitted < max(sliding_res.keys()):
+            hourly_nids = [
+                sliding_res[submitted + timedelta(hours=hr_num)] for hr_num in range(12)
+            ]
+            print(all_nids)
+            if all(len(nids) < 80 for nids in hourly_nids):
+                new_nids = random.sample(
+                    list(all_nids - set(nid for nids in hourly_nids for nid in nids)),
+                    80 - max(len(nids) for nids in hourly_nids)
+                )
+                for hr_num in range(12):
+                    sliding_res[submitted + timedelta(hours=hr_num)] += new_nids
+            submitted += timedelta(hours=12)
 
     for submitted in sorted(sliding_res):
         print("{}: {}".format(submitted, len(sliding_res[submitted])))
@@ -97,6 +116,8 @@ def parse_arguments():
 
     parser.add_argument("sacct_dump", type=str)
     parser.add_argument("out_dir", type=str)
+
+    parser.add_argument("--fudge_factor", action="store_true")
 
     args = parser.parse_args()
 
