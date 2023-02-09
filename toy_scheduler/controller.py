@@ -193,7 +193,6 @@ class Controller:
         # interval that extents the endlimit
         # - populate free_blocks_ready intervals
         if sched or bf:
-            original_free_blocks_interval = list(self.partitions.free_blocks[""].keys())
             self.partitions.free_blocks_ready_intervals = defaultdict(list)
             for res, free_blocks in self.partitions.free_blocks.items():
                 for interval in list(free_blocks):
@@ -206,15 +205,18 @@ class Controller:
                         node.running_job.endlimit = self.time + self.config.bf_resolution
                         free_blocks[interval].remove(node)
                         node.free_block_interval = (node.running_job.endlimit, interval[1])
-                        print("here")
                         free_blocks[node.free_block_interval].add(node)
 
                     if not free_blocks[interval]:
                         free_blocks.pop(interval)
-                    else:
-                        if interval[0] <= self.time:
-                            self.partitions.free_blocks_ready_intervals[res].append(interval)
-            print(list(self.partitions.free_blocks[""].keys()) == original_free_blocks_interval)
+                        continue
+
+                    # Merge all free blocks free blocks all starting at the current time
+                    # if interval[0] != self.time:
+                    #     free_blocks[(self.time, interval[1])].update(free_blocks[interval])
+                    #     free_blocks.pop(interval)
+
+                    self.partitions.free_blocks_ready_intervals[res].append(interval)
 
         if sched:
             self.num_sched_test_step = 0
@@ -552,8 +554,14 @@ class Controller:
         if not queue:
             queue = self.queue.queue
 
-        free_blocks = copy(self.partitions.free_blocks[reservation])
-        free_blocks_ready_intervals = copy(self.partitions.free_blocks_ready_intervals[reservation])
+        free_blocks = defaultdict(set, { (max(interval[0], self.time), interval[1]) : set(nodes) for interval, nodes in self.partitions.free_blocks[reservation].items() if interval[0] < window_end })
+        # free_blocks = copy.deepcopy(self.partitions.free_blocks[reservation])
+        # free_blocks = self.partitions.free_blocks[reservation]
+        # free_blocks_ready_intervals = copy.copy(self.partitions.free_blocks_ready_intervals[reservation])
+        free_blocks_ready_intervals = { interval for interval in free_blocks.keys() if interval[0] <= self.time }
+
+        if not free_blocks_ready_intervals:
+            return backfill_now
 
         min_required_block_time = (
             self.time + min(queue, key=lambda job: job.reqtime).reqtime + self.config.bf_resolution
@@ -603,10 +611,10 @@ class Controller:
                     # reproducibility
                     if num_free_nodes != job.nodes:
                         selected_intervals[interval] = set(
-                                sorted(
-                                    selected_intervals[interval],
-                                    key=lambda node: (node.weight, node.id)
-                                )[num_free_nodes - job.nodes:]
+                            sorted(
+                                selected_intervals[interval],
+                                key=lambda node: (node.weight, node.id)
+                            )[num_free_nodes - job.nodes:]
                         )
 
                     if usage_block_start == self.time:
@@ -622,7 +630,7 @@ class Controller:
 
                         # The original ready now block has been broken and the interval needs
                         # redefining
-                        if selected_interval[0] == self.time:
+                        if selected_interval[0] <= self.time:
                             if not free_blocks[selected_interval]:
                                 free_blocks_ready_intervals.remove(selected_interval)
                             if selected_interval[0] != usage_block_start:
