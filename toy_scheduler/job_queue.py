@@ -42,6 +42,7 @@ class Queue:
         jid_to_job = { job.id : job for job in self.all_jobs }
         for job in self.all_jobs:
             job.init_dependency(jid_to_job)
+        print("!!!!{}!!!!".format(len(all_jobs)))# XXX 
         self.queue = []
 
         self.waiting_dependency = []

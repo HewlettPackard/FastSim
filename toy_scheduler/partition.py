@@ -25,6 +25,40 @@ class Partitions:
         # { reservation : intervals, ... }
         self.free_blocks_ready_intervals = defaultdict(list)
 
+    def remove_free_block(self, node):
+        self.free_blocks[node.reservation][node.free_block_interval].remove(node)
+        if not self.free_blocks[node.reservation][node.free_block_interval]:
+            self.free_blocks[node.reservation].pop(node.free_block_interval)
+
+    def add_free_block(self, node):
+        self.free_blocks[node.reservation][node.free_block_interval].add(node)
+
+    def clean_free_blocks(self, time, bf_resolution):
+        self.free_blocks_ready_intervals = defaultdict(list)
+        for res, free_blocks in self.free_blocks.items():
+            for interval in list(free_blocks):
+                if interval[0] > time: # TODO use longest over-run of reqtime for these checks
+                    continue
+
+                for node in list(free_blocks[interval]):
+                    if not node.running_job:
+                        continue
+                    node.running_job.endlimit = time + bf_resolution
+                    free_blocks[interval].remove(node)
+                    node.free_block_interval = (node.running_job.endlimit, interval[1])
+                    free_blocks[node.free_block_interval].add(node)
+
+                if not free_blocks[interval]:
+                    free_blocks.pop(interval)
+                    continue
+
+                # Merge all free blocks free blocks all starting at the current time
+                # if interval[0] != self.time:
+                #     free_blocks[(self.time, interval[1])].update(free_blocks[interval])
+                #     free_blocks.pop(interval)
+
+                self.free_blocks_ready_intervals[res].append(interval)
+
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
 
@@ -153,6 +187,7 @@ class Partition:
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
+        # TODO does this still need to be sorted? can it just be a set
         self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
         self.free_nodes.add(node)
 
