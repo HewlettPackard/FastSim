@@ -111,7 +111,7 @@ class Controller:
         return self.running_jobs[-1].end
 
     def run_sim(self):
-        import numpy as np
+        # import numpy as np
         sim_start = time.time()
 
         times_sched, times_bf, times_sched_bf = [], [], []
@@ -122,7 +122,7 @@ class Controller:
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
-            start = time.time()
+            # start = time.time()
             self.time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
                 self.queue.next_newjob()
@@ -151,16 +151,16 @@ class Controller:
 
             self._step(sched, sched_depth, bf, fairtree)
             self.step_cnt += 1
-            if bf and not sched:
-                times_bf.append(time.time() - start)
-            if sched and not bf:
-                times_sched.append(time.time() - start)
-            if sched and bf:
-                times_sched_bf.append(time.time() - start)
-            if self.step_cnt % 1000 == 0:
-                print("bf: ", np.mean(times_bf))
-                print("sched: ", np.mean(times_sched))
-                print("sched & bf: ", np.mean(times_sched_bf))
+            # if bf and not sched:
+            #     times_bf.append(time.time() - start)
+            # if sched and not bf:
+            #     times_sched.append(time.time() - start)
+            # if sched and bf:
+            #     times_sched_bf.append(time.time() - start)
+            # if self.step_cnt % 1000 == 0:
+            #     print("bf: ", np.mean(times_bf))
+            #     print("sched: ", np.mean(times_sched))
+            #     print("sched & bf: ", np.mean(times_sched_bf))
 
         elapsed = time.time() - sim_start
         print(

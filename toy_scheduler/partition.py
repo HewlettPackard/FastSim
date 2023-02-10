@@ -52,11 +52,6 @@ class Partitions:
                     free_blocks.pop(interval)
                     continue
 
-                # Merge all free blocks free blocks all starting at the current time
-                # if interval[0] != self.time:
-                #     free_blocks[(self.time, interval[1])].update(free_blocks[interval])
-                #     free_blocks.pop(interval)
-
                 self.free_blocks_ready_intervals[res].append(interval)
 
     def get_partition_by_name(self, name):

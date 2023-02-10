@@ -1,4 +1,12 @@
+import os
 from datetime import timedelta
+
+
+def mkdir_p(dir):
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+        return dir
+    return False
 
 
 def convert_nodelist_to_node_nums(nid_str):
