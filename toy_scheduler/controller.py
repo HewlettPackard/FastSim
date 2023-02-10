@@ -11,6 +11,10 @@ from job_queue import Queue
 from priority_sorters import MFPrioritySorter
 
 
+# TODO Currently nodes can only be in one reservation's free blocks, so if a node is going
+# unreserved soon the backfiller for no reservation jobs will not be see it
+
+
 class Controller:
     def __init__(self, config_file):
         self.config = get_config(config_file)
@@ -267,7 +271,8 @@ class Controller:
 
             # Reservation ended, delete stray jobs. Could be a problem if the same reservation
             # comes back but *shrug*
-            if not self.partitions.reservations[reservation]:
+            # NOTE Once reservation is finished all intervals should've been popped
+            if not self.partitions.free_blocks[reservation]:
                 print(
                     "!!!\nReservation {} has no nodes, deleting {} job\n!!!".format(
                         reservation, len(self.queue.reservation[reservation])
@@ -276,9 +281,6 @@ class Controller:
                 self.queue.reservations[reservation] = []
                 continue
 
-            if len({ interval[1] for interval in self.partitions.free_blocks_ready_intervals[reservation] }) > 1:
-                print({ interval[1] for interval in self.partitions.free_blocks_ready_intervals[reservation] })
-                raise Exception("bruhhhh")
             # NOTE Reservations must be a single partition so don't need to worry about order
             # NOTE Reservations should have a single free now interval end, I don't think it's
             # possible for a reservation to reserve nodes still reserved by another. So should
@@ -450,10 +452,11 @@ class Controller:
                 continue
 
             num_free_nodes = 0
-            selected_intervals = {}
+            selected_intervals = defaultdict(set)
 
             # NOTE Earliest starting first, then sort by earliest end for reproducibility
-            for interval, nodes in sorted(free_blocks.items(), key=lambda block: block[0]):
+            itr_sorted_free_blocks = iter(sorted(free_blocks.items(), key=lambda block: block[0]))
+            for interval, nodes in itr_sorted_free_blocks:
                 valid_nodes = { node for node in nodes if job.partition in node.partitions }
                 if valid_nodes:
                     selected_intervals[interval] = valid_nodes
@@ -474,16 +477,49 @@ class Controller:
                     if job.nodes > num_free_nodes:
                         continue
 
-                    # Remove nodes we don't need from the latest interval added, sort first for
-                    # reproducibility
-                    if num_free_nodes != job.nodes:
-                        selected_intervals[interval] = set(
-                            sorted(
-                                selected_intervals[interval],
-                                key=lambda node: (node.weight, node.id),
-                                reverse=True
-                            )[num_free_nodes - job.nodes:]
-                        )
+                    # Check  if there are any nodes with lower weights in other intervals that
+                    # start at the same time as the latest interval, these need to be considered
+                    # also. Selected from these job.nodes number with the lowest weights
+                    # NOTE If at this point it will be final iteration so fine to mess with iter
+                    valid_intervals = [ interval ]
+                    for next_interval, _ in itr_sorted_free_blocks:
+                        if next_interval[0] > interval[0]:
+                            break
+                        valid_intervals.append(next_interval)
+
+                    # Can do less work in this case
+                    if len(valid_intervals) == 1:
+                        if num_free_nodes != job.nodes:
+                            selected_intervals[interval] = set(
+                                sorted(
+                                    selected_intervals[interval],
+                                    key=lambda node: (node.weight, node.id),
+                                    reverse=True
+                                )[num_free_nodes - job.nodes:]
+                            )
+
+                    else:
+                        possible_nodes_interval = [ (node, interval) for node in valid_nodes ]
+                        num_free_nodes -= len(selected_intervals.pop(interval))
+
+                        for valid_interval in valid_intervals[1:]:
+                            for node in free_blocks[valid_interval]:
+                                if job.partition not in node.partitions:
+                                    continue
+                                possible_nodes_interval.append((node, valid_interval))
+
+                        valid_nodes_intervals = sorted(
+                            possible_nodes_interval,
+                            key=(
+                                lambda node_interval:
+                                (node_interval[0].weight, node_interval[0].id)
+                            ),
+                            reverse=True
+                        )[num_free_nodes - job.nodes:]
+                        for node, valid_interval in valid_nodes_intervals:
+                            selected_intervals[valid_interval].add(node)
+
+                    assert sum(len(nodes) for nodes in selected_intervals.values()) == job.nodes
 
                     if usage_block_start == self.time:
                         backfill_now.append(
@@ -572,10 +608,6 @@ class Controller:
 
             if node.running_job and up_time <= node.running_job.end:
                 continue
-                # if down_schedule[2] == "DOWN":
-                #     up_time += node.running_job.end - self.time
-                # if up_time <= node.running_job.end:
-                #     continue
 
             node.set_down(up_time)
             self.partitions.remove_free_block(node)
@@ -634,7 +666,6 @@ class Controller:
         # Set/unset reservation
         while self.reserved_nodes and self.reserved_nodes[-1].unreserved_time <= self.time:
             node = self.reserved_nodes.pop()
-            self.partitions.remove_node_reservation(node)
             self.partitions.remove_free_block(node)
             node.set_unreserved()
             if node.reservation_schedule:
@@ -667,7 +698,6 @@ class Controller:
                 max(self.time, node.free_block_interval[0]), node.unreserved_time
             )
             self.partitions.add_free_block(node)
-            self.partitions.add_node_reservation(node)
 
             self.reserved_nodes.append(node)
             self.reserved_nodes.sort(key=lambda node: node.unreserved_time, reverse=True)

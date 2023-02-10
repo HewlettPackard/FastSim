@@ -62,29 +62,6 @@ class Partitions:
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
 
-    def get_partition_free_nodes(self):
-        partition_free_nodes = {
-            partition : sorted(
-                partition.free_nodes, key=lambda node: (node.weight, node.id), reverse=True
-            ) for partition in self.partitions
-        }
-        return partition_free_nodes
-
-    def get_free_nodes(self):
-        return set.union(*( partition.free_nodes for partition in self.partitions ))
-
-    def add_node_reservation(self, node):
-        if node.reservation == "":
-            raise Exception("bruh")
-        self.reservations[node.reservation].append(node)
-        # No partitions for reservations so no priority tier
-        self.reservations[node.reservation].sort(key=lambda node: node.id)
-
-    def remove_node_reservation(self, node, reservation_name):
-        if node.reservation == "":
-            raise Exception("bruh")
-        self.reservations[node.reservation].remove(node)
-
     def _get_nodes_partitions(self, node_events_dump, reservations_dump):
         df_events = pd.read_csv(
             node_events_dump, delimiter='|', lineterminator='\n', header=0,
@@ -182,14 +159,12 @@ class Partition:
         self.priority_weight = priority_weight # Normalised s.t. partition with greatest has 1
 
         self.nodes = []
-        self.free_nodes = set()
 
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
         # TODO does this still need to be sorted? can it just be a set
         self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
-        self.free_nodes.add(node)
 
 
 class Node:
@@ -221,7 +196,6 @@ class Node:
         if self.down or not self.free:
             return
         self.free = False
-        self._update_partition_free(True)
 
     def set_unreserved(self):
         self.reservation = ""
@@ -229,7 +203,6 @@ class Node:
         if self.down or self.running_job:
             return
         self.free = True
-        self._update_partition_free(False)
 
     def set_down(self, up_time):
         self.down = True
@@ -238,7 +211,6 @@ class Node:
         if not self.free:
             return
         self.free = False
-        self._update_partition_free(True)
 
     def set_up(self):
         self.down = False
@@ -246,25 +218,14 @@ class Node:
         if self.reservation:
             return
         self.free = True
-        self._update_partition_free(False)
 
     def set_free(self):
         if self.down or self.reservation:
             return
         self.free = True
-        self._update_partition_free(False)
 
     def set_busy(self):
         if self.reservation:
             return
         self.free = False
-        self._update_partition_free(True)
-
-    def _update_partition_free(self, negate):
-        if negate:
-            for partition in self.partitions:
-                partition.free_nodes.remove(self)
-        else:
-            for partition in self.partitions:
-                partition.free_nodes.add(self)
 

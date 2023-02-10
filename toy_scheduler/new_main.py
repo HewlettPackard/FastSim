@@ -24,7 +24,7 @@ def main(args):
 
 
 def print_sim_result(controller):
-    max_submit = max(controller.job_history, key=lambda job: job.submit).true_submit
+    max_submit = max(controller.job_history, key=lambda job: job.true_submit).true_submit
     job_history = [
         job for job in controller.job_history if (
             controller.init_time + timedelta(days=4) < job.true_submit <
