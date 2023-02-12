@@ -14,6 +14,10 @@ from fairshare import FairTree
 from helpers import mkdir_p
 
 
+# TODO
+# - Total power usage plots
+
+
 def to_plot_or_not_to_plot(batch):
     if batch:
         plt.close()

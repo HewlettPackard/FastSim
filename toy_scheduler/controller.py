@@ -14,6 +14,12 @@ from priority_sorters import MFPrioritySorter
 # TODO Currently nodes can only be in one reservation's free blocks, so if a node is going
 # unreserved soon the backfiller for no reservation jobs will not be see it
 
+# TODO Implement REPLACE_DOWN, this is used for the shortqos reservation. Shouldn't, be too hard
+# the current implementation. I think the slurm implementation only replaces the nodes if there are
+# idle nodes at that moment of attempting to schedule on that node? This is not how my scheduler
+# works so I will just replace at the moment of going only if there are idle nodes at that time.
+# This should in practice be pretty much the same
+
 
 class Controller:
     def __init__(self, config_file):
@@ -219,7 +225,7 @@ class Controller:
 
         self.times.append(self.time)
 
-        self._print_stats()
+        self._print_stats(sched, bf)
 
     def _submit(self, job, nodes=None):
         self.running_jobs.append(job)
@@ -346,16 +352,14 @@ class Controller:
             valid_nodes, valid_intervals = [], []
 
             for i_interval, interval in enumerate(free_blocks_ready_intervals):
-                # interval ends only get smaller after this
                 if interval[1] < job_end:
-                    break
+                    continue
 
                 valid_intervals.append(interval)
                 # Don't need to consider more nodes than the job required from each interval
                 valid_nodes += [
-                    free_blocks_ready[interval].pop() for _ in (
-                        range(min(job.nodes, len(free_blocks_ready[interval])))
-                    )
+                    free_blocks_ready[interval].pop()
+                    for _ in range(min(job.nodes, len(free_blocks_ready[interval])))
                 ]
 
             if not i_interval:
@@ -380,6 +384,25 @@ class Controller:
                 if not free_blocks_ready.get(interval, False):
                     free_blocks_ready.pop(interval)
                     free_blocks_ready_intervals.remove(interval)
+
+            if not free_blocks_ready_intervals:
+                break
+
+        expected_i, seen = 0, False
+        for i_job in jobs_submitted:
+            expected_i -= 1
+            if expected_i == i_job:
+                continue
+            if self.queue.queue[i_job].reqtime <= timedelta(hours=1):
+                continue
+            if self.queue.queue[i_job + 1].partition.name == "highmem":
+                continue
+            if not seen:
+                print("Current queue front (time {}): {} {} {}".format(self.time, self.queue.queue[-1].id, self.queue.queue[-1].reqtime, self.queue.queue[-1].nodes, self.queue.queue[-1].partition.name))
+            seen = True
+            print(self.queue.queue[i_job].id, self.queue.queue[i_job].reqtime, self.queue.queue[i_job].nodes)
+        if seen:
+            print()
 
         for i_job in reversed(jobs_submitted):
             self.queue.queue.pop(i_job)
@@ -477,7 +500,7 @@ class Controller:
                     if job.nodes > num_free_nodes:
                         continue
 
-                    # Check  if there are any nodes with lower weights in other intervals that
+                    # Check if there are any nodes with lower weights in other intervals that
                     # start at the same time as the latest interval, these need to be considered
                     # also. Selected from these job.nodes number with the lowest weights
                     # NOTE If at this point it will be final iteration so fine to mess with iter
@@ -519,8 +542,6 @@ class Controller:
                         for node, valid_interval in valid_nodes_intervals:
                             selected_intervals[valid_interval].add(node)
 
-                    assert sum(len(nodes) for nodes in selected_intervals.values()) == job.nodes
-
                     if usage_block_start == self.time:
                         backfill_now.append(
                             (
@@ -528,6 +549,9 @@ class Controller:
                                 { node for nodes in selected_intervals.values() for node in nodes }
                             )
                         )
+
+                    if job.nodes == 4096:
+                        print(usage_block_start)
 
                     for selected_interval, nodes in selected_intervals.items():
                         free_blocks[selected_interval] -= nodes
@@ -587,6 +611,7 @@ class Controller:
             # happens because my DOWN implementation waits for current running job to finish)
             if node.down:
                 node.down_schedule[-1][0] = node.up_time
+                node.down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
                 self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
                 continue
 
@@ -595,6 +620,7 @@ class Controller:
             # getting perpetually delayed
             if node.down_schedule[-1][2] == "DOWN" and node.running_job:
                 node.down_schedule[-1][0] = node.running_job.end
+                node.down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
                 self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
                 continue
 
@@ -702,15 +728,15 @@ class Controller:
             self.reserved_nodes.append(node)
             self.reserved_nodes.sort(key=lambda node: node.unreserved_time, reverse=True)
 
-    def _print_stats(self):
+    def _print_stats(self, sched, bf):
         if not (self.time.hour != self.previous_print_hour and not self.time.hour % 3):
             return
 
         self.previous_print_hour = self.time.hour
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
-            "Idle Nodes = {} (highmem {})\tNodesReserved = {} (Idle = {})\t" \
-            "NodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
+            "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
+            "NodesReserved = {} (Idle = {})\tNodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
                 sum(
                     1 for node in self.partitions.nodes if (
@@ -718,6 +744,11 @@ class Controller:
                             partition.name for partition in node.partitions
                         ]
                     )
+                ),
+                sum(
+                    len(nodes)
+                    for interval, nodes in self.partitions.free_blocks[""].items()
+                        if interval[0] <= self.time
                 ),
                 sum(
                     1 for node in self.partitions.nodes if (
@@ -780,4 +811,29 @@ class Controller:
             ) +
             "))\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
+
+        max_endtime_ready_num_nodes = defaultdict(int)
+        for interval, nodes in self.partitions.free_blocks[""].items():
+            if interval[0] > self.time:
+                continue
+            max_endtime_ready_num_nodes[interval[1]] += len(nodes)
+
+        for max_endtime, num_nodes in sorted(
+            max_endtime_ready_num_nodes.items(), key=lambda pair: pair[0]
+        ):
+            print(
+                "{}: {}".format(
+                    (
+                        max_endtime - self.time
+                        if max_endtime != datetime.datetime.max
+                        else datetime.datetime.max
+                    ),
+                    num_nodes
+                )
+            )
+        if self.queue.queue:
+            print(self.queue.queue[-1].reqtime, self.queue.queue[-1].nodes, self.queue.queue[-1].partition.name, self.queue.queue[-1].true_submit, self.queue.queue[-1].true_job_start)
+            print(min((job.reqtime, -job.nodes) for job in self.queue.queue if job.partition.name == "standard"))
+        print("sched", sched, "bf", bf, "sched_steps", self.num_sched_test_step)
+        print()
 

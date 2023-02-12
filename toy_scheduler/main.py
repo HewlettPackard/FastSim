@@ -6,10 +6,6 @@ import numpy as np
 
 from controller import Controller
 
-# XXX Enforced reproducible sorting everywhere (here and before refactor) to deal with ambiguity of
-# equal elements for the validation when refactoring. Remove this once I am confident that the
-# the refactor has worked and think of a more elegant way to be precisely reproducible
-
 
 def main(args):
     controller = Controller(args.config_file)

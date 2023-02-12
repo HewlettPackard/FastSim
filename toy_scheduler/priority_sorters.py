@@ -48,7 +48,7 @@ class MFPrioritySorter:
                 self._partition_priority_tier(job),
                 sum(priority_calc(job) for priority_calc in self.priority_factors),
                 job.id
-            ),
+            )
         )
         return
 
