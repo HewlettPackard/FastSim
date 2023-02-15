@@ -63,7 +63,6 @@ class Queue:
 
     def step(self, time, running_jobs):
         self.time = time
-        retained = self.queue.pop() if self.queue else None
 
         pre_step_res_priority_len = {
             res : len(res_queue) for res, res_queue in self.reservations.items()
@@ -74,8 +73,6 @@ class Queue:
         self._check_qos_holds(running_jobs)
 
         if self.time < self.next_newjob():
-            if retained is not None:
-                self.queue.append(retained)
             if len(self.queue) != pre_step_priority_len:
                 self.priority_sorter.sort(self.queue, self.time)
             return
@@ -114,9 +111,6 @@ class Queue:
         for res, res_queue in self.reservations.items():
             if len(res_queue) != pre_step_res_priority_len.get(res, 0):
                 self.priority_sorter.sort(res_queue, self.time)
-
-        if retained is not None:
-            self.queue.append(retained)
 
     def _check_dependencies(self, running_jobs):
         released = []
@@ -460,6 +454,8 @@ class Job:
         self.assigned_nodes = set()
 
         self.state = JobState.FUTURE
+
+        self.planned_blocks = defaultdict(set)
 
     def init_dependency(self, jid_to_job):
         if self.dependency:
