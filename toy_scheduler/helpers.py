@@ -10,6 +10,8 @@ def mkdir_p(dir):
 
 
 def convert_nodelist_to_node_nums(nid_str):
+    if nid_str == "dummy":
+        return -1
     node_nums = []
 
     nid_str = nid_str.strip("nid").strip("[").strip("]")

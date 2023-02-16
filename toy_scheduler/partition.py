@@ -27,27 +27,21 @@ class Partitions:
                 (node.interval_times[0], node.interval_times[-1])
             ].add(node)
 
-    def remove_free_block(self, node, from_back=False):
-        if not from_back:
-            interval = (node.interval_times[0], node.interval_times[1])
-        else:
-            interval = (node.interval_times[-2], node.interval_times[-1])
+    def remove_free_block(self, node):
+        interval = (node.interval_times[0], node.interval_times[-1])
         try:
             self.free_blocks[node.reservation][interval].remove(node)
         except KeyError:
-            print(interval)
             print(node.interval_times)
-            print(node.jobs_plnd)
+            print(node.running_job)
             print(node.down)
+            print(node.jobs_plnd)
             raise KeyError
         if not self.free_blocks[node.reservation][interval]:
             self.free_blocks[node.reservation].pop(interval)
 
-    def add_free_block(self, node, from_back=False):
-        if not from_back:
-            interval = (node.interval_times[0], node.interval_times[1])
-        else:
-            interval = (node.interval_times[-2], node.interval_times[-1])
+    def add_free_block(self, node):
+        interval = (node.interval_times[0], node.interval_times[-1])
         self.free_blocks[node.reservation][interval].add(node)
 
     def clean_free_blocks(self, time, bf_resolution):
@@ -77,7 +71,7 @@ class Partitions:
                     ):
                         plnd_job = None
                         for job in node.jobs_plnd:
-                            if plnd_interval[0] == node.interval_times[1]:
+                            if job.planned_block[0][0] == node.interval_times[1]:
                                 plnd_job = job
                                 break
                         plnd_job.planned_block[1].remove(node)
@@ -85,32 +79,16 @@ class Partitions:
                             plnd_job.planned_block = None
                         node.jobs_plnd.remove(plnd_job)
 
-                        free_blocks[(node.interval_times[2], node.interval_times[3])].remove(node)
                         node.interval_times.pop(2)
                         node.interval_times.pop(1)
 
-                    free_blocks[(node.interval_times[0], node.interval_times[1])].add(node)
+                    free_blocks[(node.interval_times[0], node.interval_times[-1])].add(node)
 
                 if not free_blocks[interval]:
                     free_blocks.pop(interval)
 
     def clear_planned_blocks(self, target=None):
-        # Remove all planned blocks
-        if target is None:
-            self.free_blocks = {
-                resv : defaultdict(set) for resv in self.free_blocks
-            }
-            for node in self.nodes:
-                if node.down:
-                    continue
-
-                node.interval_times = [node.interval_times[0], node.interval_times[-1]]
-                self.free_blocks[node.reservation][tuple(node.interval_times)].add(node)
-
-                while node.jobs_plnd:
-                    node.jobs_plnd.pop().planned_block = None
-
-        elif isinstance(target, Job):
+        if isinstance(target, Job):
             job = target
 
             if job.planned_block is None:
@@ -122,19 +100,6 @@ class Partitions:
                 i_start = node.interval_times.index(job.planned_block[0][0])
                 if node.interval_times[i_start] != node.interval_times[i_start + 1]:
                     i_start -= 1
-                l_interval = (node.interval_times[i_start], node.interval_times[i_start + 1])
-                r_interval = (node.interval_times[i_start + 2], node.interval_times[i_start + 3])
-                new_interval = (node.interval_times[i_start], node.interval_times[i_start + 3])
-
-                free_blocks[l_interval].remove(node)
-                if not free_blocks[l_interval]:
-                    free_blocks.pop(l_interval)
-                free_blocks[r_interval].remove(node)
-                if not free_blocks[r_interval]:
-                    free_blocks.pop(r_interval)
-
-                free_blocks[new_interval].add(node)
-
                 node.interval_times.pop(i_start + 2)
                 node.interval_times.pop(i_start + 1)
                 node.jobs_plnd.remove(job)
@@ -146,21 +111,13 @@ class Partitions:
         elif isinstance(target, Node):
             node = target
 
-            free_blocks = self.free_blocks[node.reservation]
-
-            for interval_i, interval_f in zip(node.interval_times[::2], node.interval_times[1::2]):
-                free_interval = (interval_i, interval_f)
-                free_blocks[free_interval].remove(node)
-                if not free_blocks[free_interval]:
-                    free_blocks.pop(free_interval)
-
-            node.interval_times = [node.interval_times[0], node.interval_times[-1]]
-
             while node.jobs_plnd:
                 job = node.jobs_plnd.pop()
                 job.planned_block[1].remove(node)
                 if not job.planned_block[1]:
                     job.planned_block = None
+
+            node.interval_times = [node.interval_times[0], node.interval_times[-1]]
 
         else:
             raise NotImplementedError("Something's gone wrong")
