@@ -455,7 +455,15 @@ class Job:
 
         self.state = JobState.FUTURE
 
-        self.planned_blocks = defaultdict(set)
+        self.planned_block = None
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __eq__(self, other):
+        if isinstance(other, Job):
+            return self.id == other.id
+        return False
 
     def init_dependency(self, jid_to_job):
         if self.dependency:

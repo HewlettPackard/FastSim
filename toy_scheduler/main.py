@@ -10,7 +10,7 @@ from controller import Controller
 def main(args):
     controller = Controller(args.config_file)
 
-    controller.run_sim()
+    controller.run_sim(max_steps=args.max_steps)
 
     print_sim_result(controller)
 
@@ -77,6 +77,8 @@ def parse_arguments():
     parser.add_argument("config_file", type=str)
 
     parser.add_argument("--dump_sim_to", type=str, default="", help="Pickle Controller after sim")
+
+    parser.add_argument("--max_steps", type=int, default=0, help="Terminate sim after max steps")
 
     args = parser.parse_args()
 
