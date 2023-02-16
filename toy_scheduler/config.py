@@ -11,8 +11,7 @@ defaults = {
     "bf_max_job_test" : 500, "bf_window" : 1440, "bf_interval" : 30, "bf_max_time" : 30,
     "bf_yield_interval" : 2000000, "bf_yield_sleep" : 500000, "bf_continue" : False,
     "slowdown_with_queuesize" : False, "sched_interval_perpendingjob" : 0.028,
-    "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlongjobs_sliding_reservations" : "",
-    "bf_max_resvs" : 500
+    "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlongjobs_sliding_reservations" : ""
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
