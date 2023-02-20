@@ -117,7 +117,7 @@ class Controller:
         return self.running_jobs[-1].end
 
     def run_sim(self, max_steps=0):
-        import numpy as np
+        # import numpy as np
         sim_start = time.time()
 
         times_sched, times_bf, times_sched_bf = [], [], []
@@ -128,7 +128,7 @@ class Controller:
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
-            start = time.time()
+            # start = time.time()
             self.time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
                 self.queue.next_newjob()
@@ -160,16 +160,16 @@ class Controller:
 
             if max_steps and self.step_cnt > max_steps:
                 break
-            if bf and not sched:
-                times_bf.append(time.time() - start)
-            if sched and not bf:
-                times_sched.append(time.time() - start)
-            if sched and bf:
-                times_sched_bf.append(time.time() - start)
-            if self.step_cnt % 1000 == 0:
-                print("bf: ", np.mean(times_bf))
-                print("sched: ", np.mean(times_sched))
-                print("sched & bf: ", np.mean(times_sched_bf))
+            # if bf and not sched:
+            #     times_bf.append(time.time() - start)
+            # if sched and not bf:
+            #     times_sched.append(time.time() - start)
+            # if sched and bf:
+            #     times_sched_bf.append(time.time() - start)
+            # if self.step_cnt % 1000 == 0:
+            #     print("bf: ", np.mean(times_bf))
+            #     print("sched: ", np.mean(times_sched))
+            #     print("sched & bf: ", np.mean(times_sched_bf))
 
         elapsed = time.time() - sim_start
         print(
@@ -693,7 +693,7 @@ class Controller:
                                 ),
                                 self.config.bf_window
                             )
-                        else: 
+                        else:
                             max_reqtime_run_now = timedelta()
                         max_reqtime = max(max_reqtime_nodes_needing_resv, max_reqtime_run_now)
 
@@ -894,6 +894,7 @@ class Controller:
         self.previous_print_hour = self.time.hour
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
+            # "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
             "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
             "NodesReserved = {} (Idle = {})\tNodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
@@ -904,11 +905,11 @@ class Controller:
                         ]
                     )
                 ),
-                sum(
-                    len(nodes)
-                    for interval, nodes in self.partitions.free_blocks[""].items()
-                        if interval[0] <= self.time
-                ),
+                # sum(
+                #     len(nodes)
+                #     for interval, nodes in self.partitions.free_blocks[""].items()
+                #         if interval[0] <= self.time
+                # ),
                 sum(
                     1 for node in self.partitions.nodes if (
                         node.free and "highmem" in [
@@ -971,53 +972,53 @@ class Controller:
             "))\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
 
-        max_endtime_ready_num_nodes = defaultdict(int)
-        for interval, nodes in self.partitions.free_blocks[""].items():
-            if interval[0] > self.time:
-                continue
-            max_endtime_ready_num_nodes[interval[1]] += len(nodes)
+        # max_endtime_ready_num_nodes = defaultdict(int)
+        # for interval, nodes in self.partitions.free_blocks[""].items():
+        #     if interval[0] > self.time:
+        #         continue
+        #     max_endtime_ready_num_nodes[interval[1]] += len(nodes)
 
-        for max_endtime, num_nodes in sorted(
-            max_endtime_ready_num_nodes.items(), key=lambda pair: pair[0]
-        ):
-            print(
-                "{}: {}".format(
-                    (
-                        max_endtime - self.time
-                        if max_endtime != datetime.datetime.max
-                        else datetime.datetime.max
-                    ),
-                    num_nodes
-                )
-            )
-        if any(job.partition.name == "standard" for job in self.queue.queue):
-            next_job = self.queue.queue[-1]
-            print(
-                next_job.reqtime, next_job.nodes, next_job.partition.name, next_job.qos.name,
-                next_job.true_submit, next_job.true_job_start,
-                (
-                    (next_job.planned_block[0],  len(next_job.planned_block[1]))
-                    if next_job.planned_block else
-                    next_job.planned_block
-                )
-            )
-            print(
-                min(
-                    (
-                        (
-                            job.reqtime, job.nodes,
-                            (
-                                (job.planned_block[0],  len(job.planned_block[1]))
-                                if job.planned_block is not None else
-                                job.planned_block
-                            )
-                        )
-                        for job in self.queue.queue
-                            if job.partition.name == "standard"
-                    ),
-                    key=lambda job_data: (job_data[0], -job_data[1])
-                )
-            )
-        print("sched", sched, "bf", bf, "sched_steps", self.num_sched_test_step)
-        print()
+        # for max_endtime, num_nodes in sorted(
+        #     max_endtime_ready_num_nodes.items(), key=lambda pair: pair[0]
+        # ):
+        #     print(
+        #         "{}: {}".format(
+        #             (
+        #                 max_endtime - self.time
+        #                 if max_endtime != datetime.datetime.max
+        #                 else datetime.datetime.max
+        #             ),
+        #             num_nodes
+        #         )
+        #     )
+        # if any(job.partition.name == "standard" for job in self.queue.queue):
+        #     next_job = self.queue.queue[-1]
+        #     print(
+        #         next_job.reqtime, next_job.nodes, next_job.partition.name, next_job.qos.name,
+        #         next_job.true_submit, next_job.true_job_start,
+        #         (
+        #             (next_job.planned_block[0],  len(next_job.planned_block[1]))
+        #             if next_job.planned_block else
+        #             next_job.planned_block
+        #         )
+        #     )
+        #     print(
+        #         min(
+        #             (
+        #                 (
+        #                     job.reqtime, job.nodes,
+        #                     (
+        #                         (job.planned_block[0],  len(job.planned_block[1]))
+        #                         if job.planned_block is not None else
+        #                         job.planned_block
+        #                     )
+        #                 )
+        #                 for job in self.queue.queue
+        #                     if job.partition.name == "standard"
+        #             ),
+        #             key=lambda job_data: (job_data[0], -job_data[1])
+        #         )
+        #     )
+        # print("sched", sched, "bf", bf, "sched_steps", self.num_sched_test_step)
+        # print()
 

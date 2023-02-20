@@ -81,7 +81,8 @@ def bdslowdowns_allocnodes_hist2d_true_sim(
 
 def main(args):
     PLOT_DIR = os.path.join(
-        "/work/y02/y02/awilkins/archer2_jobdata/plots", os.path.basename(args.sim).split(".")[0]
+        "/work/y02/y02/awilkins/data/plots/archer2_jobdata_plots",
+        os.path.basename(args.sim).split(".")[0]
     )
     mkdir_p(PLOT_DIR)
 
@@ -240,11 +241,16 @@ def main(args):
 
     if "qos_waits" in args.plots:
         sim_qos_waits, data_qos_waits = defaultdict(list), defaultdict(list)
+        print("\nlargescale jobs (id - nodes - submit - sim wait - true wait")
         for job in job_history:
             sim_qos_waits[job.qos.name].append((job.start - job.submit).total_seconds() / 60 / 60)
             data_qos_waits[job.qos.name].append(
                 (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
             )
+
+            if job.qos.name == "largescale":
+                print(job.id, job.nodes, job.true_submit, job.start - job.submit, job.true_job_start - job.true_submit, sep=" - ")
+        print()
 
         print("Num Jobs by QOS:")
         print(
