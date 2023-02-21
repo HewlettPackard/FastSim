@@ -17,10 +17,16 @@ def convert_nodelist_to_node_nums(nid_str):
     nid_str = nid_str.strip("nid").strip("[").strip("]")
     for nid_str_entry in nid_str.split(","):
         if "-" not in nid_str_entry:
+            if "[" in nid_str_entry:
+                 nid_str_entry = "".join(nid_str_entry.split("["))
             node_nums.append(int(nid_str_entry))
             continue
 
         nid_str_range = nid_str_entry.split("-")
+        if "[" in nid_str_range[0]:
+             prefix = nid_str_range[0].split("[")[0]
+             nid_str_range[0] = prefix + nid_str_range[0].split("[")[1]
+             nid_str_range[1] = prefix + nid_str_range[1]
         for node_num in range(int(nid_str_range[0]), int(nid_str_range[1]) + 1):
             node_nums.append(node_num)
 
@@ -28,7 +34,7 @@ def convert_nodelist_to_node_nums(nid_str):
 
 
 def get_sbatch_cli_arg(submit_line, long="", short=""):
-    words = submit_line.split(" ")
+    words = submit_line.strip(" ").split(" ")
     dep_arg = None
     for i_last_word, word in enumerate(words[1:]):
         # Batch script or executable marks end of options

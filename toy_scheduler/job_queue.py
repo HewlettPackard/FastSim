@@ -78,18 +78,25 @@ class Queue:
             return
 
         try:
-            resubmit = defaultdict(list)
+            # resubmit = defaultdict(list)
             while self.all_jobs[-1].submit <= self.time:
                 new_job = self.all_jobs.pop()
 
+                # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
+                # the user's next submission. This works slightly better as entire sustem
+                # metrics but makes the wait times by qos an project worse
                 if new_job.qos.hold_job_submit_usr(new_job):
-                    if new_job.is_dependency_target:
-                        self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
-                        continue
-
-                    resubmit[new_job.user].append(new_job)
-
+                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                     continue
+
+                # if new_job.qos.hold_job_submit_usr(new_job):
+                #     if new_job.is_dependency_target:
+                #         self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
+                #         continue
+
+                #     resubmit[new_job.user].append(new_job)
+
+                #     continue
 
                 new_job.submit_job()
 
@@ -111,18 +118,19 @@ class Queue:
         except IndexError: # No more new jobs
             pass
 
-        earliest_resubmit = self.time + timedelta(hours=1)
-        for usr, resubmit_jobs in resubmit.items():
-            for i_job_rev, job in enumerate(reversed(self.all_jobs)):
-                if job.user != usr or job.submit < earliest_resubmit:
-                    continue
-                for job_resubmit in resubmit_jobs:
-                    job_resubmit.submit = job.submit
-                self.all_jobs[-i_job_rev:-i_job_rev] = reversed(resubmit_jobs)
-                break
-            if resubmit_jobs[0].submit == self.time:
-                for job_resubmit in resubmit_jobs:
-                    self.qos_submit_held[job_resubmit.qos].append(job_resubmit.qos_submit_hold())
+        # earliest_resubmit = self.time + timedelta(hours=1)
+        # for usr, resubmit_jobs in resubmit.items():
+        #     for i_job_rev, job in enumerate(reversed(self.all_jobs)):
+        #         if job.user != usr or job.submit < earliest_resubmit:
+        #             continue
+        #         for job_resubmit in resubmit_jobs:
+        #             job_resubmit.submit = job.submit
+        #         self.all_jobs[-i_job_rev:-i_job_rev] = reversed(resubmit_jobs)
+        #         break
+        #     if resubmit_jobs[0].submit == self.time:
+        #         for job_resubmit in resubmit_jobs:
+        #             job.ignore_in_eval = True
+        #             self.qos_submit_held[job_resubmit.qos].append(job_resubmit.qos_submit_hold())
 
         if len(self.queue) != pre_step_priority_len:
             self.priority_sorter.sort(self.queue, self.time)
@@ -285,12 +293,12 @@ class Queue:
 
     def _prep_job_data(self, data_path):
         df_jobs = pd.read_csv(
-            data_path, delimiter='|', lineterminator='\n', header=0,
+            data_path, delimiter='|', lineterminator='\n', header=0, encoding="ISO-8859-1",
             usecols=[
                 "JobID", "Start", "End", "Submit", "Elapsed", "ConsumedEnergyRaw", "AllocNodes",
                 "Timelimit", "ReqCPUS", "ReqNodes", "Group", "QOS", "ReqMem", "User", "Account",
                 "Partition", "SubmitLine", "JobName", "Reason", "State"
-            ]
+            ],
         )
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
@@ -560,8 +568,8 @@ class Dependency:
 
             dep_type = condition.split(":")[0]
             # NOTE after can can take a +time after job_id, just going to ignore these for now
-            if "+" in condition:
-                print(condition)
+            # if "+" in condition:
+            #     print("!!!Some jobs have dependencies with +time offsets!!!")
             jobs = { job_id.split("+")[0] for job_id in condition.split(":")[1:] }
             # Jobs in trace all ran so can assume these conditions are met and treat all the same
             if dep_type == "afterok" or dep_type == "afternotok" or dep_type == "afterany":

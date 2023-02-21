@@ -25,14 +25,19 @@ class Controller:
     def __init__(self, config_file):
         self.config = get_config(config_file)
 
-        self.partitions = Partitions(self.config.node_events_dump, self.config.reservations_dump)
+        self.partitions = Partitions(
+            self.config.slurm_conf, self.config.considered_partitions,
+            self.config.node_events_dump, self.config.reservations_dump
+        )
 
         self.queue = Queue(self.config.job_dump, self.partitions)
         self.init_time = self.queue.time
         self.time = self.queue.time
         priority_sorter = MFPrioritySorter(
-            self.config.assocs_dump, timedelta(minutes=5), timedelta(days=2), self.init_time, 100,
-            500, 300, timedelta(days=14), 0, 10000,
+            self.config.assocs_dump, timedelta(minutes=5), self.config.PriorityDecayHalfLife,
+            self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
+            self.config.PriorityWeightFairshare, self.config.PriorityMaxAge,
+            self.config.PriorityWeightPartition, self.config.PriorityWeightQOS,
             len({ partition.priority_tier for partition in self.partitions.partitions }) == 1
         )
         self.queue.set_priority_sorter(priority_sorter)
@@ -117,7 +122,7 @@ class Controller:
         return self.running_jobs[-1].end
 
     def run_sim(self, max_steps=0):
-        import numpy as np
+        # import numpy as np
         sim_start = time.time()
 
         times_sched, times_bf, times_sched_bf = [], [], []
@@ -128,7 +133,7 @@ class Controller:
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
-            start = time.time()
+            # start = time.time()
             self.time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
                 self.queue.next_newjob()
@@ -160,16 +165,16 @@ class Controller:
 
             if max_steps and self.step_cnt > max_steps:
                 break
-            if bf and not sched:
-                times_bf.append(time.time() - start)
-            if sched and not bf:
-                times_sched.append(time.time() - start)
-            if sched and bf:
-                times_sched_bf.append(time.time() - start)
-            if self.step_cnt % 1000 == 0:
-                print("bf: ", np.mean(times_bf))
-                print("sched: ", np.mean(times_sched))
-                print("sched & bf: ", np.mean(times_sched_bf))
+            # if bf and not sched:
+            #     times_bf.append(time.time() - start)
+            # if sched and not bf:
+            #     times_sched.append(time.time() - start)
+            # if sched and bf:
+            #     times_sched_bf.append(time.time() - start)
+            # if self.step_cnt % 1000 == 0:
+            #     print("bf: ", np.mean(times_bf))
+            #     print("sched: ", np.mean(times_sched))
+            #     print("sched & bf: ", np.mean(times_sched_bf))
 
         elapsed = time.time() - sim_start
         print(
