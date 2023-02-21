@@ -117,7 +117,7 @@ class Controller:
         return self.running_jobs[-1].end
 
     def run_sim(self, max_steps=0):
-        # import numpy as np
+        import numpy as np
         sim_start = time.time()
 
         times_sched, times_bf, times_sched_bf = [], [], []
@@ -128,7 +128,7 @@ class Controller:
         next_sched_time = self.time + self.config.sched_interval
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
-            # start = time.time()
+            start = time.time()
             self.time = min(
                 next_bf_time, next_sched_time, next_fairtree_time, self._next_job_finish(),
                 self.queue.next_newjob()
@@ -160,16 +160,16 @@ class Controller:
 
             if max_steps and self.step_cnt > max_steps:
                 break
-            # if bf and not sched:
-            #     times_bf.append(time.time() - start)
-            # if sched and not bf:
-            #     times_sched.append(time.time() - start)
-            # if sched and bf:
-            #     times_sched_bf.append(time.time() - start)
-            # if self.step_cnt % 1000 == 0:
-            #     print("bf: ", np.mean(times_bf))
-            #     print("sched: ", np.mean(times_sched))
-            #     print("sched & bf: ", np.mean(times_sched_bf))
+            if bf and not sched:
+                times_bf.append(time.time() - start)
+            if sched and not bf:
+                times_sched.append(time.time() - start)
+            if sched and bf:
+                times_sched_bf.append(time.time() - start)
+            if self.step_cnt % 1000 == 0:
+                print("bf: ", np.mean(times_bf))
+                print("sched: ", np.mean(times_sched))
+                print("sched & bf: ", np.mean(times_sched_bf))
 
         elapsed = time.time() - sim_start
         print(
@@ -191,9 +191,6 @@ class Controller:
 
         pre_submit_running_jobs_len = len(self.running_jobs)
 
-        if sched or bf:
-            self.partitions.clean_free_blocks(self.time, self.config.bf_resolution)
-
         if sched:
             self.num_sched_test_step = 0
             sched_depth = sched_depth if sched_depth is not None else (
@@ -206,6 +203,8 @@ class Controller:
             self._sched_main(sched_depth)
 
         if bf:
+            self.partitions.clean_free_blocks(self.time, self.config.bf_resolution)
+
             self.num_bf_test_step = 0
 
             self._backfill()
@@ -286,8 +285,9 @@ class Controller:
             free_nodes_ready_now = {
                 node
                 for interval, nodes in self.partitions.free_blocks[reservation].items()
-                    if interval[0] == self.time
+                    if interval[0] <= self.time
                     for node in nodes
+                        if node.running_job is None
             }
 
             if not free_nodes_ready_now:
@@ -373,12 +373,12 @@ class Controller:
                 res_queue.pop(i_job)
 
     def _sched_main(self, sched_depth):
-        free_blocks = self.partitions.free_blocks[""]
         free_nodes_ready_now = {
             node
             for interval, nodes in self.partitions.free_blocks[""].items()
-                if interval[0] == self.time
+                if interval[0] <= self.time
                 for node in nodes
+                    if node.running_job is None
         }
         if not free_nodes_ready_now:
             return
@@ -396,9 +396,10 @@ class Controller:
             job_end = self.time + job.reqtime
 
             # Check for plnd nodes that the job could run on now
-            # NOTE Some of these may have been given to a higher prio job earlier in this loop os
-            # shouldn't be considered. Although this job didn't get enough nodes to run and so
-            # interval_times has not been updated, we should consider these nodes spoken for
+            # NOTE Reason for "if node in free_nodes_ready_now". Some of nodes may have been given
+            # to a higher prio job earlier in this loop so shouldn't be considered. Although the
+            # job they were given to  didn't get enough nodes to run and so interval_times has not
+            # been updated, we should consider these nodes spoken for
             valid_nodes = {
                 node
                 for node in self._yield_planned_nodes_ready_now(job, job_end)
@@ -588,10 +589,11 @@ class Controller:
 
             num_free_nodes = 0
             selected_intervals, unsorted_intervals = defaultdict(set), set()
-            usage_block_start, usage_block_end = self.time, self.time + reqtime
 
             # NOTE Earliest starting first, then sort by earliest end
             sorted_free_blocks = sorted(free_blocks.items(), key=lambda block: block[0])
+            usage_block_start = sorted_free_blocks[0][0][0]
+            usage_block_end = usage_block_start + reqtime
 
             for i_block, (interval, nodes) in enumerate(sorted_free_blocks):
                 if interval[1] >= usage_block_end and interval[1] >= interval[0] + reqtime:
@@ -657,9 +659,14 @@ class Controller:
                         for nodes in selected_intervals.values():
                             for node in nodes:
                                 job.planned_block[1].add(node)
-                                node.interval_times.insert(-1, usage_block_start)
-                                node.interval_times.insert(-1, usage_block_end)
-                                node.interval_times[1:-1] = sorted(node.interval_times[1:-1])
+                                for i_time, time in enumerate(node.interval_times):
+                                    if time > usage_block_start:
+                                        node.interval_times.insert(i_time, usage_block_start)
+                                        node.interval_times.insert(i_time + 1, usage_block_end)
+                                        break
+                                # node.interval_times.insert(-1, usage_block_start)
+                                # node.interval_times.insert(-1, usage_block_end)
+                                # node.interval_times[1:-1] = sorted(node.interval_times[1:-1])
                                 node.jobs_plnd.add(job)
 
                     recompute_max_reqtime_run_now = False
@@ -895,7 +902,7 @@ class Controller:
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
             # "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
-            "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
+            "Idle Nodes = {} (highmem {})\t" \
             "NodesReserved = {} (Idle = {})\tNodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
                 sum(

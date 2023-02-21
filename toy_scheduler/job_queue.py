@@ -78,11 +78,17 @@ class Queue:
             return
 
         try:
+            resubmit = defaultdict(list)
             while self.all_jobs[-1].submit <= self.time:
                 new_job = self.all_jobs.pop()
 
                 if new_job.qos.hold_job_submit_usr(new_job):
-                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
+                    if new_job.is_dependency_target:
+                        self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
+                        continue
+
+                    resubmit[new_job.user].append(new_job)
+
                     continue
 
                 new_job.submit_job()
@@ -104,6 +110,19 @@ class Queue:
 
         except IndexError: # No more new jobs
             pass
+
+        earliest_resubmit = self.time + timedelta(hours=1)
+        for usr, resubmit_jobs in resubmit.items():
+            for i_job_rev, job in enumerate(reversed(self.all_jobs)):
+                if job.user != usr or job.submit < earliest_resubmit:
+                    continue
+                for job_resubmit in resubmit_jobs:
+                    job_resubmit.submit = job.submit
+                self.all_jobs[-i_job_rev:-i_job_rev] = reversed(resubmit_jobs)
+                break
+            if resubmit_jobs[0].submit == self.time:
+                for job_resubmit in resubmit_jobs:
+                    self.qos_submit_held[job_resubmit.qos].append(job_resubmit.qos_submit_hold())
 
         if len(self.queue) != pre_step_priority_len:
             self.priority_sorter.sort(self.queue, self.time)
@@ -433,6 +452,8 @@ class Job:
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
         self.reservation = reservation_arg
 
+        self.is_dependency_target = False
+
         # Some features are not relevant for scheduluing (AssocMaxCpuMinutesPerJobLimit means for
         # archer that the user hasnt been allocated time yet, reservations, jobs held by user, ...)
         # and some I cant implemented with available data (JobArrayTaskLimit is usually specified
@@ -468,6 +489,10 @@ class Job:
     def init_dependency(self, jid_to_job):
         if self.dependency:
             self.dependency.convert_jids_to_jobs(jid_to_job)
+
+            for jobs in self.dependency.conditions.values():
+                for job in jobs:
+                    job.is_dependency_target = True
 
     def submit_job(self, time=None):
         if time:

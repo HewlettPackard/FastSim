@@ -29,14 +29,7 @@ class Partitions:
 
     def remove_free_block(self, node):
         interval = (node.interval_times[0], node.interval_times[-1])
-        try:
-            self.free_blocks[node.reservation][interval].remove(node)
-        except KeyError:
-            print(node.interval_times)
-            print(node.running_job)
-            print(node.down)
-            print(node.jobs_plnd)
-            raise KeyError
+        self.free_blocks[node.reservation][interval].remove(node)
         if not self.free_blocks[node.reservation][interval]:
             self.free_blocks[node.reservation].pop(interval)
 
