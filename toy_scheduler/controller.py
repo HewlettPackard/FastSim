@@ -9,6 +9,7 @@ from config import get_config
 from partition import Partitions
 from job_queue import Queue
 from priority_sorters import MFPrioritySorter
+from fairshare import FairTree
 
 
 # TODO Currently nodes can only be in one reservation's free blocks, so if a node is going
@@ -33,15 +34,20 @@ class Controller:
         self.queue = Queue(self.config.job_dump, self.partitions)
         self.init_time = self.queue.time
         self.time = self.queue.time
-        priority_sorter = MFPrioritySorter(
+
+        active_usrs = set(job.user for job in self.queue.all_jobs)
+        self.fairtree = FairTree(
             self.config.assocs_dump, timedelta(minutes=5), self.config.PriorityDecayHalfLife,
+            self.init_time, active_usrs, self.config.approx_excess_assocs, self.partitions
+        )
+        priority_sorter = MFPrioritySorter(
             self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
             self.config.PriorityWeightFairshare, self.config.PriorityMaxAge,
             self.config.PriorityWeightPartition, self.config.PriorityWeightQOS,
             len({ partition.priority_tier for partition in self.partitions.partitions }) == 1
         )
+        priority_sorter.fairtree = self.fairtree
         self.queue.set_priority_sorter(priority_sorter)
-        self.fairtree = priority_sorter.fairtree
 
         self.num_sched_test_step = 0
         self.num_bf_test_step = 0
@@ -983,6 +989,20 @@ class Controller:
             ) +
             "))\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
+
+        # if self.queue.queue:
+            # print("ID - QOS - Age - Size - FairShare - Total")
+            # print("User - FairShare")
+            # for job in self.queue.queue:
+                # qos_factor = int(self.queue.priority_sorter._qos_priority(job))
+                # age_factor = int(self.queue.priority_sorter._age_priority(job))
+                # size_factor = int(self.queue.priority_sorter._size_priority(job))
+                # fairshare_factor = int(self.queue.priority_sorter._fairshare_priority(job))
+                # print(
+                #     job.id, qos_factor, age_factor, size_factor, fairshare_factor,
+                #     qos_factor + age_factor + size_factor + fairshare_factor, sep=" - "
+                # )
+                # print(job.user, self.queue.priority_sorter._fairshare_priority(job))
 
         # max_endtime_ready_num_nodes = defaultdict(int)
         # for interval, nodes in self.partitions.free_blocks[""].items():

@@ -8,6 +8,12 @@ import pandas as pd
 from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_raw
 
 
+# TODO Rework the resource limits implementation, there is a lot of overlap that could be removed
+
+# TODO Interaction between queue, priority sorter, and resource limits has become a bit of mess,
+# clean
+
+
 class Queue:
     def __init__(self, job_data, partitions, priority_sorter=None):
         self.priority_sorter = priority_sorter
@@ -24,6 +30,7 @@ class Queue:
             "highmem" : QOS("highmem", 0.1, -1, -1, 256, 16, 16),
             "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16, 16)
         }
+        self.assoc_limits = {}
 
         df_jobs = self._prep_job_data(job_data)
         self.time = df_jobs.Start.min()
@@ -54,6 +61,18 @@ class Queue:
 
     def set_priority_sorter(self, priority_sorter):
         self.priority_sorter = priority_sorter
+
+        assoclimit_created = {}
+        for assoc, node in priority_sorter.fairtree.assocs.items():
+            if assoc[::2] in assoclimit_created:
+                self.assoc_limits[assoc] = assoclimit_created[assoc[::2]]
+            else:
+                self.assoc_limits[assoc] = AssocLimit(node.max_jobs, node.max_submit)
+                if node.partition is None:
+                    assoclimit_created[assoc[::2]] = self.assoc_limits[assoc]
+
+        for qos in self.qoss.values():
+            qos.set_assoc_limits(self.assoc_limits)
 
     def next_newjob(self):
         try:
@@ -384,14 +403,30 @@ class QOS:
         self.name = name
         self.priority = priority
 
-        # TODO This is dumb, implement in a way that means in these cases the quota is just not tracked
-        grp_jobs = 1000000000000 if grp_jobs == -1 else grp_jobs
-        grp_nodes = 1000000000000 if grp_nodes == -1 else grp_nodes
-        usr_jobs = 1000000000000 if usr_jobs == -1 else usr_jobs
-        usr_nodes = 1000000000000 if usr_nodes == -1 else usr_nodes
-        usr_submit = 1000000000000 if usr_submit == -1 else usr_submit
+        self.assoc_limits = {}
 
-        self.grp_quotas = []
+        self.limits_set = set()
+        if grp_jobs == -1:
+            grp_jobs = 1000000000000
+        else:
+            self.limits_set.add(ResourceLimit.GRP_JOBS)
+        if grp_nodes == -1:
+            grp_jobs = 1000000000000
+        else:
+            self.limits_set.add(ResourceLimit.GRP_NODES)
+        if usr_jobs == -1:
+            usr_jobs = 1000000000000
+        else:
+            self.limits_set.add(ResourceLimit.USR_JOBS)
+        if usr_nodes == -1:
+            usr_nodes = 1000000000000
+        else:
+            self.limits_set.add(ResourceLimit.USR_NODES)
+        if usr_submit == -1:
+            usr_submit = 1000000000000
+        else:
+            self.limits_set.add(ResourceLimit.USR_SUBMIT)
+
         self.job_quota_remaining = grp_jobs
         self.node_quota_remaining = grp_nodes
 
@@ -400,28 +435,40 @@ class QOS:
 
         self.usr_submit_quota_remaining = defaultdict(lambda: usr_submit)
 
-    def job_submitted(self, user):
-        self.usr_submit_quota_remaining[user] -= 1
+    def set_assoc_limits(self, assoc_limits):
+        self.assoc_limits = assoc_limits
 
-    def job_launched(self, user, nodes):
+    def job_submitted(self, job):
+        self.usr_submit_quota_remaining[job.user] -= 1
+        self.assoc_limits[job.assoc].submit_quota_remaining -= 1
+
+    def job_launched(self, job):
         self.job_quota_remaining -= 1
-        self.node_quota_remaining -= nodes
-        self.usr_job_quota_remaining[user] -= 1
-        self.usr_node_quota_remaining[user] -= nodes
+        self.node_quota_remaining -= job.nodes
+        self.usr_job_quota_remaining[job.user] -= 1
+        self.usr_node_quota_remaining[job.user] -= job.nodes
+        self.assoc_limits[job.assoc].job_quota_remaining -= 1
 
-    def job_ended(self, user, nodes):
+    def job_ended(self, job):
         self.job_quota_remaining += 1
-        self.node_quota_remaining += nodes
-        self.usr_job_quota_remaining[user] += 1
-        self.usr_node_quota_remaining[user] += nodes
-        self.usr_submit_quota_remaining[user] += 1
+        self.node_quota_remaining += job.nodes
+        self.usr_job_quota_remaining[job.user] += 1
+        self.usr_node_quota_remaining[job.user] += job.nodes
+        self.usr_submit_quota_remaining[job.user] += 1
+        self.assoc_limits[job.assoc].job_quota_remaining += 1
+        self.assoc_limits[job.assoc].submit_quota_remaining += 1
 
     def hold_job(self, job):
         return (
             not self.job_quota_remaining or
             job.nodes > self.node_quota_remaining or
             not self.usr_job_quota_remaining[job.user] or
-            job.nodes > self.usr_node_quota_remaining[job.user]
+            job.nodes > self.usr_node_quota_remaining[job.user] or
+            (
+                (not self.assoc_limits[job.assoc].job_quota_remaining)
+                if ResourceLimit.ASSOC_JOBS not in self.limits_set
+                else False
+            )
         )
 
     def hold_job_grp(self, job):
@@ -430,12 +477,48 @@ class QOS:
     def hold_job_usr(self, job):
         return (
             not self.usr_job_quota_remaining[job.user] or
-            job.nodes > self.usr_node_quota_remaining[job.user]
+            job.nodes > self.usr_node_quota_remaining[job.user] or 
+            (
+                (not self.assoc_limits[job.assoc].job_quota_remaining)
+                if ResourceLimit.ASSOC_JOBS not in self.limits_set
+                else False
+            )
         )
 
     def hold_job_submit_usr(self, job):
-        return not self.usr_submit_quota_remaining[job.user]
+        return (
+            not self.usr_submit_quota_remaining[job.user] or
+            (
+                (not self.assoc_limits[job.assoc].submit_quota_remaining)
+                if ResourceLimit.ASSOC_SUBMIT not in self.limits_set
+                else False
+            )
+        )
 
+
+class AssocLimit:
+    def __init__(self, jobs, submit):
+        jobs = 1000000000000 if jobs is None else jobs
+        submit = 1000000000000 if submit is None else submit
+
+        self.job_quota_remaining = jobs
+        self.submit_quota_remaining = submit
+
+    # def job_submitted(self, user):
+    #     self.submit_quota_remaining -= 1
+
+    # def job_launched(self, user, nodes):
+    #     self.job_quota_remaining -= 1
+
+    # def job_ended(self, user, nodes):
+    #     self.job_quota_remaining += 1
+    #     self.submit_quota_remaining += 1
+
+    # def hold_job(self, job):
+    #     return not self.job_quota_remaining
+
+    # def hold_job_submit_usr(self, job):
+    #     return not self.submit_quota_remaining
 
 class Job:
     def __init__(
@@ -459,6 +542,8 @@ class Job:
         self.name = name
         self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
         self.reservation = reservation_arg
+
+        self.assoc = (self.user, self.partition, self.account)
 
         self.is_dependency_target = False
 
@@ -505,7 +590,7 @@ class Job:
     def submit_job(self, time=None):
         if time:
             self.submit = time
-        self.qos.job_submitted(self.user)
+        self.qos.job_submitted(self)
         return self
 
     def start_job(self, time : datetime):
@@ -527,7 +612,7 @@ class Job:
         for node in self.assigned_nodes:
             node.set_free()
             node.running_job = None
-        self.qos.job_ended(self.user, self.nodes)
+        self.qos.job_ended(self)
         self.state = JobState.COMPLETED
         return self
 
@@ -550,7 +635,7 @@ class Job:
         self.state = JobState.PRIORITY
         if not self.launch_time:
             self.launch_time = time
-        self.qos.job_launched(self.user, self.nodes)
+        self.qos.job_launched(self)
         return self
 
 
@@ -635,4 +720,16 @@ class JobState(Enum):
     QOS_SUBMIT = 5
     DEPENDENCY = 6
     QOS_RESOURCES = 7
+
+
+# NOTE Not using these currently but will be useful when it comes to resource limits overriding
+# one another
+class ResourceLimit(Enum):
+    GRP_NODES = 1
+    GRP_JOBS = 2
+    USR_JOBS = 3
+    USR_NODES = 4
+    USR_SUBMIT = 5
+    ASSOC_SUBMIT = 6
+    ASSOC_JOBS = 7
 

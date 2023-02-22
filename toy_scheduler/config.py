@@ -5,6 +5,10 @@ from collections import namedtuple
 import yaml
 
 # XXX Priority weights are set to ARCHER2 defaults currently
+# NOTE: approx_excess_assocs remove a number of unused in workload traceassocs from the assoc tree,
+# this is relevant since the fairshare factor scales with the tot number of user assocs. This
+# happend because to capture all assocs they need to be dumped "withDeleted" so you end up with
+# some assocs that never existed at any given time.
 defaults = {
     "bd_threshold" : 60, "defer" : False, "default_queue_depth" : 100, "sched_interval" : 60,
     "sched_min_interval" : 2000000, "PriorityCalcPeriod" : 5, "bf_resolution" : 60,
@@ -14,7 +18,7 @@ defaults = {
     "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlongjobs_sliding_reservations" : "",
     "PriorityMaxAge" : 7, "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0,
     "PriorityWeightFairshare" : 0, "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0,
-    "PriorityWeightQOS" : 0
+    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]

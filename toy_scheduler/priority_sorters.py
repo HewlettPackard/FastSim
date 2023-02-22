@@ -1,13 +1,9 @@
-from fairshare import FairTree
-from partition import Partition
-
-
 # TODO Implement partitions as objects attached to the nodes rather than having to got through this
 # dictionary using the name
 class MFPrioritySorter:
     def __init__(
-        self, assoc_file, calc_period, decay_halflife, init_time, size_weight, age_weight,
-        fairshare_weight, max_age, partition_weight, qos_weight, no_partition_priority_tiers
+        self, init_time, size_weight, age_weight, fairshare_weight, max_age, partition_weight,
+        qos_weight, no_partition_priority_tiers
     ):
         self.size_weight = size_weight / 5860
         self.age_weight = age_weight
@@ -17,7 +13,7 @@ class MFPrioritySorter:
         self.qos_weight = qos_weight
         self.time = init_time
 
-        self.fairtree = FairTree(assoc_file, calc_period, decay_halflife, init_time)
+        self.fairtree = None
 
         # Relevant for ARCHER2
         self.no_partition_priority_tiers = no_partition_priority_tiers
@@ -65,7 +61,7 @@ class MFPrioritySorter:
 
     def _fairshare_priority(self, job):
         return (
-            self.fairtree.uniq_users[job.account][job.user].fairshare_factor *
+            self.fairtree.assocs[job.assoc].fairshare_factor *
             self.fairshare_weight
         )
 
