@@ -922,28 +922,15 @@ class Controller:
         print(
             "{} (step {}):\n".format(self.time, self.step_cnt) +
             # "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
-            "Idle Nodes = {} (highmem {})\t" \
+            "Idle Nodes = {} (".format(sum(1 for node in self.partitions.nodes if node.free)) +
+            " ".join(
+                "{}={}".format(
+                    partition.name, sum(1 for node in partition.nodes if node.free)
+                ) for partition in self.partitions.partitions
+            ) +
+            ")\t" + 
             "NodesReserved = {} (Idle = {})\tNodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.free and "standard" in [
-                            partition.name for partition in node.partitions
-                        ]
-                    )
-                ),
-                # sum(
-                #     len(nodes)
-                #     for interval, nodes in self.partitions.free_blocks[""].items()
-                #         if interval[0] <= self.time
-                # ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.free and "highmem" in [
-                            partition.name for partition in node.partitions
-                        ]
-                    )
-                ),
                 sum(1 for node in self.partitions.nodes if node.reservation),
                 sum(
                    1 for node in self.partitions.nodes if (
@@ -970,16 +957,24 @@ class Controller:
                 sum(1 for node in self.down_nodes if not node.running_job),
                 self.power_usage
             ) +
-            "QueueSize = {} (held by priority {} (partition highmem {} qos lowpriority {}) " \
-            "dependency {} qos holds {} (".format(
+            "QueueSize = {} (held by priority {} (partition ".format(
                 (
                     len(self.queue.queue) +
                     len(self.queue.waiting_dependency) +
                     sum(len(jobs) for jobs in self.queue.qos_held.values())
                 ),
-                len(self.queue.queue),
-                sum(1 for job in self.queue.queue if job.partition.name == "highmem"),
-                sum(1 for job in self.queue.queue if job.qos.name == "lowpriority"),
+                len(self.queue.queue)
+            ) +
+            " ".join(
+                "{}={}".format(
+                    partition.name,
+                    sum(1 for job in self.queue.queue if job.partition is partition)
+                ) for partition in self.partitions.partitions
+            ) +
+            " qos lowpriority {}) ".format(
+                sum(1 for job in self.queue.queue if job.qos.name == "lowpriority")
+            ) +
+            "dependency {} qos holds {} (".format(
                 len(self.queue.waiting_dependency),
                 sum(len(jobs) for jobs in self.queue.qos_held.values())
             ) +
@@ -995,6 +990,23 @@ class Controller:
                 "{}={}".format(
                     qos.name, len(jobs)
                 ) for qos, jobs in self.queue.qos_submit_held.items() if len(jobs)
+            ) +
+            " " +
+            " ".join(
+                "{}={}".format(
+                    (assoc[0], assoc[1].name, assoc[2]), 
+                    sum(
+                        1
+                        for jobs in self.queue.qos_submit_held.values()
+                            for job in jobs
+                                if job.assoc == assoc
+                    )
+                )
+                for assoc in set(
+                    job.assoc
+                    for jobs in self.queue.qos_submit_held.values()
+                        for job in jobs
+                )
             ) +
             "))\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
