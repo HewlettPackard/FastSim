@@ -230,7 +230,7 @@ class Partitions:
                         nid_partitions[nid].add(partition)
                 else:
                     for nid in convert_nodelist_to_node_nums(nodes):
-                        nid_partitions[nodes].add(partition)
+                        nid_partitions[nid].add(partition)
 
         nodes, hpe_restrictlong_nids = [], []
         for nid in nid_partitions:

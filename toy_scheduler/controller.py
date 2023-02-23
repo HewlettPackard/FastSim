@@ -33,7 +33,10 @@ class Controller:
             self.config.node_events_dump, self.config.reservations_dump
         )
 
-        self.queue = Queue(self.config.job_dump, self.partitions, self.config.qos_dump)
+        self.queue = Queue(
+            self.config.job_dump, self.partitions, self.config.qos_dump,
+            self.config.considered_partitions
+        )
         self.init_time = self.queue.time
         self.time = self.queue.time
 

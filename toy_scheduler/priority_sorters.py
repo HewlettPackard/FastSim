@@ -69,7 +69,7 @@ class MFPrioritySorter:
         )
 
     def _partition_priority(self, job):
-        return self.partitions[job.partition].priority_weight * self.partition_weight
+        return job.partition.priority_weight * self.partition_weight
 
     def _qos_priority(self, job):
         return job.qos.priority * self.qos_weight

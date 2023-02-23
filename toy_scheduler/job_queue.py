@@ -15,13 +15,15 @@ from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_r
 
 
 class Queue:
-    def __init__(self, job_data, partitions, qos_dump, priority_sorter=None):
+    def __init__(
+        self, job_data, partitions, qos_dump, considered_partitions, priority_sorter=None
+    ):
         self.priority_sorter = priority_sorter
 
         self.qoss = self._read_in_qos(qos_dump)
         self.assoc_limits = {}
 
-        df_jobs = self._prep_job_data(job_data)
+        df_jobs = self._prep_job_data(job_data, considered_partitions)
         self.time = df_jobs.Start.min()
         self.all_jobs = [
             Job(
@@ -312,7 +314,7 @@ class Queue:
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
             (df_jobs.End.notna()) & (df_jobs.AllocNodes != "0") & (df_jobs.AllocNodes != 0) &
-            (df_jobs.Partition.isin(considered_partitions))
+            (df_jobs.Partition.isin(considered_partitions)) & (df_jobs.Timelimit.notna())
         ]
 
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
@@ -360,7 +362,7 @@ class Queue:
         else:
             print(
                 "!!!More than 25% of jobs do not have a valid ConsumedEnergy,"
-                "setting all ConsumedEnergies to zer!!!"
+                "setting all ConsumedEnergies to zero!!!"
             )
             df_jobs = df_jobs.assign(ConsumedEnergyRaw=0.0)
             mean_power_per_node = 0.0
@@ -391,7 +393,8 @@ class Queue:
         df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
             lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
         )
-
+    
+        df_jobs.JobID = df_jobs.JobID.apply(lambda row: str(row))    
         print("{} heterogeneous JobIDs converted to regular JobIDs".format(
             len(df_jobs.loc[(df_jobs.JobID.str.contains("+", regex=False))])
         ))
@@ -409,6 +412,8 @@ class Queue:
                     acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
                 )
         print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
+
+        print("{} Jobs in workload trace".format(len(df_jobs)))
 
         return df_jobs
 
@@ -624,7 +629,7 @@ class QOS:
 # overidde what for each job since the association relationship is constant
 class AssocLimit:
     def __init__(self, assoc_jobs, assoc_submit):
-        self.tracked_limits = {}
+        self.tracked_limits = set()
         if assoc_jobs is not None:
             self.tracked_limits.add(ResourceLimit.ASSOC_JOBS)
         if assoc_submit is not None:
@@ -651,7 +656,7 @@ class AssocLimit:
         if (
             ResourceLimit.ASSOC_JOBS in self.tracked_limits and
             ResourceLimit.ASSOC_JOBS in limits
-            and not self.job_quota_remaining
+            and not self.assoc_job_quota_remaining
         ):
             return True
 
@@ -660,8 +665,8 @@ class AssocLimit:
     def hold_job_submit(self, limits):
         if (
             ResourceLimit.ASSOC_SUBMIT in self.tracked_limits and
-            ResourceLimit.ASSOC_ASSOC_SUBMIT in limits
-            and not self.submit_quota_remaining
+            ResourceLimit.ASSOC_SUBMIT in limits
+            and not self.assoc_submit_quota_remaining
         ):
             return True
 
@@ -687,7 +692,20 @@ class Job:
         self.qos = qos
         self.partition = partition
         self.name = name
-        self.dependency = Dependency(dependency_arg, user, name) if dependency_arg else None
+        # Dependency may be submitted incorrectly (typo or wrong format)
+        if (
+            dependency_arg is None or
+            all(
+                dep_type not in dependency_arg
+                    for dep_type in [
+                        "after:", "afterany:", "afterburstbuffer", "aftercorr", "afternotok",
+                        "afterok", "singleton"
+                    ]
+            )
+        ):
+            self.dependency = None
+        else:
+            self.dependency =  Dependency(dependency_arg, user, name)
         self.reservation = reservation_arg
 
         self.assoc = (self.user, self.partition, self.account)

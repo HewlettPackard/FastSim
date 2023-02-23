@@ -35,24 +35,24 @@ def convert_nodelist_to_node_nums(nid_str):
 
 def get_sbatch_cli_arg(submit_line, long="", short=""):
     words = submit_line.strip(" ").split(" ")
-    dep_arg = None
+    target_arg = None
     for i_last_word, word in enumerate(words[1:]):
         # Batch script or executable marks end of options
         if word[0] != "-" and (words[i_last_word][0] != "-" or "=" in words[i_last_word]):
             break
         if long:
             if long + "=" in word:
-                dep_arg = word.split(long + "=")[1]
+                target_arg = word.split(long + "=")[1]
                 break
             if word == long:
-                dep_arg = words[i_last_word + 2]
+                target_arg = words[i_last_word + 2]
                 break
         if short:
             if word == short:
-                dep_arg = words[i_last_word + 2]
+                target_arg = words[i_last_word + 2]
                 break
 
-    return dep_arg
+    return target_arg
 
 
 def timelimit_str_to_timedelta(t_str):
