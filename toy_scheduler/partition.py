@@ -223,7 +223,7 @@ class Partitions:
                 partition = Partition(name, prio_tier, prio_jobfactor)
                 partitions[name] = partition
 
-                nodes = line.split("Nodes=")[1].split(" ")[0]
+                nodes = line.split(" Nodes=")[1].split(" ")[0]
 
                 if nodes in nodesets:
                     for nid in nodesets[nodes]:
