@@ -971,10 +971,15 @@ class Controller:
                     sum(1 for job in self.queue.queue if job.partition is partition)
                 ) for partition in self.partitions.partitions
             ) +
-            " qos lowpriority {}) ".format(
-                sum(1 for job in self.queue.queue if job.qos.name == "lowpriority")
+            " qos " +
+            " ".join(
+                "{}={}".format(
+                    qos.name, sum(1 for job in self.queue.queue if job.qos is qos)
+                ) 
+                for qos in self.queue.qoss.values()
+                    if sum(1 for job in self.queue.queue if job.qos is qos)
             ) +
-            "dependency {} qos holds {} (".format(
+            ") dependency {} qos holds {} (".format(
                 len(self.queue.waiting_dependency),
                 sum(len(jobs) for jobs in self.queue.qos_held.values())
             ) +

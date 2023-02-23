@@ -92,6 +92,22 @@ class Queue:
             while self.all_jobs[-1].submit <= self.time:
                 new_job = self.all_jobs.pop()
 
+                # NOTE This association is no longer allowed to run jobs. This was not true in the 
+                # past since the job is in the workload trace. For now just skip these jobs and
+                # keep this in mind. Could also give assoc a default allocation in this case.
+                if (
+                    (
+                        ResourceLimit.ASSOC_JOBS in new_job.qos.controlled_by_assoc and
+                        not self.assoc_limits[new_job.assoc].assoc_job_quota
+                    ) or
+                    (
+                        ResourceLimit.ASSOC_SUBMIT in new_job.qos.controlled_by_assoc and
+                        not self.assoc_limits[new_job.assoc].assoc_submit_quota
+                    )
+                ):
+                    continue
+
+
                 # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
                 # the user's next submission. This works slightly better as entire sustem
                 # metrics but makes the wait times by qos an project worse
@@ -493,11 +509,11 @@ class QOS:
         if assoc_submit is not None:
             self.tracked_limits.add(ResourceLimit.ASSOC_SUBMIT)
 
-        self.controlled_by_assoc = [
+        self.controlled_by_assoc = {
             limit
             for limit in [ResourceLimit.ASSOC_JOBS, ResourceLimit.ASSOC_SUBMIT]
                 if limit not in self.tracked_limits
-        ]
+                }
 
         self.job_quota_remaining = grp_jobs
         self.node_quota_remaining = grp_nodes
@@ -637,6 +653,9 @@ class AssocLimit:
 
         self.assoc_job_quota_remaining = assoc_jobs
         self.assoc_submit_quota_remaining = assoc_submit
+
+        self.assoc_job_quota = assoc_jobs
+        self.assoc_submit_quota = assoc_submit
 
     def job_submitted(self):
         if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
