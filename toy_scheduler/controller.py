@@ -324,6 +324,9 @@ class Controller:
                     continue
                 self.num_sched_test_step += 1
 
+                if job.qos.hold_job(job):
+                    continue
+
                 job_end = self.time + job.reqtime
 
                 # Check for plnd nodes that the job could run on now
@@ -412,6 +415,9 @@ class Controller:
             if self.num_sched_test_step >= sched_depth:
                 break
             self.num_sched_test_step += 1
+
+            if job.qos.hold_job(job):
+                continue
 
             job_end = self.time + job.reqtime
 
@@ -601,6 +607,9 @@ class Controller:
             if self.num_bf_test_step >= self.config.bf_max_job_test:
                 continue
             self.num_bf_test_step += 1
+
+            if job.qos.hold_job(job):
+                continue
 
             reqtime = job.reqtime + self.config.bf_resolution
 

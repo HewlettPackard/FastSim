@@ -44,7 +44,6 @@ class Queue:
 
         self.waiting_dependency = []
 
-        self.qos_held = { qos : [] for qos in self.qoss.values() }
         self.qos_submit_held = { qos : [] for qos in self.qoss.values() }
 
         self._verify_reservations(partitions.valid_reservations)
@@ -131,10 +130,6 @@ class Queue:
                         self.waiting_dependency.append(new_job.dependency_hold())
                         continue
 
-                if new_job.qos.hold_job(new_job):
-                    self.qos_held[new_job.qos].append(new_job.qos_resource_hold(self.time))
-                    continue
-
                 if new_job.reservation:
                     self.reservations[new_job.reservation].append(new_job.priority(self.time))
                     continue
@@ -172,9 +167,7 @@ class Queue:
                 continue
 
             released_job = self.waiting_dependency[i_job]
-            if released_job.qos.hold_job(released_job):
-                self.qos_held[released_job.qos].append(released_job.qos_resource_hold(self.time))
-            elif released_job.reservation:
+            if released_job.reservation:
                 self.reservations[released_job.reservation].append(
                     released_job.priority(self.time)
                 )
@@ -209,10 +202,6 @@ class Queue:
                         self.waiting_dependency.append(job.dependency_hold())
                         continue
 
-                if job.qos.hold_job(job):
-                    self.qos_held[job.qos].append(job.qos_resource_hold(self.time))
-                    continue
-
                 if job.reservation:
                     self.reservations[job.reservation].append(job.priority(self.time))
                 else:
@@ -220,32 +209,6 @@ class Queue:
 
             for i_job in reversed(released):
                 self.qos_submit_held[qos].pop(i_job)
-
-        for qos in self.qos_held.keys():
-            if not self.qos_held[qos]:
-                continue
-
-            self.priority_sorter.sort(self.qos_held[qos], self.time)
-
-            released = []
-            for i_job_rev, job in enumerate(reversed(self.qos_held[qos])):
-                if job.qos.hold_job_grp(job):
-                    break
-
-                # Lower priority jobs can be released if the job infront is only held by a per user
-                # limit
-                if job.qos.hold_job_usr(job):
-                    continue
-
-                if job.reservation:
-                    self.reservations[job.reservation].append(job.priority(self.time))
-                else:
-                    self.queue.append(job.priority(self.time))
-
-                released.append(-(i_job_rev + 1))
-
-            for i_job in reversed(released):
-                self.qos_held[qos].pop(i_job)
 
     def _verify_reservations(self, valid_reservations):
         removed_res, removed_res_cnt = set(), 0
@@ -362,7 +325,7 @@ class Queue:
                     else 0.0
                 ),
                 axis=1
-            ).mean
+            ).mean()
             df_jobs.ConsumedEnergyRaw = df_jobs.apply(
                 lambda row: (
                     float(row.ConsumedEnergyRaw)
@@ -539,7 +502,7 @@ class QOS:
 
         self.assoc_limits[job.assoc].job_submitted()
 
-    def job_launched(self, job):
+    def job_started(self, job):
         if ResourceLimit.GRP_JOBS in self.tracked_limits:
             self.job_quota_remaining -= 1
         if ResourceLimit.GRP_NODES in self.tracked_limits:
@@ -551,7 +514,7 @@ class QOS:
         if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
             self.assoc_job_quota_remaining[job.assoc] -= 1
 
-        self.assoc_limits[job.assoc].job_launched()
+        self.assoc_limits[job.assoc].job_started()
 
     def job_ended(self, job):
         if ResourceLimit.GRP_JOBS in self.tracked_limits:
@@ -661,7 +624,7 @@ class AssocLimit:
         if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
             self.assoc_submit_quota_remaining -= 1
 
-    def job_launched(self):
+    def job_started(self):
         if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
             self.assoc_job_quota_remaining -= 1
 
@@ -782,6 +745,7 @@ class Job:
         self.end = time + self.runtime
         self.endlimit = time + self.reqtime
         self.state = JobState.RUNNING
+        self.qos.job_started(self)
         return self
 
     def assign_node(self, node):
@@ -808,18 +772,11 @@ class Job:
         self.state = JobState.DEPENDENCY
         return self
 
-    # The earliest stage when job starts accruing age
-    def qos_resource_hold(self, time):
-        self.state = JobState.QOS_RESOURCES
-        self.launch_time = time
-        return self
-
     # When the QOS recognises the job as 'running' for resource limits accounting
     def priority(self, time):
         self.state = JobState.PRIORITY
         if not self.launch_time:
             self.launch_time = time
-        self.qos.job_launched(self)
         return self
 
 
