@@ -929,31 +929,39 @@ class Controller:
                 ) for partition in self.partitions.partitions
             ) +
             ")\t" + 
-            "NodesReserved = {} (Idle = {})\tNodesHPE_RestrictLongJobs = {} (Idle = {})\t" \
-            "NodesDown = {}\tPower = {:.4f} MW\n".format(
+            "NodesReserved = {} (Idle = {})\t".format(
                 sum(1 for node in self.partitions.nodes if node.reservation),
                 sum(
                    1 for node in self.partitions.nodes if (
                         node.reservation and not node.running_job and not node.down
                     )
-                ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.reservation_schedule and
-                        "HPE_RestrictLongJobs" in [
-                            res_sched[2] for res_sched in node.reservation_schedule
-                        ]
+                )
+            ) +
+            (
+                "NodesHPE_RestrictLongJobs = {} (Idle = {})\t".format(
+                    sum(
+                        1 for node in self.partitions.nodes if (
+                            node.reservation_schedule and
+                            "HPE_RestrictLongJobs" in [
+                                res_sched[2] for res_sched in node.reservation_schedule
+                            ]
+                        )
+                    ),
+                    sum(
+                        1 for node in self.partitions.nodes if (
+                            node.reservation_schedule and
+                            "HPE_RestrictLongJobs" in [
+                                res_sched[2] for res_sched in node.reservation_schedule
+                            ] and
+                            not node.running_job and not node.down
+                        )
                     )
-                ),
-                sum(
-                    1 for node in self.partitions.nodes if (
-                        node.reservation_schedule and
-                        "HPE_RestrictLongJobs" in [
-                            res_sched[2] for res_sched in node.reservation_schedule
-                        ] and
-                        not node.running_job and not node.down
-                    )
-                ),
+                )
+                if self.sliding_reservations
+                else ""
+            )
+            + 
+            "NodesDown = {}\tPower = {:.4f} MW\n".format(
                 sum(1 for node in self.down_nodes if not node.running_job),
                 self.power_usage
             ) +
