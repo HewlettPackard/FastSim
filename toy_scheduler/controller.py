@@ -937,7 +937,7 @@ class Controller:
                     partition.name, sum(1 for node in partition.nodes if node.free)
                 ) for partition in self.partitions.partitions
             ) +
-            ")\t" + 
+            ")\t" +
             "NodesReserved = {} (Idle = {})\t".format(
                 sum(1 for node in self.partitions.nodes if node.reservation),
                 sum(
@@ -969,18 +969,13 @@ class Controller:
                 if self.sliding_reservations
                 else ""
             )
-            + 
+            +
             "NodesDown = {}\tPower = {:.4f} MW\n".format(
                 sum(1 for node in self.down_nodes if not node.running_job),
                 self.power_usage
             ) +
-            "QueueSize = {} (held by priority {} (partition ".format(
-                (
-                    len(self.queue.queue) +
-                    len(self.queue.waiting_dependency) +
-                    sum(len(jobs) for jobs in self.queue.qos_held.values())
-                ),
-                len(self.queue.queue)
+            "Priority Queue = {} (partition ".format(
+                len(self.queue.queue) + len(self.queue.waiting_dependency),
             ) +
             " ".join(
                 "{}={}".format(
@@ -992,20 +987,14 @@ class Controller:
             " ".join(
                 "{}={}".format(
                     qos.name, sum(1 for job in self.queue.queue if job.qos is qos)
-                ) 
+                )
                 for qos in self.queue.qoss.values()
                     if sum(1 for job in self.queue.queue if job.qos is qos)
             ) +
-            ") dependency {} qos holds {} (".format(
-                len(self.queue.waiting_dependency),
-                sum(len(jobs) for jobs in self.queue.qos_held.values())
+            ") dependency {} ".format(
+                len(self.queue.waiting_dependency)
             ) +
-            " ".join(
-                "{}={}".format(
-                    qos.name, len(jobs)
-                ) for qos, jobs in self.queue.qos_held.items() if len(jobs)
-            ) +
-            ") qos submit holds {} (".format(
+            "qos submit holds {} (".format(
                 sum(len(jobs) for jobs in self.queue.qos_submit_held.values())
             ) +
             " ".join(
@@ -1013,24 +1002,7 @@ class Controller:
                     qos.name, len(jobs)
                 ) for qos, jobs in self.queue.qos_submit_held.items() if len(jobs)
             ) +
-            " " +
-            " ".join(
-                "{}={}".format(
-                    (assoc[0], assoc[1].name, assoc[2]), 
-                    sum(
-                        1
-                        for jobs in self.queue.qos_submit_held.values()
-                            for job in jobs
-                                if job.assoc == assoc
-                    )
-                )
-                for assoc in set(
-                    job.assoc
-                    for jobs in self.queue.qos_submit_held.values()
-                        for job in jobs
-                )
-            ) +
-            "))\tRunningJobs = {}\n".format(len(self.running_jobs))
+            ")\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
 
         # if self.queue.queue:
