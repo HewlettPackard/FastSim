@@ -76,25 +76,7 @@ class Controller:
         )
 
         # [next_event, submitted, cleared, start, end, nodes, name]
-        if self.config.hpe_restrictlongjobs_sliding_reservations:
-            with open(self.config.hpe_restrictlongjobs_sliding_reservations, "rb") as f:
-                hpe_restrictlong_res = pickle.load(f)
-
-            for submitted in sorted(hpe_restrictlong_res):
-                print("{}: {}".format(submitted, len(hpe_restrictlong_res[submitted])))
-
-            nid_to_node = { node.id : node for node in self.partitions.nodes }
-            self.sliding_reservations = [
-                [
-                    submitted, submitted, submitted + timedelta(hours=1),
-                    submitted + timedelta(hours=1, minutes=5),
-                    submitted + timedelta(days=365, hours=1, minutes=5),
-                    [ nid_to_node[nid] for nid in hpe_restrictlong_res[submitted] ],
-                    "HPE_RestrictLongJobs"
-                ] for submitted in sorted(hpe_restrictlong_res)
-            ]
-
-        else:
+        if self.config.hpe_restrictlongjobs_sliding_reservations == "const":
             self.sliding_reservations = [
                 [
                     submitted, submitted, submitted + timedelta(hours=1),
@@ -120,6 +102,27 @@ class Controller:
                 ]
             ]
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
+
+        elif self.config.hpe_restrictlongjobs_sliding_reservations:
+            with open(self.config.hpe_restrictlongjobs_sliding_reservations, "rb") as f:
+                hpe_restrictlong_res = pickle.load(f)
+
+            for submitted in sorted(hpe_restrictlong_res):
+                print("{}: {}".format(submitted, len(hpe_restrictlong_res[submitted])))
+
+            nid_to_node = { node.id : node for node in self.partitions.nodes }
+            self.sliding_reservations = [
+                [
+                    submitted, submitted, submitted + timedelta(hours=1),
+                    submitted + timedelta(hours=1, minutes=5),
+                    submitted + timedelta(days=365, hours=1, minutes=5),
+                    [ nid_to_node[nid] for nid in hpe_restrictlong_res[submitted] ],
+                    "HPE_RestrictLongJobs"
+                ] for submitted in sorted(hpe_restrictlong_res)
+            ]
+
+        else:
+            self.sliding_reservations = []
 
         self.step_cnt = 0
         self.previous_print_hour = self.time.hour
