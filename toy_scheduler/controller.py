@@ -296,7 +296,7 @@ class Controller:
             if not self.partitions.free_blocks[reservation]:
                 print(
                     "!!!\nReservation {} has no nodes, deleting {} job\n!!!".format(
-                        reservation, len(self.queue.reservation[reservation])
+                        reservation, len(self.queue.reservations[reservation])
                     )
                 )
                 self.queue.reservations[reservation] = []
