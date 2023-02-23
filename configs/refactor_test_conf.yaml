@@ -1,4 +1,5 @@
 assocs_dump: "/work/y02/y02/awilkins/data/slurm_data_dumps/sacctmgr_assocs_230222.csv"
+qos_dump: "/work/y02/y02/awilkins/data/slurm_data_dumps/sacctmgr_qos_230223.csv"
 node_events_dump: "/work/y02/y02/awilkins/data/slurm_data_dumps/sacctmgr_events_221019-230129.csv"
 reservations_dump: "/work/y02/y02/awilkins/data/slurm_data_dumps/sinfo_reservations_070223_someHPErestrictlongremoved.csv"
 job_dump: "/work/y02/y02/awilkins/data/slurm_data_dumps/sacct_2022-10-19_2022-11-09_allocations_noconvert.txt"

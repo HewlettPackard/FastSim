@@ -15,21 +15,10 @@ from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_r
 
 
 class Queue:
-    def __init__(self, job_data, partitions, priority_sorter=None):
+    def __init__(self, job_data, partitions, qos_dump, priority_sorter=None):
         self.priority_sorter = priority_sorter
 
-        # hardcoded for now
-        self.qoss = {
-            "normal" : QOS("normal", 0, -1, -1, -1, -1, -1),
-            "reservation" : QOS("reservation", 0.1, -1, -1, -1, -1, -1),
-            "taskfarm" : QOS("taskfarm", 0.1, -1, 128, 512, 32, 128),
-            "standard" : QOS("standard", 0.1, -1, -1, 1024, 16, 64),
-            "short" : QOS("short", 0.1, -1, -1, 32, 4, 16),
-            "long" : QOS("long", 0.1, 2048, -1, 512, 16, 16),
-            "largescale" : QOS("largescale", 0.1, -1, -1, -1, 1, 8),
-            "highmem" : QOS("highmem", 0.1, -1, -1, 256, 16, 16),
-            "lowpriority" : QOS("lowpriority", 0.0002, -1, -1, 2048, 16, 16)
-        }
+        self.qoss = self._read_in_qos(qos_dump)
         self.assoc_limits = {}
 
         df_jobs = self._prep_job_data(job_data)
@@ -104,11 +93,11 @@ class Queue:
                 # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
                 # the user's next submission. This works slightly better as entire sustem
                 # metrics but makes the wait times by qos an project worse
-                if new_job.qos.hold_job_submit_usr(new_job):
+                if new_job.qos.hold_job_submit(new_job):
                     self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                     continue
 
-                # if new_job.qos.hold_job_submit_usr(new_job):
+                # if new_job.qos.hold_job_submit(new_job):
                 #     if new_job.is_dependency_target:
                 #         self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                 #         continue
@@ -183,9 +172,14 @@ class Queue:
             if not self.qos_submit_held[qos]:
                 continue
 
-            released = []
+            # Pretending that the user resubmits in order of original submission as soon as allowed
+            released, users_waiting = [], set()
             for i_job, job in enumerate(self.qos_submit_held[qos]):
-                if job.qos.hold_job_submit_usr(job):
+                if job.user in users_waiting:
+                    continue
+
+                if job.qos.hold_job_submit(job):
+                    users_waiting.add(job.user)
                     continue
 
                 # Pretend the job is now resubmitted
@@ -210,13 +204,9 @@ class Queue:
                 self.qos_submit_held[qos].pop(i_job)
 
         for qos in self.qos_held.keys():
-            # Dont need to check if we know nothing will be released
-            if (
-                not self.qos_held[qos] or
-                not qos.job_quota_remaining or
-                not qos.node_quota_remaining
-            ):
+            if not self.qos_held[qos]:
                 continue
+
             self.priority_sorter.sort(self.qos_held[qos], self.time)
 
             released = []
@@ -243,7 +233,7 @@ class Queue:
         removed_res, removed_res_cnt = set(), 0
         for job in self.all_jobs:
             if not job.reservation:
-                # short qos is reservationrequired
+                # short qos is reservation required
                 if job.qos.name == "short":
                     job.reservation = "shortqos"
                 else:
@@ -310,7 +300,7 @@ class Queue:
             )
         )
 
-    def _prep_job_data(self, data_path):
+    def _prep_job_data(self, data_path, considered_partitions):
         df_jobs = pd.read_csv(
             data_path, delimiter='|', lineterminator='\n', header=0, encoding="ISO-8859-1",
             usecols=[
@@ -322,7 +312,7 @@ class Queue:
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
             (df_jobs.End.notna()) & (df_jobs.AllocNodes != "0") & (df_jobs.AllocNodes != 0) &
-            (df_jobs.Partition != "serial")
+            (df_jobs.Partition.isin(considered_partitions))
         ]
 
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
@@ -331,7 +321,9 @@ class Queue:
         df_jobs.Elapsed = df_jobs.End - df_jobs.Start
         df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
+        with_dupes = len(df_jobs)
         df_jobs = df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")]
+        print("{} duplicate ids removed".format(len(df_jobs) - with_dupes))
 
         convert_to_raw(df_jobs, "AllocNodes")
 
@@ -341,15 +333,38 @@ class Queue:
                 (df_jobs.ConsumedEnergyRaw == "")
             ]
         )
-        df_jobs.ConsumedEnergyRaw = df_jobs.apply(
-            lambda row: (
-                float(row.ConsumedEnergyRaw) if (
-                    row.ConsumedEnergyRaw == row.ConsumedEnergyRaw and # ie. not nan
-                    row.ConsumedEnergyRaw != 0.0 and row.ConsumedEnergyRaw != ""
-                ) else float(550 * row.AllocNodes * row.Elapsed.total_seconds())
-            ),
-            axis=1
-        )
+        if num_bad / len(df_jobs) < 0.25:
+            mean_power_per_node = df_jobs.loc[
+                (df_jobs.ConsumedEnergyRaw.notna()) & (df_jobs.ConsumedEnergyRaw != 0.0) &
+                (df_jobs.ConsumedEnergyRaw != "")
+            ].apply(
+                lambda row: (
+                    float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds() / row.AllocNodes
+                    if row.Elapsed.total_seconds() != 0
+                    else 0.0
+                ),
+                axis=1
+            ).mean
+            df_jobs.ConsumedEnergyRaw = df_jobs.apply(
+                lambda row: (
+                    float(row.ConsumedEnergyRaw)
+                    if (
+                        row.ConsumedEnergyRaw == row.ConsumedEnergyRaw and
+                        row.ConsumedEnergyRaw != 0.0 and
+                        row.ConsumedEnergyRaw != ""
+                    )
+                    else float(mean_power_per_node * row.AllocNodes * row.Elapsed.total_seconds())
+                ),
+                axis=1
+            )
+        else:
+            print(
+                "!!!More than 25% of jobs do not have a valid ConsumedEnergy,"
+                "setting all ConsumedEnergies to zer!!!"
+            )
+            df_jobs = df_jobs.assign(ConsumedEnergyRaw=0.0)
+            mean_power_per_node = 0.0
+
         df_jobs["Power"] = df_jobs.apply(
             lambda row: (
                 (
@@ -360,7 +375,7 @@ class Queue:
         )
         num_bad += len(df_jobs.loc[(df_jobs.Power >= 10000000)])
         for i, anomalous_row in df_jobs.loc[(df_jobs.Power >= 10000000)].iterrows():
-            df_jobs.at[i, "Power"] = 550 * df_jobs.at[i, "AllocNodes"]
+            df_jobs.at[i, "Power"] = mean_power_per_node * df_jobs.at[i, "AllocNodes"]
         print("Salvaged {} jobs with bad ConsumedEnergyRaw".format(num_bad))
 
         df_jobs["TruePowerPerNode"] = df_jobs.apply(
@@ -397,128 +412,260 @@ class Queue:
 
         return df_jobs
 
+    def _read_in_qos(self, qos_dump):
+        df_qos = pd.read_csv(
+            qos_dump,  delimiter='|', lineterminator='\n', header=0, encoding="ISO-8859-1"
+        )
 
+        qoss = {}
+
+        for _, row in df_qos.iterrows():
+            qoss[row.Name] = QOS(
+                row.Name,
+                int(row.Priority),
+                (
+                    None
+                    if pd.isna(row.GrpTRES) or "node=" not in row.GrpTRES
+                    else int(row.GrpTRES.split("node=")[1].split(",")[0])
+                ),
+                None if pd.isna(row.GrpJobs) else int(row.GrpJobs),
+                None if pd.isna(row.GrpSubmit) else int(row.GrpSubmit),
+                (
+                    None
+                    if pd.isna(row.MaxTRESPU) or "node=" not in row.MaxTRESPU
+                    else int(row.MaxTRESPU.split("node=")[1].split(",")[0])
+                ),
+                None if pd.isna(row.MaxJobsPU) else int(row.MaxJobsPU),
+                None if pd.isna(row.MaxJobs) else int(row.MaxJobs),
+                None if pd.isna(row.MaxSubmitPU) else int(row.MaxSubmitPU),
+                None if pd.isna(row.MaxSubmit) else int(row.MaxSubmit)
+            )
+
+        # print(
+        #     "Name: Priority GrpTRES GrpJobs GrpSubmit MaxTRESPU MaxJobsPU MaxJobs MaxSubmitPU"
+        #     "MaxSubmit"
+        # )
+        # for name, qos in qoss.items():
+        #     print(name, end=": ")
+        #     print(
+        #         qos.priority, qos.node_quota_remaining, qos.job_quota_remaining,
+        #         qos.submit_quota_remaining, qos.usr_node_quota_remaining["dummy"],
+        #         qos.usr_job_quota_remaining["dummy"], qos.assoc_job_quota_remaining["dummy"],
+        #         qos.usr_submit_quota_remaining["dummy"], qos.assoc_submit_quota_remaining["dummy"],
+        #         sep=" "
+        #     )
+
+        return qoss
+
+
+# NOTE Ignoring any QOS linked to the partition that could override this (not applicable for LUMI
+# or ARCHER). Also ignoring per account resource limits.
 class QOS:
-    def __init__(self, name, priority, grp_nodes, grp_jobs, usr_nodes, usr_jobs, usr_submit):
+    def __init__(
+        self, name, priority, grp_nodes, grp_submit, grp_jobs, usr_nodes, usr_jobs, assoc_jobs,
+        usr_submit, assoc_submit
+    ):
         self.name = name
         self.priority = priority
 
         self.assoc_limits = {}
 
-        self.limits_set = set()
-        if grp_jobs == -1:
-            grp_jobs = 1000000000000
-        else:
-            self.limits_set.add(ResourceLimit.GRP_JOBS)
-        if grp_nodes == -1:
-            grp_jobs = 1000000000000
-        else:
-            self.limits_set.add(ResourceLimit.GRP_NODES)
-        if usr_jobs == -1:
-            usr_jobs = 1000000000000
-        else:
-            self.limits_set.add(ResourceLimit.USR_JOBS)
-        if usr_nodes == -1:
-            usr_nodes = 1000000000000
-        else:
-            self.limits_set.add(ResourceLimit.USR_NODES)
-        if usr_submit == -1:
-            usr_submit = 1000000000000
-        else:
-            self.limits_set.add(ResourceLimit.USR_SUBMIT)
+        self.tracked_limits = set()
+        if grp_jobs is not None:
+            self.tracked_limits.add(ResourceLimit.GRP_JOBS)
+        if grp_nodes is not None:
+            self.tracked_limits.add(ResourceLimit.GRP_NODES)
+        if grp_submit is not None:
+            self.tracked_limits.add(ResourceLimit.GRP_SUBMIT)
+        if usr_jobs is not None:
+            self.tracked_limits.add(ResourceLimit.USR_JOBS)
+        if usr_nodes is not None:
+            self.tracked_limits.add(ResourceLimit.USR_NODES)
+        if usr_submit is not None:
+            self.tracked_limits.add(ResourceLimit.USR_SUBMIT)
+        if assoc_jobs is not None:
+            self.tracked_limits.add(ResourceLimit.ASSOC_JOBS)
+        if assoc_submit is not None:
+            self.tracked_limits.add(ResourceLimit.ASSOC_SUBMIT)
+
+        self.controlled_by_assoc = [
+            limit
+            for limit in [ResourceLimit.ASSOC_JOBS, ResourceLimit.ASSOC_SUBMIT]
+                if limit not in self.tracked_limits
+        ]
 
         self.job_quota_remaining = grp_jobs
         self.node_quota_remaining = grp_nodes
+        self.submit_quota_remaining = grp_submit
 
         self.usr_job_quota_remaining = defaultdict(lambda: usr_jobs)
         self.usr_node_quota_remaining = defaultdict(lambda: usr_nodes)
-
         self.usr_submit_quota_remaining = defaultdict(lambda: usr_submit)
+
+        self.assoc_job_quota_remaining = defaultdict(lambda: assoc_jobs)
+        self.assoc_submit_quota_remaining = defaultdict(lambda: assoc_submit)
 
     def set_assoc_limits(self, assoc_limits):
         self.assoc_limits = assoc_limits
 
     def job_submitted(self, job):
-        self.usr_submit_quota_remaining[job.user] -= 1
-        self.assoc_limits[job.assoc].submit_quota_remaining -= 1
+        if ResourceLimit.GRP_SUBMIT in self.tracked_limits:
+            self.submit_quota_remaining -= 1
+        if ResourceLimit.USR_SUBMIT in self.tracked_limits:
+            self.usr_submit_quota_remaining[job.user] -= 1
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining[job.assoc] -= 1
+
+        self.assoc_limits[job.assoc].job_submitted()
 
     def job_launched(self, job):
-        self.job_quota_remaining -= 1
-        self.node_quota_remaining -= job.nodes
-        self.usr_job_quota_remaining[job.user] -= 1
-        self.usr_node_quota_remaining[job.user] -= job.nodes
-        self.assoc_limits[job.assoc].job_quota_remaining -= 1
+        if ResourceLimit.GRP_JOBS in self.tracked_limits:
+            self.job_quota_remaining -= 1
+        if ResourceLimit.GRP_NODES in self.tracked_limits:
+            self.node_quota_remaining -= job.nodes
+        if ResourceLimit.USR_JOBS in self.tracked_limits:
+            self.usr_job_quota_remaining[job.user] -= 1
+        if ResourceLimit.USR_NODES in self.tracked_limits:
+            self.usr_node_quota_remaining[job.user] -= job.nodes
+        if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
+            self.assoc_job_quota_remaining[job.assoc] -= 1
+
+        self.assoc_limits[job.assoc].job_launched()
 
     def job_ended(self, job):
-        self.job_quota_remaining += 1
-        self.node_quota_remaining += job.nodes
-        self.usr_job_quota_remaining[job.user] += 1
-        self.usr_node_quota_remaining[job.user] += job.nodes
-        self.usr_submit_quota_remaining[job.user] += 1
-        self.assoc_limits[job.assoc].job_quota_remaining += 1
-        self.assoc_limits[job.assoc].submit_quota_remaining += 1
+        if ResourceLimit.GRP_JOBS in self.tracked_limits:
+            self.job_quota_remaining += 1
+        if ResourceLimit.GRP_NODES in self.tracked_limits:
+            self.node_quota_remaining += job.nodes
+        if ResourceLimit.GRP_SUBMIT in self.tracked_limits:
+            self.submit_quota_remaining += 1
+        if ResourceLimit.USR_JOBS in self.tracked_limits:
+            self.usr_job_quota_remaining[job.user] += 1
+        if ResourceLimit.USR_NODES in self.tracked_limits:
+            self.usr_node_quota_remaining[job.user] += job.nodes
+        if ResourceLimit.USR_SUBMIT in self.tracked_limits:
+            self.usr_submit_quota_remaining[job.user] += job.nodes
+        if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
+            self.assoc_job_quota_remaining[job.assoc] += 1
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining[job.assoc] += 1
+
+        self.assoc_limits[job.assoc].job_ended()
 
     def hold_job(self, job):
-        return (
-            not self.job_quota_remaining or
-            job.nodes > self.node_quota_remaining or
-            not self.usr_job_quota_remaining[job.user] or
-            job.nodes > self.usr_node_quota_remaining[job.user] or
-            (
-                (not self.assoc_limits[job.assoc].job_quota_remaining)
-                if ResourceLimit.ASSOC_JOBS not in self.limits_set
-                else False
-            )
-        )
+        return self.hold_job_grp(job) or self.hold_job_usr(job)
 
     def hold_job_grp(self, job):
-        return not self.job_quota_remaining or job.nodes > self.node_quota_remaining
+        if (
+            ResourceLimit.GRP_JOBS in self.tracked_limits and
+            not self.job_quota_remaining
+        ):
+            return True
+        if (
+            ResourceLimit.GRP_NODES in self.tracked_limits and
+            job.nodes > self.node_quota_remaining
+        ):
+            return True
+
+        return False
 
     def hold_job_usr(self, job):
-        return (
-            not self.usr_job_quota_remaining[job.user] or
-            job.nodes > self.usr_node_quota_remaining[job.user] or 
-            (
-                (not self.assoc_limits[job.assoc].job_quota_remaining)
-                if ResourceLimit.ASSOC_JOBS not in self.limits_set
-                else False
-            )
-        )
+        if (
+            ResourceLimit.USR_JOBS in self.tracked_limits and
+            not self.usr_job_quota_remaining[job.user]
+        ):
+            return True
+        if (
+            ResourceLimit.USR_NODES in self.tracked_limits and
+            job.nodes > self.usr_node_quota_remaining[job.user]
+        ):
+            return True
+        if (
+            ResourceLimit.ASSOC_JOBS in self.tracked_limits and
+            not self.assoc_job_quota_remaining[job.assoc]
+        ):
+            return True
+
+        return self.assoc_limits[job.assoc].hold_job(self.controlled_by_assoc)
+
+    def hold_job_submit(self, job):
+        return self.hold_job_submit_grp(job) or self.hold_job_submit_usr(job)
+
+    def hold_job_submit_grp(self, job):
+        if (
+            ResourceLimit.GRP_SUBMIT in self.tracked_limits and
+            not self.submit_quota_remaining
+        ):
+            return True
+
+        return False
 
     def hold_job_submit_usr(self, job):
-        return (
-            not self.usr_submit_quota_remaining[job.user] or
-            (
-                (not self.assoc_limits[job.assoc].submit_quota_remaining)
-                if ResourceLimit.ASSOC_SUBMIT not in self.limits_set
-                else False
-            )
-        )
+        if (
+            ResourceLimit.USR_SUBMIT in self.tracked_limits and
+            not self.usr_submit_quota_remaining[job.user]
+        ):
+            return True
+        if (
+            ResourceLimit.ASSOC_SUBMIT in self.tracked_limits and
+            not self.assoc_submit_quota_remaining[job.assoc]
+        ):
+            return True
+
+        return self.assoc_limits[job.assoc].hold_job_submit(self.controlled_by_assoc)
 
 
+# NOTE This is only setup for user association limits. Slurm can have limits set on account
+# associations and cluster association which can override the associtions below them. Implementing
+# this would required extending this class for accounts also and having it interact with the
+# assoctree so it knows what checks to pass on to its children. Each user assoc would then have
+# a single assoc limit class with some of the qoutas refering to the parent account AssocLimit
+# class, like the QOS does to this class currently. Would not need to check which resource limits
+# overidde what for each job since the association relationship is constant
 class AssocLimit:
-    def __init__(self, jobs, submit):
-        jobs = 1000000000000 if jobs is None else jobs
-        submit = 1000000000000 if submit is None else submit
+    def __init__(self, assoc_jobs, assoc_submit):
+        self.tracked_limits = {}
+        if assoc_jobs is not None:
+            self.tracked_limits.add(ResourceLimit.ASSOC_JOBS)
+        if assoc_submit is not None:
+            self.tracked_limits.add(ResourceLimit.ASSOC_SUBMIT)
 
-        self.job_quota_remaining = jobs
-        self.submit_quota_remaining = submit
+        self.assoc_job_quota_remaining = assoc_jobs
+        self.assoc_submit_quota_remaining = assoc_submit
 
-    # def job_submitted(self, user):
-    #     self.submit_quota_remaining -= 1
+    def job_submitted(self):
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining -= 1
 
-    # def job_launched(self, user, nodes):
-    #     self.job_quota_remaining -= 1
+    def job_launched(self):
+        if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
+            self.assoc_job_quota_remaining -= 1
 
-    # def job_ended(self, user, nodes):
-    #     self.job_quota_remaining += 1
-    #     self.submit_quota_remaining += 1
+    def job_ended(self):
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining += 1
+        if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
+            self.assoc_job_quota_remaining += 1
 
-    # def hold_job(self, job):
-    #     return not self.job_quota_remaining
+    def hold_job(self, limits):
+        if (
+            ResourceLimit.ASSOC_JOBS in self.tracked_limits and
+            ResourceLimit.ASSOC_JOBS in limits
+            and not self.job_quota_remaining
+        ):
+            return True
 
-    # def hold_job_submit_usr(self, job):
-    #     return not self.submit_quota_remaining
+        return False
+
+    def hold_job_submit(self, limits):
+        if (
+            ResourceLimit.ASSOC_SUBMIT in self.tracked_limits and
+            ResourceLimit.ASSOC_ASSOC_SUBMIT in limits
+            and not self.submit_quota_remaining
+        ):
+            return True
+
+        return False
 
 class Job:
     def __init__(
@@ -722,14 +869,13 @@ class JobState(Enum):
     QOS_RESOURCES = 7
 
 
-# NOTE Not using these currently but will be useful when it comes to resource limits overriding
-# one another
 class ResourceLimit(Enum):
     GRP_NODES = 1
     GRP_JOBS = 2
-    USR_JOBS = 3
-    USR_NODES = 4
-    USR_SUBMIT = 5
-    ASSOC_SUBMIT = 6
-    ASSOC_JOBS = 7
+    GRP_SUBMIT = 3
+    USR_JOBS = 4
+    USR_NODES = 5
+    USR_SUBMIT = 6
+    ASSOC_SUBMIT = 7
+    ASSOC_JOBS = 8
 

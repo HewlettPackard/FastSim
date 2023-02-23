@@ -18,7 +18,7 @@ defaults = {
     "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlongjobs_sliding_reservations" : "",
     "PriorityMaxAge" : 7, "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0,
     "PriorityWeightFairshare" : 0, "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0,
-    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0
+    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0, "JobRequeue" : 0
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
@@ -28,12 +28,13 @@ vals_s = [
 ]
 vals_min = ["bd_threshold", "PriorityCalcPeriod", "bf_window"]
 vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
+vals_bool = ["JobRequeue"]
 
 # TODO Include node/partition information dump once setup to read this
 mandatory_fields = set(
     (
         "assocs_dump", "node_events_dump", "reservations_dump", "job_dump", "slurm_conf",
-        "considered_partitions"
+        "considered_partitions", "qos_dump"
     )
 )
 
@@ -96,6 +97,8 @@ def get_config(config_file):
         config_dict[option] = timedelta(minutes=config_dict[option])
     for option in vals_days:
         config_dict[option] = timedelta(days=config_dict[option])
+    for option in vals_bools:
+        config_dict[option] = bool(config_dict[option])
 
     config_namedtuple = namedtuple("config", config_dict)
     config = config_namedtuple(**config_dict)

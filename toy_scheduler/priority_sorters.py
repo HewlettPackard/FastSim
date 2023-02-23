@@ -34,7 +34,9 @@ class MFPrioritySorter:
         if self.no_partition_priority_tiers:
             queue.sort(
                 key=lambda job: (
-                    sum(priority_calc(job) for priority_calc in self.priority_factors), job.id
+                    sum(priority_calc(job) for priority_calc in self.priority_factors),
+                    self.time - job.submit,
+                    job.id
                 )
             )
             return
@@ -43,6 +45,7 @@ class MFPrioritySorter:
             key=lambda job: (
                 self._partition_priority_tier(job),
                 sum(priority_calc(job) for priority_calc in self.priority_factors),
+                self.time - job.submit,
                 job.id
             )
         )

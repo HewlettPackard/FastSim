@@ -21,6 +21,8 @@ from fairshare import FairTree
 # works so I will just replace at the moment of going only if there are idle nodes at that time.
 # This should in practice be pretty much the same
 
+# TODO Job requeuing for down nodes.
+
 
 class Controller:
     def __init__(self, config_file):
@@ -31,14 +33,15 @@ class Controller:
             self.config.node_events_dump, self.config.reservations_dump
         )
 
-        self.queue = Queue(self.config.job_dump, self.partitions)
+        self.queue = Queue(self.config.job_dump, self.partitions, self.config.qos_dump)
         self.init_time = self.queue.time
         self.time = self.queue.time
 
-        active_usrs = set(job.user for job in self.queue.all_jobs)
+        active_usrs = { job.user for job in self.queue.all_jobs }
         self.fairtree = FairTree(
-            self.config.assocs_dump, timedelta(minutes=5), self.config.PriorityDecayHalfLife,
-            self.init_time, active_usrs, self.config.approx_excess_assocs, self.partitions
+            self.config.assocs_dump, self.config.PriorityCalcPeriod,
+            self.config.PriorityDecayHalfLife, self.init_time, active_usrs,
+            self.config.approx_excess_assocs, self.partitions
         )
         priority_sorter = MFPrioritySorter(
             self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
