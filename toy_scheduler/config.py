@@ -97,7 +97,7 @@ def get_config(config_file):
         config_dict[option] = timedelta(minutes=config_dict[option])
     for option in vals_days:
         config_dict[option] = timedelta(days=config_dict[option])
-    for option in vals_bools:
+    for option in vals_bool:
         config_dict[option] = bool(config_dict[option])
 
     config_namedtuple = namedtuple("config", config_dict)
