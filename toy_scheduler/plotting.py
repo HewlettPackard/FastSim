@@ -126,7 +126,7 @@ def main(args):
 
     assoc_tree = FairTree(
         controller.config.assocs_dump, timedelta(minutes=1), timedelta(minutes=1),
-        controller.init_time
+        controller.init_time, set(), 0, controller.partitions
     )
 
     data_bd_slowdowns = [
@@ -186,7 +186,7 @@ def main(args):
         proj_sim_wait, proj_data_wait = defaultdict(list), defaultdict(list)
         proj_nodehours = defaultdict(float)
         for job in job_history:
-            proj = assoc_tree.uniq_users[job.account][job.user].parent.parent.name
+            proj = assoc_tree.assocs[job.assoc].parent.parent.name
             sim_wait = (job.start - job.submit).total_seconds() / 60 / 60
             data_wait = (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
 
