@@ -30,7 +30,7 @@ from data_reader import SlurmDataReader
 class Controller:
     def __init__(self, config_file):
         self.config = get_config(config_file)
-        
+
         self.data_reader = SlurmDataReader(
             self.config.slurm_conf, self.config.node_events_dump, self.config.resv_dump,
             self.config.job_dump, self.config.qos_dump
@@ -563,7 +563,8 @@ class Controller:
         window_end = self.time + self.config.bf_window
 
         # Stop backfilling when conditions met:
-        # - No jobs with a reqtime that could fit on nodes that are avaible to run the job now
+        # - No jobs with a reqtime that could fit on nodes that are avaible to run the job now (or
+        # no nodes left that could run jobs now)                                                                                            
         # - All busy nodes that will go idle before the next bf_interval has at least one future
         #   reservation
         # This is done to speed up sim. There may be some small discrepancy since one future
@@ -588,8 +589,6 @@ class Controller:
         if not nodes_needing_resv and not nodes_free_now:
             return backfill_now
 
-        num_nodes_needing_resv = len(nodes_needing_resv)
-
         if nodes_free_now:
             max_reqtime_run_now = min(
                 (
@@ -603,32 +602,20 @@ class Controller:
         else:
             max_reqtime_run_now = timedelta()
 
-        if nodes_needing_resv:
-            max_reqtime_nodes_needing_resv = min(
-                (
-                    max(
-                        nodes_needing_resv, key=lambda node: node.interval_times[1]
-                    ).interval_times[1] -
-                    self.time
-                ),
-                self.config.bf_window
-            )
-        else:
-            max_reqtime_nodes_needing_resv = timedelta()
-
-        max_reqtime = max(max_reqtime_nodes_needing_resv, max_reqtime_run_now)
-
         for i_job_rev, job in enumerate(reversed(queue)):
             if self.num_bf_test_step >= self.config.bf_max_job_test:
                 continue
             self.num_bf_test_step += 1
 
             if job.qos.hold_job(job):
+                q_size -= 1 
                 continue
 
             reqtime = job.reqtime + self.config.bf_resolution
 
-            if reqtime > max_reqtime:
+            if not nodes_needing_resv and reqtime > max_reqtime_run_now:
+                if not nodes_free_now:
+                    break
                 continue
 
             num_free_nodes = 0
@@ -714,7 +701,6 @@ class Controller:
                                 node.jobs_plnd.add(job)
 
                     recompute_max_reqtime_run_now = False
-                    recompute_max_reqtime_nodes_needing_resv = False
 
                     for selected_interval, nodes in selected_intervals.items():
                         free_blocks[selected_interval] -= nodes
@@ -730,8 +716,7 @@ class Controller:
                         if selected_interval[0] == self.time:
                             recompute_max_reqtime_run_now = True
 
-                        if not nodes.isdisjoint(nodes_needing_resv):
-                            recompute_max_reqtime_nodes_needing_resv = True
+                        nodes_needing_resv -= nodes
 
                     if recompute_max_reqtime_run_now:
                         if nodes_free_now:
@@ -746,20 +731,6 @@ class Controller:
                             )
                         else:
                             max_reqtime_run_now = timedelta()
-                        max_reqtime = max(max_reqtime_nodes_needing_resv, max_reqtime_run_now)
-
-                    if recompute_max_reqtime_nodes_needing_resv:
-                        max_reqtime_nodes_needing_resv = min(
-                            (
-                                max(
-                                    nodes_needing_resv,
-                                    key=lambda node: node.interval_times[1]
-                                ).interval_times[1] -
-                                self.time
-                            ),
-                            self.config.bf_window
-                        )
-                        max_reqtime = max(max_reqtime_nodes_needing_resv, max_reqtime_run_now)
 
                     break
 
