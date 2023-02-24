@@ -3,7 +3,7 @@
 class MFPrioritySorter:
     def __init__(
         self, init_time, size_weight, age_weight, fairshare_weight, max_age, partition_weight,
-        qos_weight, no_partition_priority_tiers
+        qos_weight, no_partition_priority_tiers, fairtree
     ):
         self.size_weight = size_weight / 5860
         self.age_weight = age_weight
@@ -13,7 +13,7 @@ class MFPrioritySorter:
         self.qos_weight = qos_weight
         self.time = init_time
 
-        self.fairtree = None
+        self.fairtree = fairtree
 
         # Relevant for ARCHER2
         self.no_partition_priority_tiers = no_partition_priority_tiers

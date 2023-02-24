@@ -10,6 +10,7 @@ from partition import Partitions
 from job_queue import Queue
 from priority_sorters import MFPrioritySorter
 from fairshare import FairTree
+from data_reader import SlurmDataReader
 
 
 # TODO Currently nodes can only be in one reservation's free blocks, so if a node is going
@@ -23,37 +24,48 @@ from fairshare import FairTree
 
 # TODO Job requeuing for down nodes.
 
+# NOTE Make assumption that node names start with "nid" in a few places
+
 
 class Controller:
     def __init__(self, config_file):
         self.config = get_config(config_file)
-
-        self.partitions = Partitions(
-            self.config.slurm_conf, self.config.considered_partitions,
-            self.config.node_events_dump, self.config.reservations_dump
+        
+        self.data_reader = SlurmDataReader(
+            self.config.slurm_conf, self.config.node_events_dump, self.config.resv_dump,
+            self.config.job_dump, self.config.qos_dump
         )
 
-        self.queue = Queue(
-            self.config.job_dump, self.partitions, self.config.qos_dump,
-            self.config.considered_partitions
-        )
-        self.init_time = self.queue.time
-        self.time = self.queue.time
+        ret = self.data_reader.get_nodes_partitions(self.config.considered_partitions)
+        nid_data, partition_data, valid_resv, hpe_restrictlong = ret
 
-        active_usrs = { job.user for job in self.queue.all_jobs }
+        qos_data = self.data_reader.get_qos()
+
+        df_jobs = self.data_reader.get_cleaned_job_df(self.config.considered_partitions, 550)
+
+        self.init_time = df_jobs.Start.min()
+        self.time = self.init_time
+
+        self.partitions = Partitions(nid_data, partition_data)
+
+        active_usrs = { row.User for _, row in df_jobs.iterrows() }
         self.fairtree = FairTree(
             self.config.assocs_dump, self.config.PriorityCalcPeriod,
             self.config.PriorityDecayHalfLife, self.init_time, active_usrs,
             self.config.approx_excess_assocs, self.partitions
         )
+
         priority_sorter = MFPrioritySorter(
             self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
             self.config.PriorityWeightFairshare, self.config.PriorityMaxAge,
             self.config.PriorityWeightPartition, self.config.PriorityWeightQOS,
-            len({ partition.priority_tier for partition in self.partitions.partitions }) == 1
+            len({ partition.priority_tier for partition in self.partitions.partitions }) == 1,
+            self.fairtree
         )
-        priority_sorter.fairtree = self.fairtree
-        self.queue.set_priority_sorter(priority_sorter)
+
+        self.queue = Queue(
+            df_jobs, self.partitions.partitions_by_name, qos_data, valid_resv, priority_sorter
+        )
 
         self.num_sched_test_step = 0
         self.num_bf_test_step = 0
@@ -80,12 +92,15 @@ class Controller:
 
         # [next_event, submitted, cleared, start, end, nodes, name]
         if self.config.hpe_restrictlongjobs_sliding_reservations == "const":
+            hpe_restrictlong_nodes = {
+                node for node in self.partitions.nodes if node.id in hpe_restrictlong
+            }
             self.sliding_reservations = [
                 [
                     submitted, submitted, submitted + timedelta(hours=1),
                     submitted + timedelta(hours=1, minutes=5),
                     submitted + timedelta(days=365, hours=1, minutes=5),
-                    self.partitions.hpe_restrictlong_nodes, "HPE_RestrictLongJobs"
+                    hpe_restrictlong_nodes, "HPE_RestrictLongJobs"
                 ] for submitted in [
                     (
                         self.init_time.replace(minute=0, second=0) - timedelta(minutes=5) +

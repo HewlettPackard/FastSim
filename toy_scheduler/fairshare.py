@@ -143,7 +143,7 @@ class FairTree:
 
             self.tot_num_assocs += 1
 
-        print(self.tot_num_assocs)
+        print("Num unique user assocs = {}".format(self.tot_num_assocs))
 
     def next_calc(self):
         return self.last_calc_time + self.calc_period

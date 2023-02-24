@@ -33,7 +33,7 @@ vals_bool = ["JobRequeue"]
 # TODO Include node/partition information dump once setup to read this
 mandatory_fields = set(
     (
-        "assocs_dump", "node_events_dump", "reservations_dump", "job_dump", "slurm_conf",
+        "assocs_dump", "node_events_dump", "resv_dump", "job_dump", "slurm_conf",
         "considered_partitions", "qos_dump"
     )
 )
