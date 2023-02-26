@@ -121,7 +121,6 @@ class Queue:
                 ):
                     continue
 
-
                 # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
                 # the user's next submission. This works slightly better as entire sustem
                 # metrics but makes the wait times by qos an project worse

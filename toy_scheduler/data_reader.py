@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import timedelta
 
 import pandas as pd
 
@@ -15,10 +16,10 @@ class SlurmDataReader:
         self.job_dump = job_dump
         self.qos_dump = qos_dump
 
-    def get_nodes_partitions(self, considered_partitions):
+    def get_nodes_partitions(self, considered_partitions, hpe_restrictlong_sliding_res):
         df_events = pd.read_csv(
             self.node_events_dump, delimiter='|', lineterminator='\n', header=0,
-            usecols=["NodeName", "TimeStart", "TimeEnd", "State"]
+            usecols=["NodeName", "TimeStart", "TimeEnd", "State", "Reason"]
         )
         df_events = df_events.loc[
             (
@@ -128,7 +129,7 @@ class SlurmDataReader:
         for nid in nid_partitions:
             down_schedule = []
             for _, row in df_events.loc[(df_events.Id == nid)].iterrows():
-                down_schedule.append([row.TimeStart, row.Duration, row.State])
+                down_schedule.append([row.TimeStart, row.Duration, row.State, row.Reason])
             down_schedule.sort(key=lambda schedule: schedule[0])
 
             resv_schedule = []
@@ -157,6 +158,46 @@ class SlurmDataReader:
                 "weight" : nid_weight[nid], "down_schedule" : down_schedule,
                 "resv_schedule" : resv_schedule, "partitions" : nid_partitions[nid]
             }
+
+        # For ARCHER2 it looks like nodes that go down with a reason like
+        # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
+        # something like "Not responding" are unplanned down states. Fill hpe_restriclong resv
+        # with nodes that go down for these reasons, extend the time they are in the resv such that
+        # the resv has at least the same number of nodes as the in the current resv dump
+        if hpe_restrictlong_sliding_res == "dynamic":
+            target_num_hpe_restrictlong = len(hpe_restrictlong_nids)
+            hpe_restrictlong_nids = defaultdict(set)
+
+            for nid, data in nid_data.items():
+                if not data["down_schedule"] or nid in hpe_restrictlong_nids:
+                    continue
+
+                for down_schedule in data["down_schedule"]:
+                    if ": " not in down_schedule[3]:
+                        continue
+
+                    reason_prefix = down_schedule[3].split(": ")[0]
+
+                    if not reason_prefix.isupper():
+                        continue
+
+                    first_submit = (
+                        down_schedule[0].replace(minute=0, second=0) -
+                        timedelta(hours=48, minutes=5)
+                    )
+                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 50):
+                        hpe_restrictlong_nids[first_submit + timedelta(hours=submit_hr)].add(nid)
+
+            rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
+            for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
+                new_nids = list(hpe_restrictlong_nids[submit_hr] - hpe_restrictlong_nids[prev_submit_hr])
+                for new_nid in new_nids[
+                    :max(
+                        target_num_hpe_restrictlong - len(hpe_restrictlong_nids[prev_submit_hr]),
+                        0
+                    )
+                ]:
+                    hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
 
         return nid_data, partition_data, valid_resv, hpe_restrictlong_nids
 

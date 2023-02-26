@@ -36,7 +36,9 @@ class Controller:
             self.config.job_dump, self.config.qos_dump
         )
 
-        ret = self.data_reader.get_nodes_partitions(self.config.considered_partitions)
+        ret = self.data_reader.get_nodes_partitions(
+            self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations
+        )
         nid_data, partition_data, valid_resv, hpe_restrictlong = ret
 
         qos_data = self.data_reader.get_qos()
@@ -91,7 +93,7 @@ class Controller:
         )
 
         # [next_event, submitted, cleared, start, end, nodes, name]
-        if self.config.hpe_restrictlongjobs_sliding_reservations == "const":
+        if self.config.hpe_restrictlong_sliding_reservations == "const":
             hpe_restrictlong_nodes = {
                 node for node in self.partitions.nodes if node.id in hpe_restrictlong
             }
@@ -121,8 +123,21 @@ class Controller:
             ]
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
 
-        elif self.config.hpe_restrictlongjobs_sliding_reservations:
-            with open(self.config.hpe_restrictlongjobs_sliding_reservations, "rb") as f:
+        elif self.config.hpe_restrictlong_sliding_reservations == "dynamic":
+            nid_to_node = { node.id : node for node in self.partitions.nodes }
+            self.sliding_reservations = [
+                [
+                    submitted, submitted, submitted + timedelta(hours=1),
+                    submitted + timedelta(hours=1, minutes=5),
+                    submitted + timedelta(days=365, hours=1, minutes=5),
+                    [ nid_to_node[nid] for nid in hpe_restrictlong[submitted] ],
+                    "HPE_RestrictLongJobs"
+                ] for submitted in sorted(hpe_restrictlong)
+            ]
+            self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
+
+        elif self.config.hpe_restrictlong_sliding_reservations:
+            with open(self.config.hpe_restrictlong_sliding_reservations, "rb") as f:
                 hpe_restrictlong_res = pickle.load(f)
 
             for submitted in sorted(hpe_restrictlong_res):
@@ -528,6 +543,7 @@ class Controller:
             yield node
 
     def _backfill(self):
+        # Remove future resvs from last backfill cycle
         for node in self.partitions.nodes:
             if len(node.interval_times) > 2:
                 node.interval_times = [node.interval_times[0], node.interval_times[-1]]
@@ -564,7 +580,7 @@ class Controller:
 
         # Stop backfilling when conditions met:
         # - No jobs with a reqtime that could fit on nodes that are avaible to run the job now (or
-        # no nodes left that could run jobs now)                                                                                            
+        # no nodes left that could run jobs now)
         # - All busy nodes that will go idle before the next bf_interval has at least one future
         #   reservation
         # This is done to speed up sim. There may be some small discrepancy since one future
@@ -608,7 +624,6 @@ class Controller:
             self.num_bf_test_step += 1
 
             if job.qos.hold_job(job):
-                q_size -= 1 
                 continue
 
             reqtime = job.reqtime + self.config.bf_resolution
@@ -809,9 +824,15 @@ class Controller:
                     # something is broken if this every happens as the window slides forwards
                     while len(node.interval_times) > 2:
                         if node.interval_times[-2] > node.reservation_schedule[-1][0]:
+                            free_block_start = node.interval_times.pop(-2)
                             node.interval_times.pop(-2)
-                            node.interval_times.pop(-2)
-                            raise Exception("Bruh?")
+                            for job in node.jobs_plnd:
+                                if job.planned_block[0][1] == free_block_start:
+                                    job.planned_block[1].remove(node)
+                                    if not job.planned_block:
+                                        job.planned_block = None
+                                    break
+                            node.jobs_plnd.remove(job)
                         else:
                             break
 
