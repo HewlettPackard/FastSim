@@ -320,17 +320,18 @@ class Controller:
             if not res_queue:
                 continue
 
-            # Reservation ended, delete stray jobs. Could be a problem if the same reservation
-            # comes back but *shrug*
-            # NOTE Once reservation is finished all intervals should've been popped
-            if not self.partitions.free_blocks[reservation]:
-                print(
-                    "!!!\nReservation {} has no nodes, deleting {} job\n!!!".format(
-                        reservation, len(self.queue.reservations[reservation])
-                    )
-                )
-                self.queue.reservations[reservation] = []
-                continue
+            # # Reservation ended, delete stray jobs. Could be a problem if the same reservation
+            # # comes back but *shrug*
+            # # NOTE Once reservation is finished all intervals should've been popped
+            # if not self.partitions.free_blocks[reservation]:
+            #     print(
+            #         "!!!\nReservation {} has no nodes, deleting {} job\n!!!".format(
+            #             reservation, len(self.queue.reservations[reservation])
+            #         )
+            #     )
+            #     self.queue.reservations[reservation] = []
+            #     continue
+            # NOTE Not checking if reservation is finished any longer
 
             free_nodes_ready_now = {
                 node
