@@ -24,11 +24,17 @@ class SlurmDataReader:
         df_events = df_events.loc[
             (
                 (df_events.NodeName.notna()) & (df_events.NodeName.str.contains("nid")) &
-                (df_events.TimeEnd != "Unknown") & (df_events.TimeStart != "Unknown")
+                (df_events.TimeStart != "Unknown")
             )
         ]
 
         df_events.TimeStart = pd.to_datetime(df_events.TimeStart, format="%Y-%m-%dT%H:%M:%S")
+        df_events.TimeEnd = df_events.apply(
+            lambda row: (
+                row.TimeStart + timedelta(days=365) if row.TimeEnd == "Unknown" else row.TimeEnd
+            ),
+            axis=1
+        )
         df_events.TimeEnd = pd.to_datetime(df_events.TimeEnd, format="%Y-%m-%dT%H:%M:%S")
         df_events["Duration"] = df_events.apply(lambda row: (row.TimeEnd - row.TimeStart), axis=1)
         df_events.State = df_events.State.apply(lambda row: "DRAIN" if "DRAIN" in row else "DOWN")
@@ -253,9 +259,11 @@ class SlurmDataReader:
         df_jobs.Elapsed = df_jobs.End - df_jobs.Start
         df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
-        with_dupes = len(df_jobs)
-        df_jobs = df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")]
-        print("{} duplicate ids removed".format(len(df_jobs) - with_dupes))
+        print(
+            "{} duplicate ids present".format(
+                len(df_jobs) -  len(df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")])
+            )
+        )
 
         convert_to_raw(df_jobs, "AllocNodes")
 

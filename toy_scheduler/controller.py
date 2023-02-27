@@ -577,6 +577,10 @@ class Controller:
 
     def _get_backfill_jobs(self, queue, reservation=""):
         backfill_now = []
+
+        if self.num_bf_test_step >= self.config.bf_max_job_test:
+            return backfill
+
         window_end = self.time + self.config.bf_window
 
         # Stop backfilling when conditions met:
@@ -600,7 +604,6 @@ class Controller:
                 free_blocks[interval].add(node)
                 if interval[0] == self.time:
                     nodes_free_now.add(node)
-                    nodes_needing_resv.add(node)
                 elif node.running_job.end <= crit_time:
                     nodes_needing_resv.add(node)
 
@@ -620,33 +623,23 @@ class Controller:
         else:
             max_reqtime_run_now = timedelta()
 
+        queue = queue[:self.config.bf_max_job_test - self.num_bf_test_step]
+
         # Looking to break early by tracking nodes and nodes * time of jobs left in the queue.
-        # NOTE: was also tracking nodesecs but doesn't cause a break very often
-        nodes_queue = Counter(job.nodes for job in queue)
-        nodes_queue[max(nodes_queue)] += 1 # To avoid checking for case of empty counter at end
-        min_nodes_queue = min(nodes_queue)
+        # NOTE: was tracking min nodes of jobs remaining (and nodesecs) in order to break early
+        # when possible, the tracking took more time that the breaking saved
 
         for i_job_rev, job in enumerate(reversed(queue)):
-            if self.num_bf_test_step >= self.config.bf_max_job_test:
-                break
             self.num_bf_test_step += 1
 
-            if not nodes_needing_resv:
-                if min_nodes_queue > len(nodes_free_now):
-                    break
-
             reqtime = job.reqtime + self.config.bf_resolution
-
-            nodes_queue[job.nodes] -= 1
-            if not nodes_queue[job.nodes]:
-                nodes_queue.pop(job.nodes)
-                if job.nodes == min_nodes_queue:
-                    min_nodes_queue = min(nodes_queue)
 
             if job.qos.hold_job(job):
                 continue
 
             if not nodes_needing_resv and reqtime > max_reqtime_run_now:
+                if not nodes_free_now:
+                    break
                 continue
 
             num_free_nodes = 0
@@ -727,9 +720,6 @@ class Controller:
                                         node.interval_times.insert(i_time, usage_block_start)
                                         node.interval_times.insert(i_time + 1, usage_block_end)
                                         break
-                                # node.interval_times.insert(-1, usage_block_start)
-                                # node.interval_times.insert(-1, usage_block_end)
-                                # node.interval_times[1:-1] = sorted(node.interval_times[1:-1])
                                 node.jobs_plnd.add(job)
 
                     recompute_max_reqtime_run_now = False

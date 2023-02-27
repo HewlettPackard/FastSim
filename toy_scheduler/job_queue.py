@@ -66,10 +66,18 @@ class Queue:
         ]
         self.all_jobs.sort(key=lambda job: (job.submit, job.id), reverse=True)
         # NOTE verify with jid first to ensure all jids have a Job in the data
+
         self._verify_dependencies()
-        jid_to_job = { job.id : job for job in self.all_jobs }
+        jid_to_job = {}
+        for job in self.all_jobs:
+            if job.id not in jid_to_job:
+                jid_to_job[job.id] = job
+            else:
+                if job.true_submit < jid_to_job[job.id].submit:
+                    jid_to_job[job.id] = job
         for job in self.all_jobs:
             job.init_dependency(jid_to_job)
+
         self.queue = []
 
         self.waiting_dependency = []
