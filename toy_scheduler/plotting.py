@@ -81,8 +81,7 @@ def bdslowdowns_allocnodes_hist2d_true_sim(
 
 def main(args):
     PLOT_DIR = os.path.join(
-        "/work/y02/y02/awilkins/data/plots/archer2_jobdata_plots",
-        "-".join(os.path.basename(sim).split(".")[0] for sim in args.sim)
+        args.plot_dir, "-".join(os.path.basename(sim).split(".")[0] for sim in args.sim)
     )
     mkdir_p(PLOT_DIR)
 
@@ -778,6 +777,10 @@ def parse_arguments():
     )
     parser.add_argument(
         "--no_data_comparison", action="store_true", help="Dont plot the data with the sim"
+    )
+    parser.add_argument(
+        "--plot_dir", type=str, default="/work/y02/y02/awilkins/data/plots/archer2_jobdata_plots",
+        help="Override ARCHER2 plot dir"
     )
 
     args = parser.parse_args()
