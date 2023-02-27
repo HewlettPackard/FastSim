@@ -224,7 +224,7 @@ class Controller:
             #     print("bf: ", np.mean(times_bf))
             #     print("sched: ", np.mean(times_sched))
             #     print("sched & bf: ", np.mean(times_sched_bf))
-            print("Step: {}".format(self.step_cnt))
+            print("Step: {}".format(self.step_cnt), end='\r')
 
         elapsed = time.time() - sim_start
         print(
