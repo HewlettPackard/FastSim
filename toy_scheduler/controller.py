@@ -220,6 +220,7 @@ class Controller:
             #     print("bf: ", np.mean(times_bf))
             #     print("sched: ", np.mean(times_sched))
             #     print("sched & bf: ", np.mean(times_sched_bf))
+            print(self.step_cnt, end='\r')
 
         elapsed = time.time() - sim_start
         print(
@@ -771,14 +772,16 @@ class Controller:
             node.interval_times[0] = self.time
             self.partitions.add_free_block(node)
 
+        # To avoid sorting many times in the same loop
+        still_has_down_schedule, orig_len_down_nodes = set(), len(self.down_nodes)
+
         while self.node_down_order and self.node_down_order[-1].down_schedule[-1][0] <= self.time:
-            node = self.node_down_order[-1]
+            node = self.node_down_order.pop()
             # If already down delay this new downtime until the next up to not interfere (this
             # happens because my DOWN implementation waits for current running job to finish)
             if node.down:
                 node.down_schedule[-1][0] = node.up_time
-                node.down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
-                self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
+                still_has_down_schedule.add(node)
                 continue
 
             # Delay down until after current running job has finished, this call will happen
@@ -786,15 +789,14 @@ class Controller:
             # getting perpetually delayed
             if node.down_schedule[-1][2] == "DOWN" and node.running_job:
                 node.down_schedule[-1][0] = node.running_job.end
-                node.down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
-                self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
+                still_has_down_schedule.add(node)
                 continue
 
             down_schedule = node.down_schedule.pop()
             if not len(node.down_schedule):
                 self.node_down_order.pop()
             else:
-                self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
+                still_has_down_schedule.add(node)
 
             up_time = self.time + down_schedule[1]
 
@@ -811,7 +813,14 @@ class Controller:
             node.interval_times = [datetime.datetime.max, datetime.datetime.max]
 
             self.down_nodes.append(node)
+
+        if len(self.down_nodes) != orig_len_down_nodes:
             self.down_nodes.sort(key=lambda node: node.up_time, reverse=True)
+
+        if still_has_down_schedule:
+            for node in still_has_down_schedule:
+                self.node_down_order.append(node)
+            self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
 
     def _check_reservations(self):
         # Destroy and spawn new sliding reservations
