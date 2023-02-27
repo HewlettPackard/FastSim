@@ -36,17 +36,18 @@ class Controller:
             self.config.job_dump, self.config.qos_dump
         )
 
-        ret = self.data_reader.get_nodes_partitions(
-            self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations
-        )
-        nid_data, partition_data, valid_resv, hpe_restrictlong = ret
-
-        qos_data = self.data_reader.get_qos()
-
         df_jobs = self.data_reader.get_cleaned_job_df(self.config.considered_partitions, 550)
 
         self.init_time = df_jobs.Start.min()
         self.time = self.init_time
+
+        ret = self.data_reader.get_nodes_partitions(
+            self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations,
+            df_jobs.End.max()
+        )
+        nid_data, partition_data, valid_resv, hpe_restrictlong = ret
+
+        qos_data = self.data_reader.get_qos()
 
         self.partitions = Partitions(nid_data, partition_data)
 
@@ -220,7 +221,7 @@ class Controller:
             #     print("bf: ", np.mean(times_bf))
             #     print("sched: ", np.mean(times_sched))
             #     print("sched & bf: ", np.mean(times_sched_bf))
-            print(self.step_cnt, end='\r')
+            print("Step: {}".format(self.step_cnt), end='\r')
 
         elapsed = time.time() - sim_start
         print(
@@ -580,7 +581,7 @@ class Controller:
         backfill_now = []
 
         if self.num_bf_test_step >= self.config.bf_max_job_test:
-            return backfill
+            return backfill_now
 
         window_end = self.time + self.config.bf_window
 
@@ -624,7 +625,7 @@ class Controller:
         else:
             max_reqtime_run_now = timedelta()
 
-        queue = queue[:self.config.bf_max_job_test - self.num_bf_test_step]
+        queue = queue[self.num_bf_test_step - self.config.bf_max_job_test:]
 
         # Looking to break early by tracking nodes and nodes * time of jobs left in the queue.
         # NOTE: was tracking min nodes of jobs remaining (and nodesecs) in order to break early

@@ -73,7 +73,7 @@ class Queue:
             if job.id not in jid_to_job:
                 jid_to_job[job.id] = job
             else:
-                if job.true_submit < jid_to_job[job.id].submit:
+                if job.true_submit < jid_to_job[job.id].true_submit:
                     jid_to_job[job.id] = job
         for job in self.all_jobs:
             job.init_dependency(jid_to_job)
@@ -581,11 +581,11 @@ class Job:
         self.planned_block = None
 
     def __hash__(self):
-        return hash(self.id)
+        return hash((self.id, self.true_submit))
 
     def __eq__(self, other):
         if isinstance(other, Job):
-            return self.id == other.id
+            return self.id == other.id and self.true_submit == other.true_submit
         return False
 
     def init_dependency(self, jid_to_job):

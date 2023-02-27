@@ -16,7 +16,7 @@ class SlurmDataReader:
         self.job_dump = job_dump
         self.qos_dump = qos_dump
 
-    def get_nodes_partitions(self, considered_partitions, hpe_restrictlong_sliding_res):
+    def get_nodes_partitions(self, considered_partitions, hpe_restrictlong_sliding_res, max_sim_t):
         df_events = pd.read_csv(
             self.node_events_dump, delimiter='|', lineterminator='\n', header=0,
             usecols=["NodeName", "TimeStart", "TimeEnd", "State", "Reason"]
@@ -29,12 +29,7 @@ class SlurmDataReader:
         ]
 
         df_events.TimeStart = pd.to_datetime(df_events.TimeStart, format="%Y-%m-%dT%H:%M:%S")
-        df_events.TimeEnd = df_events.apply(
-            lambda row: (
-                row.TimeStart + timedelta(days=365) if row.TimeEnd == "Unknown" else row.TimeEnd
-            ),
-            axis=1
-        )
+        df_events.loc[(df_events.TimeEnd == "Unknown"), "TimeEnd"] = max_sim_t
         df_events.TimeEnd = pd.to_datetime(df_events.TimeEnd, format="%Y-%m-%dT%H:%M:%S")
         df_events["Duration"] = df_events.apply(lambda row: (row.TimeEnd - row.TimeStart), axis=1)
         df_events.State = df_events.State.apply(lambda row: "DRAIN" if "DRAIN" in row else "DOWN")
@@ -204,6 +199,38 @@ class SlurmDataReader:
                     )
                 ]:
                     hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
+
+        # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
+        # just fill with nodes that don't go down at any point
+        if len(df_resv.loc[(df_resv.RESV_NAME == "shortqos")]):
+            shortqos_nids_to_replace = {
+                nid
+                for nid, data in nid_data.items()
+                    if (
+                        any(resv[2] == "shortqos" for resv in data["resv_schedule"]) and
+                        not data["down_schedule"]
+                    )
+            }
+            never_down_nids = {
+                nid
+                for nid, data in nid_data.items()
+                    if (
+                        not data["down_schedule"] and
+                        not data["resv_schedule"] and
+                        not any(partition == "highmem" for partition in data["partitions"])
+                    )
+            }
+            for i_shortqos_nid, shortqos_nid in enumerate(shortqos_nids_to_replace):
+                if not never_down_nids:
+                    break
+                never_down_nid = never_down_nids.pop()
+                nid_data[never_down_nid]["resv_schedule"] = nid_data[shortqos_nid]["resv_schedule"]
+                nid_data[shortqos_nid]["resv_schedule"] = []
+            print(
+                "Replaced {} / {} shortqos nodes with nodes that never go down".format(
+                    i_shortqos_nid + 1, len(shortqos_nids_to_replace)
+                )
+            )
 
         return nid_data, partition_data, valid_resv, hpe_restrictlong_nids
 
