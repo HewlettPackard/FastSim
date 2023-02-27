@@ -161,6 +161,9 @@ class Controller:
         self.step_cnt = 0
         self.previous_print_hour = self.time.hour
 
+        self.sched_backfill_num = 0
+        self.sched_main_num = 0
+
     def _next_job_finish(self):
         if not self.running_jobs:
             return datetime.datetime.max
@@ -221,7 +224,7 @@ class Controller:
             #     print("bf: ", np.mean(times_bf))
             #     print("sched: ", np.mean(times_sched))
             #     print("sched & bf: ", np.mean(times_sched_bf))
-            print("Step: {}".format(self.step_cnt), end='\r')
+            print("Step: {}".format(self.step_cnt))
 
         elapsed = time.time() - sim_start
         print(
@@ -255,10 +258,7 @@ class Controller:
             self._sched_main(sched_depth)
 
         if bf:
-            self.partitions.clean_free_blocks(self.time, self.config.bf_resolution)
-
             self.num_bf_test_step = 0
-
             self._backfill()
 
         if len(self.running_jobs) != pre_submit_running_jobs_len:
@@ -346,10 +346,6 @@ class Controller:
             if not free_nodes_ready_now:
                 continue
 
-            max_job_end = max(
-                free_nodes_ready_now, key=lambda node: node.interval_times[1]
-            ).interval_times[1]
-
             jobs_submitted = []
 
             for i_job_rev, job in enumerate(reversed(res_queue)):
@@ -362,33 +358,7 @@ class Controller:
 
                 job_end = self.time + job.reqtime
 
-                # Check for plnd nodes that the job could run on now
-                valid_nodes = {
-                    node
-                    for node in self._yield_planned_nodes_ready_now(job, job_end)
-                        if node in free_nodes_ready_now
-                }
-                n_nodes = len(valid_nodes)
-
-                # Planned nodes either don't exist or have been messed up by overrunning jobs and
-                # there are no more suitable nodes
-                if n_nodes < job.nodes and job_end > max_job_end:
-                    if n_nodes:
-                        for node in valid_nodes:
-                            free_nodes_ready_now.remove(node)
-                        if not free_nodes_ready_now:
-                            break
-                        max_job_end = max(
-                            free_nodes_ready_now, key=lambda node: node.interval_times[1]
-                        ).interval_times[1]
-                    continue
-
-
-                if n_nodes:
-                    max_node = max(valid_nodes, key=lambda node: (node.weight, node.id))
-                    max_node_weight = (max_node, (max_node.weight, max_node.id))
-                else:
-                    max_node_weight = None
+                n_nodes, valid_nodes = 0, set()
 
                 for node in free_nodes_ready_now:
                     if job_end > node.interval_times[1]:
@@ -409,21 +379,17 @@ class Controller:
                     valid_nodes.add(node)
                     n_nodes += 1
 
-                for node in valid_nodes:
-                    free_nodes_ready_now.remove(node)
-
                 if len(valid_nodes) == job.nodes:
-                    self.partitions.clear_planned_blocks(job)
-
                     self._submit(job.start_job(self.time), nodes=valid_nodes)
                     jobs_submitted.append(-(i_job_rev + 1))
 
-                if not free_nodes_ready_now:
+                else:
                     break
 
-                max_job_end = max(
-                    free_nodes_ready_now, key=lambda node: node.interval_times[1]
-                ).interval_times[1]
+                for node in valid_nodes:
+                    free_nodes_ready_now.remove(node)
+
+            self.sched_main_num += len(jobs_submitted)
 
             for i_job in reversed(jobs_submitted):
                 res_queue.pop(i_job)
@@ -438,52 +404,23 @@ class Controller:
         }
         if not free_nodes_ready_now:
             return
-        max_job_end = max(
-            free_nodes_ready_now, key=lambda node: node.interval_times[1]
-        ).interval_times[1]
 
-        jobs_submitted = []
+        jobs_submitted, partitions_failed = [], set()
 
         for i_job_rev, job in enumerate(reversed(self.queue.queue)):
             if self.num_sched_test_step >= sched_depth:
                 break
             self.num_sched_test_step += 1
 
+            if job in partitions_failed:
+                continue
+
             if job.qos.hold_job(job):
                 continue
 
             job_end = self.time + job.reqtime
 
-            # Check for plnd nodes that the job could run on now
-            # NOTE Reason for "if node in free_nodes_ready_now". Some of nodes may have been given
-            # to a higher prio job earlier in this loop so shouldn't be considered. Although the
-            # job they were given to  didn't get enough nodes to run and so interval_times has not
-            # been updated, we should consider these nodes spoken for
-            valid_nodes = {
-                node
-                for node in self._yield_planned_nodes_ready_now(job, job_end)
-                    if node in free_nodes_ready_now
-            }
-            n_nodes = len(valid_nodes)
-
-            # Planned nodes either don't exist or have been messed up by overrunning jobs and there
-            # are no more suitable nodes
-            if n_nodes < job.nodes and job_end > max_job_end:
-                if n_nodes:
-                    for node in valid_nodes:
-                        free_nodes_ready_now.remove(node)
-                    if not free_nodes_ready_now:
-                        break
-                    max_job_end = max(
-                        free_nodes_ready_now, key=lambda node: node.interval_times[1]
-                    ).interval_times[1]
-                continue
-
-            if n_nodes:
-                max_node = max(valid_nodes, key=lambda node: (node.weight, node.id))
-                max_node_weight = (max_node, (max_node.weight, max_node.id))
-            else:
-                max_node_weight = None
+            n_nodes, valid_nodes = 0, set()
 
             for node in free_nodes_ready_now:
                 if job.partition not in node.partitions:
@@ -508,22 +445,18 @@ class Controller:
                 n_nodes += 1
 
             if len(valid_nodes) == job.nodes:
-                # NOTE New ready now nodes may be available after this but it's going to rare so
-                # I won't bother, they will be picked up in the next sched anyway
-                self.partitions.clear_planned_blocks(job)
-
                 self._submit(job.start_job(self.time), nodes=valid_nodes)
                 jobs_submitted.append(-(i_job_rev + 1))
+
+            else:
+                partitions_failed.add(job.partition)
+                if len(partitions_failed) == len(self.partitions.partitions):
+                    break
 
             for node in valid_nodes:
                 free_nodes_ready_now.remove(node)
 
-            if not free_nodes_ready_now:
-                break
-
-            max_job_end = max(
-                free_nodes_ready_now, key=lambda node: node.interval_times[1]
-            ).interval_times[1]
+        self.sched_main_num += len(jobs_submitted)
 
         for i_job in reversed(jobs_submitted):
             self.queue.queue.pop(i_job)
@@ -550,8 +483,6 @@ class Controller:
         for node in self.partitions.nodes:
             if len(node.interval_times) > 2:
                 node.interval_times = [node.interval_times[0], node.interval_times[-1]]
-                while node.jobs_plnd:
-                    node.jobs_plnd.pop().planned_block = None
 
         for reservation, res_queue in self.queue.reservations.items():
             if not res_queue:
@@ -563,6 +494,8 @@ class Controller:
                 job_ready = self.queue.reservations[reservation][i_job]
                 self._submit(job_ready.start_job(self.time), nodes=nodes)
 
+            self.sched_backfill_num += len(backfill_now)
+
             for i_job, _ in reversed(backfill_now):
                self.queue.reservations[reservation].pop(i_job)
 
@@ -572,6 +505,8 @@ class Controller:
             for i_job, nodes in backfill_now:
                 job_ready = self.queue.queue[i_job]
                 self._submit(job_ready.start_job(self.time), nodes=nodes)
+
+            self.sched_backfill_num += len(backfill_now)
 
             # NOTE i_job here are negative so need to pop deepest indices first
             for i_job, _ in reversed(backfill_now):
@@ -603,11 +538,16 @@ class Controller:
 
         for interval, nodes in self.partitions.free_blocks[reservation].items():
             for node in nodes:
+                if interval[0] <= self.time:
+                    if not node.running_job:
+                        nodes_free_now.add(node)
+                        interval = (self.time, interval[1])
+                    else:
+                        nodes_needing_resv.add(node)
+                        interval = (self.time + self.config.bf_resolution, interval[1])
+                elif node.running_job and node.running_job.end <= crit_time:
+                        nodes_needing_resv.add(node)
                 free_blocks[interval].add(node)
-                if interval[0] == self.time:
-                    nodes_free_now.add(node)
-                elif node.running_job.end <= crit_time:
-                    nodes_needing_resv.add(node)
 
         if not nodes_needing_resv and not nodes_free_now:
             return backfill_now
@@ -713,16 +653,13 @@ class Controller:
 
                     # Reserve the requred blocks for this job
                     else:
-                        job.planned_block = ((usage_block_start, usage_block_end), set())
                         for nodes in selected_intervals.values():
                             for node in nodes:
-                                job.planned_block[1].add(node)
                                 for i_time, time in enumerate(node.interval_times):
                                     if time > usage_block_start:
                                         node.interval_times.insert(i_time, usage_block_start)
                                         node.interval_times.insert(i_time + 1, usage_block_end)
                                         break
-                                node.jobs_plnd.add(job)
 
                     recompute_max_reqtime_run_now = False
 
@@ -841,15 +778,8 @@ class Controller:
                     # something is broken if this every happens as the window slides forwards
                     while len(node.interval_times) > 2:
                         if node.interval_times[-2] > node.reservation_schedule[-1][0]:
-                            free_block_start = node.interval_times.pop(-2)
                             node.interval_times.pop(-2)
-                            for job in node.jobs_plnd:
-                                if job.planned_block[0][1] == free_block_start:
-                                    job.planned_block[1].remove(node)
-                                    if not job.planned_block:
-                                        job.planned_block = None
-                                    break
-                            node.jobs_plnd.remove(job)
+                            node.interval_times.pop(-2)
                         else:
                             break
 
@@ -953,7 +883,9 @@ class Controller:
 
         self.previous_print_hour = self.time.hour
         print(
-            "{} (step {}):\n".format(self.time, self.step_cnt) +
+            "{} (step {} SchedMain {} SchedBackfill {}):\n".format(
+                self.time, self.step_cnt, self.sched_main_num, self.sched_backfill_num
+            ) +
             # "Idle Nodes = {} (num in free_blocks_ready {}) (highmem {})\t" \
             "Idle Nodes = {} (".format(sum(1 for node in self.partitions.nodes if node.free)) +
             " ".join(

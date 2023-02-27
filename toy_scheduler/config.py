@@ -18,7 +18,7 @@ defaults = {
     "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlong_sliding_reservations" : "const",
     "PriorityMaxAge" : 7, "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0,
     "PriorityWeightFairshare" : 0, "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0,
-    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0, "JobRequeue" : 0
+    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0, "JobRequeue" : 1
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
