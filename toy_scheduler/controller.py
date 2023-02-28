@@ -731,9 +731,7 @@ class Controller:
                 continue
 
             down_schedule = node.down_schedule.pop()
-            if not len(node.down_schedule):
-                self.node_down_order.pop()
-            else:
+            if len(node.down_schedule):
                 still_has_down_schedule.add(node)
 
             up_time = self.time + down_schedule[1]
