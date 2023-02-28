@@ -14,18 +14,14 @@ defaults = {
     "sched_min_interval" : 2000000, "PriorityCalcPeriod" : 5, "bf_resolution" : 60,
     "bf_max_job_test" : 500, "bf_window" : 1440, "bf_interval" : 30, "bf_max_time" : 30,
     "bf_yield_interval" : 2000000, "bf_yield_sleep" : 500000, "bf_continue" : False,
-    "slowdown_with_queuesize" : False, "sched_interval_perpendingjob" : 0.028,
-    "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlong_sliding_reservations" : "const",
-    "PriorityMaxAge" : 7, "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0,
-    "PriorityWeightFairshare" : 0, "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0,
-    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0, "JobRequeue" : 1
+    "hpe_restrictlong_sliding_reservations" : "const", "PriorityMaxAge" : 7,
+    "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0, "PriorityWeightFairshare" : 0,
+    "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0, "PriorityWeightQOS" : 0,
+    "approx_excess_assocs" : 0, "JobRequeue" : 1, "approx_bf_try_per_sec" : 10
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
-vals_s = [
-    "sched_interval", "bf_resolution", "bf_interval", "bf_max_time",
-    "sched_interval_perpendingjob", "bf_time_perpriorityjob"
-]
+vals_s = [ "sched_interval", "bf_resolution", "bf_interval", "bf_max_time"]
 vals_min = ["bd_threshold", "PriorityCalcPeriod", "bf_window"]
 vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
 vals_bool = ["JobRequeue"]

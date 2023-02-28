@@ -177,6 +177,8 @@ class Node:
         ]
         self.jobs_plnd = set()
 
+        self.bf_free_blocks_start = None
+
     def __hash__(self):
         return hash(self.id)
 
