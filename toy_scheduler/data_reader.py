@@ -181,13 +181,17 @@ class SlurmDataReader:
 
                     if not reason_prefix.isupper():
                         continue
+                    
+                    # Nodes go down in sets of 4 like this
+                    nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
 
                     first_submit = (
                         down_schedule[0].replace(minute=0, second=0) -
                         timedelta(hours=48, minutes=5)
                     )
-                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 50):
-                        hpe_restrictlong_nids[first_submit + timedelta(hours=submit_hr)].add(nid)
+                    # Submit 8hrs before first down time
+                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 10):
+                        hpe_restrictlong_nids[first_submit + timedelta(hours=submit_hr)].update(nids)
 
             rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
             for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):

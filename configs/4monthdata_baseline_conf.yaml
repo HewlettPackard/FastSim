@@ -15,3 +15,7 @@ bf_window: 5760
 bf_continue: True
 defer: True
 default_queue_depth: 256
+
+sched_min_interval : 12000000
+approx_bf_try_per_sec : 18
+
