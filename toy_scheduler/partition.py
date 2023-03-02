@@ -171,6 +171,10 @@ class Node:
 
         self.partitions = []
 
+        # NOTE This is from when I was allowing the BF sched to plan nodes in a way that would be
+        # respected by the main scheduling loop. Not doing this anymore so there is only ever 2
+        # entries. Might be useful I want to implement a node going in and then out of a
+        # reservation.
         self.interval_times = [
             datetime.datetime.min,
             datetime.datetime.max if not reservation_schedule else reservation_schedule[-1][0]

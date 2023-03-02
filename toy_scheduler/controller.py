@@ -1,6 +1,6 @@
 import os, time, copy
 import datetime; from datetime import timedelta
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 import dill as pickle
 
 import pandas as pd
@@ -23,6 +23,11 @@ from data_reader import SlurmDataReader
 # This should in practice be pretty much the same
 
 # TODO Job requeuing for down nodes.
+
+# TODO Refactor:
+# Probably want a separate class to act as the bf thread (start, prep, one yield # interval of
+# processing) and just tell me which jobs I should be scheduling
+# Merge reservation jobs into the normal queue sort them so they get processed first
 
 # NOTE Make assumption that node names start with "nid" in a few places
 
@@ -124,7 +129,10 @@ class Controller:
             ]
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
 
-        elif self.config.hpe_restrictlong_sliding_reservations == "dynamic":
+        elif (
+            self.config.hpe_restrictlong_sliding_reservations == "dynamic" or
+            self.config.hpe_restrictlong_sliding_reservations == "dynamic+const"
+        ):
             nid_to_node = { node.id : node for node in self.partitions.nodes }
             self.sliding_reservations = [
                 [
@@ -177,6 +185,10 @@ class Controller:
         )
         self.bf_locks_remaining = 1
         self.bf_time = None
+        self.bf_nodes_free_now_min_reqtimes = None
+        self.bf_max_reqtime = None
+        self.bf_queue_min_reqtime = None
+        self.bf_job_reqtimes = None
 
     def _next_job_finish(self):
         if not self.running_jobs:
@@ -400,8 +412,6 @@ class Controller:
                 n_nodes, valid_nodes = 0, set()
 
                 for node in free_nodes_ready_now:
-                    # if job_end > node.interval_times[1]:
-                    #     continue
                     if job_end > node.interval_times[-1]:
                         continue
 
@@ -470,8 +480,6 @@ class Controller:
                 if job.partition not in node.partitions:
                     continue
 
-                # if job_end > node.interval_times[1]:
-                #     continue
                 if job_end > node.interval_times[-1]:
                     continue
 
@@ -533,18 +541,21 @@ class Controller:
 
     def _prep_new_bf(self):
         # Remove future resvs from last backfill cycle
-        for node in self.partitions.nodes:
-            if len(node.interval_times) > 2:
-                node.interval_times = [node.interval_times[0], node.interval_times[-1]]
+        # for node in self.partitions.nodes:
+        #     if len(node.interval_times) > 2:
+        #         node.interval_times = [node.interval_times[0], node.interval_times[-1]]
 
-        self.num_bf_test_step = 0
         self.bf_locks_remaining = self.bf_max_lock_holds
         self.bf_time = self.time
 
-        self.bf_free_blocks = {}
+        self.bf_free_blocks, self.bf_nodes_free_now_min_reqtimes = {}, {}
+
         for resv, free_block in self.partitions.free_blocks.items():
             self.bf_free_blocks[resv] = defaultdict(set)
             bf_free_blocks = self.bf_free_blocks[resv]
+            self.bf_nodes_free_now_min_reqtimes[resv] = {}
+            bf_nodes_free_now_min_reqtimes = self.bf_nodes_free_now_min_reqtimes[resv]
+
             for interval, nodes in free_block.items():
                 if interval[0] <= self.time:
                     interval_i = 0
@@ -556,16 +567,74 @@ class Controller:
                 if interval[1] == datetime.datetime.max:
                     interval_f = self.bf_window_in_res
                 else:
-                    interval_f = max(
+                    interval_f = min(
                         ((interval[1] - self.time) // self.config.bf_resolution) + 1,
                         self.bf_window_in_res
                     )
 
                 bf_free_blocks[(interval_i, interval_f)].update(nodes)
 
-        self.bf_queue = [ job for job in self.queue.queue ]
-        for res_queue in self.queue.reservations.values():
-            self.bf_queue += [ job for job in res_queue ]
+                if interval_i == 0:
+                    for node in nodes:
+                        bf_nodes_free_now_min_reqtimes[node] = interval_f
+
+        self.bf_max_reqtime = {
+            resv : max(nodes_free_now_min_reqtimes.values()) if nodes_free_now_min_reqtimes else 0
+            for resv, nodes_free_now_min_reqtimes in self.bf_nodes_free_now_min_reqtimes.items()
+        }
+
+        self.bf_queue, self.bf_job_ordered_reqtimes = [], {}
+
+        # NOTE Only checking for the normal queue because resv queues are usually small. Should
+        # really just have a single queue with reservation sorted to the front, this would clean
+        # up some code
+        max_test_from_normal_q = (
+            self.config.bf_max_job_test - sum(len(q) for q in self.queue.reservations.values())
+        )
+        if max_test_from_normal_q > 0:
+            self.bf_job_ordered_reqtimes[""] = {}
+            for job in self.queue.queue[-max_test_from_normal_q:]:
+                self.bf_queue.append(job)
+                self.bf_job_ordered_reqtimes[""][job] = (
+                    job.reqtime // self.config.bf_resolution + 1
+                )
+        for resv, resv_q in self.queue.reservations.items():
+            self.bf_job_ordered_reqtimes[resv] = {}
+            for job in resv_q:
+                self.bf_queue.append(job)
+                self.bf_job_ordered_reqtimes[resv][job] = (
+                    job.reqtime // self.config.bf_resolution + 1
+                )
+        # Earliest reqtime job at front so I can call next(iter()) to grab it
+        self.bf_job_ordered_reqtimes = {
+            resv : OrderedDict(
+                {
+                    job : reqtime
+                    for job, reqtime in sorted(
+                        job_ordered_reqtimes.items(), key=lambda job_reqtime: job_reqtime[1]
+                    )
+                }
+            )
+            for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items()
+        }
+        # print(self.bf_job_ordered_reqtimes)
+        # print(next(iter(self.bf_job_ordered_reqtimes)))
+        # To avoid needing to check if we are on the final iteration
+        # for resv in self.bf_job_ordered_reqtimes:
+        #     self.bf_job_ordered_reqtimes[resv]["dummy"] = self.bf_window_in_res
+
+        # If there are no more jobs in the queue that could possibly be started now, we shouldnt
+        # waste time backfilling. Still want to go throught the yield cycles and just pretend
+        # we are actually backfilling. This is more likely to flick to true as the backfill
+        # schedule fills up and jobs are processed from the queue.
+        self.bf_done = {
+            resv : (
+                next(iter(job_ordered_reqtimes.values())) > self.bf_max_reqtime[resv]
+                if job_ordered_reqtimes
+                else True
+            )
+            for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items()
+        }
 
     def _backfill(self, n_try):
         backfill_now, loop_finished = self._get_backfill_jobs(n_try)
@@ -576,55 +645,17 @@ class Controller:
         self.sched_backfill_num += len(backfill_now)
 
         for job, nodes in backfill_now:
-            queue = self.queue.reservations[job.reservation] if job.reservation else self.queue.queue
+            queue = (
+                self.queue.reservations[job.reservation] if job.reservation else self.queue.queue
+            )
             queue.remove(job)
             self._submit(job.start_job(self.time), nodes=nodes)
 
     def _get_backfill_jobs(self, n_try):
         backfill_now = []
 
-        # Stop backfilling when conditions met:
-        # - No jobs with a reqtime that could fit on nodes that are avaible to run the job now (or
-        # no nodes left that could run jobs now)
-        # - All busy nodes that will go idle before the next bf_interval has at least one future
-        #   reservation
-        # This is done to speed up sim. There may be some small discrepancy since one future
-        # reservations may not be enough for node to have correct behaviour in the sched cycles
-        # between now and next backfill eg. job that crashes immediately or an smaller job that
-        # could've fit in before the single reservation. Although I imagine this is going to be
-        # quite rare so worth it for the speed up
-        # crit_time = self.time + self.config.bf_interval
-        # nodes_needing_resv = set()
-        # nodes_free_now = set()
-
-        # if not nodes_needing_resv and not nodes_free_now:
-        #     return backfill_now
-
-        # if nodes_free_now:
-        #     max_reqtime_run_now = min(
-        #         (
-        #             max(
-        #                 nodes_free_now, key=lambda node: node.interval_times[1]
-        #             ).interval_times[1] -
-        #             self.time
-        #         ),
-        #         self.config.bf_window
-        #     )
-        # else:
-        #     max_reqtime_run_now = timedelta()
-
-        # queue = queue[self.num_bf_test_step - self.config.bf_max_job_test:]
-
-        # Looking to break early by tracking nodes and nodes * time of jobs left in the queue.
-        # NOTE: was tracking min nodes of jobs remaining (and nodesecs) in order to break early
-        # when possible, the tracking took more time that the breaking saved
-
         while n_try and self.bf_queue:
             job = self.bf_queue.pop()
-
-            if self.num_bf_test_step >= self.config.bf_max_job_test:
-                return backfill_now, True
-            self.num_bf_test_step += 1
 
             # sched loop could've scheduled between loops
             if job.qos.hold_job(job) or job.state == JobState.RUNNING:
@@ -632,17 +663,25 @@ class Controller:
 
             n_try -= 1
 
-            reqtime = (job.reqtime // self.config.bf_resolution) + 1
+            resv = job.reservation
 
-            # if not nodes_needing_resv and reqtime > max_reqtime_run_now:
-            #     if not nodes_free_now:
-            #         break
-            #     continue
+            if self.bf_done[resv]:
+                continue
+
+            self.bf_done[resv] = (
+                next(iter(self.bf_job_ordered_reqtimes[resv].values())) >
+                self.bf_max_reqtime[resv]
+            )
+
+            reqtime = self.bf_job_ordered_reqtimes[resv].pop(job)
+
+            if self.bf_max_reqtime[resv] == 1 and reqtime != 1:
+                continue
 
             num_free_nodes = 0
             selected_intervals, unsorted_intervals = defaultdict(set), set()
 
-            free_blocks = self.bf_free_blocks[job.reservation]
+            free_blocks = self.bf_free_blocks[resv]
 
             # NOTE Earliest starting first, then sort by earliest end
             sorted_free_blocks = sorted(free_blocks.items(), key=lambda block: block[0])
@@ -657,7 +696,7 @@ class Controller:
                         unsorted_intervals.add(interval)
                         num_free_nodes += len(valid_nodes)
                         usage_block_start = interval[0]
-                        usage_block_end = interval[0] + reqtime
+                        usage_block_end = usage_block_start + reqtime
                         if usage_block_end > self.bf_window_in_res:
                             break
 
@@ -705,17 +744,15 @@ class Controller:
 
                         can_submit = True
                         for node in valid_nodes:
+                            self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
+
                             if node.running_job is None:
                                 continue
+
                             # Think BF is able to do this
                             if node.running_job.endlimit <= self.bf_time:
-                                try:
-                                    running_job = node.running_job
-                                    self.running_jobs.remove(running_job)
-                                except ValueError:
-                                    print(self.time, self.bf_time)
-                                    print(node.running_job.endlimit, node.running_job.end)
-                                    raise ValueError
+                                running_job = node.running_job
+                                self.running_jobs.remove(running_job)
                                 self._end_job(running_job)
                                 self.fairtree.job_finish_usage_update(running_job)
                                 self.job_history.append(running_job)
@@ -733,52 +770,41 @@ class Controller:
                                 can_submit = False
                                 break
 
+                        if self.bf_nodes_free_now_min_reqtimes[resv]:
+                            self.bf_max_reqtime[resv] = max(
+                                self.bf_nodes_free_now_min_reqtimes[resv].values()
+                            )
+                        else:
+                            self.bf_max_reqtime[resv] = 0
+
                         if can_submit:
                             backfill_now.append((job, valid_nodes))
 
-                        # for nodes in selected_intervals.values():
-                        #     nodes_free_now -= nodes
-
-                    # Reserve the requred blocks for this job
-                    # for nodes in selected_intervals.values():
-                    #     for node in nodes:
-                    #         for i_time, time in enumerate(node.interval_times[1:-1]):
-                    #             if time > usage_block_start:
-                    #                 node.interval_times.insert(i_time + 1, usage_block_start)
-                    #                 node.interval_times.insert(i_time + 2, usage_block_end)
-                    #                 break
-
-                    # recompute_max_reqtime_run_now = False
+                    recompute_bf_max_reqtime = False
 
                     for selected_interval, nodes in selected_intervals.items():
                         free_blocks[selected_interval] -= nodes
 
                         if selected_interval[0] != usage_block_start:
                             free_blocks[(selected_interval[0], usage_block_start)].update(nodes)
+
+                            if selected_interval[0] == 0:
+                                for node in nodes:
+                                    self.bf_nodes_free_now_min_reqtimes[resv][node] = (
+                                        usage_block_start
+                                    )
+                                recompute_bf_max_reqtime = True
+
                         if selected_interval[1] != usage_block_end:
                             free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
 
                         if not free_blocks[selected_interval]:
                             free_blocks.pop(selected_interval)
 
-                        # if selected_interval[0] == self.time:
-                        #     recompute_max_reqtime_run_now = True
-
-                        # nodes_needing_resv -= nodes
-
-                    # if recompute_max_reqtime_run_now:
-                    #     if nodes_free_now:
-                    #         max_reqtime_run_now = min(
-                    #             (
-                    #                 max(
-                    #                     nodes_free_now, key=lambda node: node.interval_times[1]
-                    #                 ).interval_times[1] -
-                    #                 self.time
-                    #             ),
-                    #             self.config.bf_window
-                    #         )
-                    #     else:
-                    #         max_reqtime_run_now = timedelta()
+                    if recompute_bf_max_reqtime:
+                        self.bf_max_reqtime[resv] = max(
+                            self.bf_nodes_free_now_min_reqtimes[resv].values()
+                        )
 
                     break
 
@@ -875,12 +901,12 @@ class Controller:
 
                     # Remove any plans that this new reservation invalidates, for hpelongjobs
                     # something is broken if this every happens as the window slides forwards
-                    while len(node.interval_times) > 2:
-                        if node.interval_times[-2] > node.reservation_schedule[-1][0]:
-                            node.interval_times.pop(-2)
-                            node.interval_times.pop(-2)
-                        else:
-                            break
+                    # while len(node.interval_times) > 2:
+                    #     if node.interval_times[-2] > node.reservation_schedule[-1][0]:
+                    #         node.interval_times.pop(-2)
+                    #         node.interval_times.pop(-2)
+                    #     else:
+                    #         break
 
                     node.interval_times[-1] = node.reservation_schedule[-1][0]
                     self.partitions.add_free_block(node)
@@ -906,7 +932,7 @@ class Controller:
 
                         break
 
-            if not submit: # Finished this window
+            if submit is None: # Finished this window
                 self.sliding_reservations.pop()
             else: # Created this window, need to clear it next
                 self.sliding_reservations[-1][0] = clear
@@ -921,11 +947,11 @@ class Controller:
         while self.reserved_nodes and self.reserved_nodes[-1].unreserved_time <= self.time:
             node = self.reserved_nodes.pop()
 
-            if len(node.interval_times) > 2:
-                raise Exception(
-                    "Nodes leaving a reservation should not have anything planned"
-                    "in the current implementation"
-                )
+            # if len(node.interval_times) > 2:
+            #     raise Exception(
+            #         "Nodes leaving a reservation should not have anything planned"
+            #         "in the current implementation"
+            #     )
 
             if node.down:
                 node.set_unreserved()
@@ -957,11 +983,11 @@ class Controller:
                     key=lambda node: node.reservation_schedule[-1][0], reverse=True
                 )
 
-            if len(node.interval_times) > 2:
-                raise Exception(
-                    "Nodes entering a reservation should not have anything planned"
-                    "in the current implementation"
-                )
+            # if len(node.interval_times) > 2:
+            #     raise Exception(
+            #         "Nodes entering a reservation should not have anything planned"
+            #         "in the current implementation"
+            #     )
 
             if node.down:
                 node.set_reserved(reservation_schedule[2], reservation_schedule[1])
@@ -1070,6 +1096,29 @@ class Controller:
             ) +
             ")\tRunningJobs = {}\n".format(len(self.running_jobs))
         )
+
+        # hpe_long_running_jobs = set()
+        # node_second_intervals = Counter()
+        # intervals = set()
+        # for node in self.partitions.nodes:
+        #     if (
+        #         "HPE_RestrictLongJobs" in [
+        #             resv_sched[2] for resv_sched in node.reservation_schedule
+        #         ]
+        #     ):
+        #         if node.running_job is not None:
+        #             hpe_long_running_jobs.add(node.running_job)
+        #         else:
+        #             for interval, nodes in self.partitions.free_blocks[""].items():
+        #                 if node in nodes:
+        #                     intervals.add(interval)
+        #                     break
+        #         node_second_intervals[node.interval_times[-1]] += 1
+
+        # print(node_second_intervals)
+        # print(intervals)
+        # for job in hpe_long_running_jobs:
+        #     print(job.reqtime, job.nodes, job.submit, job.endlimit, job.end)
 
         # print(
         #     "{}".format(

@@ -165,9 +165,16 @@ class SlurmDataReader:
         # something like "Not responding" are unplanned down states. Fill hpe_restriclong resv
         # with nodes that go down for these reasons, extend the time they are in the resv such that
         # the resv has at least the same number of nodes as the in the current resv dump
-        if hpe_restrictlong_sliding_res == "dynamic":
+        if (
+            hpe_restrictlong_sliding_res == "dynamic" or
+            hpe_restrictlong_sliding_res == "dynamic+const"
+        ):
             target_num_hpe_restrictlong = len(hpe_restrictlong_nids)
-            hpe_restrictlong_nids = defaultdict(set)
+            if hpe_restrictlong_sliding_res == "dynamic+const":
+                hpe_restrictlong_nids_cpy = set(hpe_restrictlong_nids)
+                hpe_restrictlong_nids = defaultdict(lambda: hpe_restrictlong_nids_cpy.copy())
+            else:
+                hpe_restrictlong_nids = defaultdict(set)
 
             for nid, data in nid_data.items():
                 if not data["down_schedule"] or nid in hpe_restrictlong_nids:
@@ -181,7 +188,7 @@ class SlurmDataReader:
 
                     if not reason_prefix.isupper():
                         continue
-                    
+
                     # Nodes go down in sets of 4 like this
                     nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
 
@@ -189,20 +196,26 @@ class SlurmDataReader:
                         down_schedule[0].replace(minute=0, second=0) -
                         timedelta(hours=48, minutes=5)
                     )
-                    # Submit 8hrs before first down time
+                    # Submit 10hrs before first down time
                     for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 10):
                         hpe_restrictlong_nids[first_submit + timedelta(hours=submit_hr)].update(nids)
 
-            rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
-            for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
-                new_nids = list(hpe_restrictlong_nids[submit_hr] - hpe_restrictlong_nids[prev_submit_hr])
-                for new_nid in new_nids[
-                    :max(
-                        target_num_hpe_restrictlong - len(hpe_restrictlong_nids[prev_submit_hr]),
-                        0
+            if hpe_restrictlong_sliding_res == "dynamic":
+                rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
+                for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
+                    new_nids = list(
+                        hpe_restrictlong_nids[submit_hr] - hpe_restrictlong_nids[prev_submit_hr]
                     )
-                ]:
-                    hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
+                    for new_nid in new_nids[
+                        :max(
+                            (
+                                target_num_hpe_restrictlong -
+                                len(hpe_restrictlong_nids[prev_submit_hr])
+                            ),
+                            0
+                        )
+                    ]:
+                        hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
 
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point

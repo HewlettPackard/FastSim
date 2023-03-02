@@ -18,4 +18,4 @@ defer: True
 default_queue_depth: 256
 
 sched_min_interval : 12000000
-approx_bf_try_per_sec : 10
+approx_bf_try_per_sec : 30
