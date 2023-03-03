@@ -26,7 +26,11 @@ class Partitions:
 
         print("Using partitions:")
         for partition in self.partitions:
-            print(partition.name, " - ", len(partition.nodes), " nodes", sep="")
+            print(
+                partition.name, partition.priority_tier, partition.priority_weight, "-",
+                len(partition.nodes), "nodes",
+                sep=" "
+            )
         print("With {} unique nodes total".format(len(self.nodes)))
 
         self.reservations = defaultdict(list)

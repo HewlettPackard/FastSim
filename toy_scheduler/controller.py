@@ -351,7 +351,10 @@ class Controller:
         while self.running_jobs and self.running_jobs[-1].end <= self.time:
             job = self.running_jobs.pop()
             self._end_job(job)
-            self.fairtree.job_finish_usage_update(job)
+            self.fairtree.job_finish_usage_update(
+                job,
+                self.time if self.bf_loop_active else self.time + self.config.bf_yield_interval
+            )
             self.job_history.append(job)
             self.power_usage -= job.true_node_power * job.nodes / 1e+6
             self.total_energy += (
@@ -757,7 +760,9 @@ class Controller:
                                 running_job = node.running_job
                                 self.running_jobs.remove(running_job)
                                 self._end_job(running_job)
-                                self.fairtree.job_finish_usage_update(running_job)
+                                self.fairtree.job_finish_usage_update(
+                                    running_job, self.time + self.config.bf_yield_interval
+                                )
                                 self.job_history.append(running_job)
                                 self.power_usage -= (
                                     running_job.true_node_power * running_job.nodes / 1e+6

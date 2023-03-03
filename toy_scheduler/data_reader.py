@@ -125,6 +125,10 @@ class SlurmDataReader:
                     for nid in convert_nodelist_to_node_nums(nodes):
                         nid_partitions[nid].add(name)
 
+        max_partition_prio = max(data["prio_jobfactor"] for data in partition_data.values())
+        for data in partition_data.values():
+            data["prio_jobfactor"] /= max_partition_prio
+
         nid_data, hpe_restrictlong_nids = {}, []
 
         for nid in nid_partitions:
@@ -279,6 +283,10 @@ class SlurmDataReader:
                 "MaxSubmitPU" : None if pd.isna(row.MaxSubmitPU) else int(row.MaxSubmitPU),
                 "MaxSubmit" : None if pd.isna(row.MaxSubmit) else int(row.MaxSubmit)
             }
+
+        max_qos_prio = max(data["prio"] for data in qos_data.values())
+        for data in qos_data.values():
+            data["prio"] /= max_qos_prio
 
         return qos_data
 
