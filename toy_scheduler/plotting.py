@@ -257,7 +257,10 @@ def main(args):
 
     if "qos_waits" in args.plots:
         sim_qos_waits, data_qos_waits = defaultdict(list), defaultdict(list)
-        print("\nlargescale jobs (id - nodes - submit - sim wait - true wait")
+        print(
+            "\nlargescale jobs "
+            "(id - nodes - submit - elapsed - reqtime - sim wait - true wait - user - account)"
+        )
         for job in job_history:
             sim_qos_waits[job.qos.name].append((job.start - job.submit).total_seconds() / 60 / 60)
             data_qos_waits[job.qos.name].append(
@@ -265,7 +268,12 @@ def main(args):
             )
 
             if job.qos.name == "largescale":
-                print(job.id, job.nodes, job.true_submit, job.start - job.submit, job.true_job_start - job.true_submit, sep=" - ")
+                print(
+                    job.id, job.nodes, job.true_submit,
+                    job.runtime, job.reqtime, (job.start - job.submit).round(freq="S"),
+                    job.true_job_start - job.true_submit, job.user, job.account,
+                    sep=" - "
+                )
         print()
 
         print("Num Jobs by QOS:")
