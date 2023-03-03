@@ -351,17 +351,16 @@ class Controller:
         while self.running_jobs and self.running_jobs[-1].end <= self.time:
             job = self.running_jobs.pop()
             self._end_job(job)
-            self.fairtree.job_finish_usage_update(
-                job,
-                self.time if self.bf_loop_active else self.time + self.config.bf_yield_interval
-            )
-            self.job_history.append(job)
-            self.power_usage -= job.true_node_power * job.nodes / 1e+6
-            self.total_energy += (
-                job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
-            )
 
     def _end_job(self, job):
+        self.fairtree.job_finish_usage_update(
+            job, self.time if self.bf_loop_active else self.time + self.config.bf_yield_interval
+        )
+        self.job_history.append(job)
+        self.power_usage -= job.true_node_power * job.nodes / 1e+6
+        self.total_energy += (
+            job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
+        )
         job.end_job()
         # Down nodes dont exist to free_blocks
         for node in job.assigned_nodes:
@@ -760,18 +759,6 @@ class Controller:
                                 running_job = node.running_job
                                 self.running_jobs.remove(running_job)
                                 self._end_job(running_job)
-                                self.fairtree.job_finish_usage_update(
-                                    running_job, self.time + self.config.bf_yield_interval
-                                )
-                                self.job_history.append(running_job)
-                                self.power_usage -= (
-                                    running_job.true_node_power * running_job.nodes / 1e+6
-                                )
-                                self.total_energy += (
-                                    running_job.true_node_power *
-                                    running_job.nodes *
-                                    running_job.runtime.total_seconds() / 1e+9
-                                )
                             # Node may have been allocated by sched during the yield_sleep. Cannot
                             # schedule the job in this case
                             else:
@@ -849,11 +836,19 @@ class Controller:
 
             # Delay down until after current running job has finished, this call will happen
             # after _check_fininshed_jobs() and before and sched calls so this down will not be
-            # getting perpetually delayed
-            if node.down_schedule[-1][2] == "DOWN" and node.running_job:
-                node.down_schedule[-1][0] = node.running_job.end
-                still_has_down_schedule.add(node)
-                continue
+            # getting perpetually delayed. If has reached endlimit just end it and start the down
+            # nodes, we need to be able to do this here because BF does it.
+            if node.down_schedule[-1][2] == "DOWN" and node.running_job is not None:
+                if node.running_job.endlimit <= self.time:
+                    running_job = node.running_job
+                    self.running_jobs.remove(running_job)
+                    self._end_job(running_job)
+                else:
+                    node.down_schedule[-1][0] = min(
+                        node.running_job.end, node.running_job.endlimit
+                    )
+                    still_has_down_schedule.add(node)
+                    continue
 
             down_schedule = node.down_schedule.pop()
             if len(node.down_schedule):
