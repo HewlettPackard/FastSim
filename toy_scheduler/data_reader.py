@@ -185,10 +185,7 @@ class SlurmDataReader:
                     continue
 
                 for down_schedule in data["down_schedule"]:
-                    if ": " not in down_schedule[3]:
-                        continue
-
-                    reason_prefix = down_schedule[3].split(": ")[0]
+                    reason_prefix = down_schedule[3].split(" ")[0]
 
                     if not reason_prefix.isupper():
                         continue
