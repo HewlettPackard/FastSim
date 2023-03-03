@@ -657,8 +657,11 @@ class Controller:
         while n_try and self.bf_queue:
             job = self.bf_queue.pop()
 
+            if job.qos.hold_job(job):
+                continue
+
             # sched loop could've scheduled between loops
-            if job.qos.hold_job(job) or job.state == JobState.RUNNING:
+            if job.state == JobState.RUNNING or job.state == JobState.COMPLETED:
                 continue
 
             n_try -= 1
