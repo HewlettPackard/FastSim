@@ -673,8 +673,10 @@ def main(args):
             sim_min_start + timedelta(minutes=min_num)
             for min_num in range(len(sim_allocated_nodes))
         ]
-        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Sim", linewidth=0.75)
-        ax.plot_date(data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.75)
+        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Sim", linewidth=0.75, alpha=0.8)
+        ax.plot_date(
+            data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.75, alpha=0.8
+        )
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
         ax.set_ylim(3000, 6000)
