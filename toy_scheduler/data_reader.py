@@ -171,7 +171,8 @@ class SlurmDataReader:
         # the resv has at least the same number of nodes as the in the current resv dump
         if (
             hpe_restrictlong_sliding_res == "dynamic" or
-            hpe_restrictlong_sliding_res == "dynamic+const"
+            hpe_restrictlong_sliding_res == "dynamic+const" or
+            hpe_restrictlong_sliding_res == "dynamic+50%extra"
         ):
             target_num_hpe_restrictlong = len(hpe_restrictlong_nids)
             if hpe_restrictlong_sliding_res == "dynamic+const":
@@ -179,6 +180,8 @@ class SlurmDataReader:
                 hpe_restrictlong_nids = defaultdict(lambda: hpe_restrictlong_nids_cpy.copy())
             else:
                 hpe_restrictlong_nids = defaultdict(set)
+
+            hpe_restrictlong_nids_nosubmitearly = defaultdict(set)
 
             for nid, data in nid_data.items():
                 if not data["down_schedule"] or nid in hpe_restrictlong_nids:
@@ -195,11 +198,17 @@ class SlurmDataReader:
 
                     first_submit = (
                         down_schedule[0].replace(minute=0, second=0) -
-                        timedelta(hours=48, minutes=5)
+                        timedelta(hours=8, minutes=5)
                     )
                     # Submit 10hrs before first down time
                     for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 10):
-                        hpe_restrictlong_nids[first_submit + timedelta(hours=submit_hr)].update(nids)
+                        hpe_restrictlong_nids[
+                            first_submit + timedelta(hours=submit_hr)
+                        ].update(nids)
+                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 1):
+                        hpe_restrictlong_nids_nosubmitearly[
+                            first_submit + timedelta(hours=submit_hr)
+                        ].update(nids)
 
             if hpe_restrictlong_sliding_res == "dynamic":
                 rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
@@ -217,6 +226,28 @@ class SlurmDataReader:
                         )
                     ]:
                         hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
+
+            # Assume that at any given time there are 50% extra compute blades in the hpelong
+            # reservation than the ones that are actually down for doing work on
+            if hpe_restrictlong_sliding_res == "dynamic+50%extra":
+                rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
+                for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
+                    prev_blade_nids = {
+                        tuple( nid for nid in range(first_nid, first_nid + 4) )
+                        for first_nid in sorted(hpe_restrictlong_nids[prev_submit_hr])[::4]
+                    }
+                    blade_nids = {
+                        tuple( nid for nid in range(first_nid, first_nid + 4) )
+                        for first_nid in sorted(hpe_restrictlong_nids[submit_hr])[::4]
+                    }
+                    new_blade_nids = list(blade_nids - prev_blade_nids)
+                    target_blade_nids = int(
+                        (len(hpe_restrictlong_nids_nosubmitearly[prev_submit_hr]) / 5) * 1.5 + 1
+                    )
+                    for blade_nids in new_blade_nids[
+                        :max(target_blade_nids - len(prev_blade_nids), 0)
+                    ]:
+                        hpe_restrictlong_nids[prev_submit_hr].update(blade_nids)
 
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point

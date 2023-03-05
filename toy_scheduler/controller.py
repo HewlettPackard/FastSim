@@ -131,7 +131,8 @@ class Controller:
 
         elif (
             self.config.hpe_restrictlong_sliding_reservations == "dynamic" or
-            self.config.hpe_restrictlong_sliding_reservations == "dynamic+const"
+            self.config.hpe_restrictlong_sliding_reservations == "dynamic+const" or
+            self.config.hpe_restrictlong_sliding_reservations == "dynamic+50%extra"
         ):
             nid_to_node = { node.id : node for node in self.partitions.nodes }
             self.sliding_reservations = [
