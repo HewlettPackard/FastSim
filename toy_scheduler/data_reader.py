@@ -126,8 +126,9 @@ class SlurmDataReader:
                         nid_partitions[nid].add(name)
 
         max_partition_prio = max(data["prio_jobfactor"] for data in partition_data.values())
-        for data in partition_data.values():
-            data["prio_jobfactor"] /= max_partition_prio
+        if max_partition_prio:
+            for data in partition_data.values():
+                data["prio_jobfactor"] /= max_partition_prio
 
         nid_data, hpe_restrictlong_nids = {}, []
 
@@ -317,8 +318,9 @@ class SlurmDataReader:
             }
 
         max_qos_prio = max(data["prio"] for data in qos_data.values())
-        for data in qos_data.values():
-            data["prio"] /= max_qos_prio
+        if max_qos_prio != 0:
+            for data in qos_data.values():
+                data["prio"] /= max_qos_prio
 
         return qos_data
 
