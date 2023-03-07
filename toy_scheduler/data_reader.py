@@ -172,7 +172,7 @@ class SlurmDataReader:
         if (
             hpe_restrictlong_sliding_res == "dynamic" or
             hpe_restrictlong_sliding_res == "dynamic+const" or
-            hpe_restrictlong_sliding_res == "dynamic+50%extra"
+            hpe_restrictlong_sliding_res == "dynamic+%extra"
         ):
             target_num_hpe_restrictlong = len(hpe_restrictlong_nids)
             if hpe_restrictlong_sliding_res == "dynamic+const":
@@ -196,12 +196,15 @@ class SlurmDataReader:
                     # Nodes go down in sets of 4 like this
                     nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
 
+                    # Submit some hrs before first down time
+                    submit_hrs_before = 48 # 8 48
                     first_submit = (
                         down_schedule[0].replace(minute=0, second=0) -
-                        timedelta(hours=8, minutes=5)
+                        timedelta(hours=submit_hrs_before, minutes=5)
                     )
-                    # Submit 8hrs before first down time
-                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 10):
+                    for submit_hr in range(
+                        int(down_schedule[1] / timedelta(hours=1)) + submit_hrs_before + 2
+                    ):
                         hpe_restrictlong_nids[
                             first_submit + timedelta(hours=submit_hr)
                         ].update(nids)
@@ -227,9 +230,9 @@ class SlurmDataReader:
                     ]:
                         hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
 
-            # Assume that at any given time there are 50% extra compute blades in the hpelong
+            # Assume that at any given time there are some % extra compute blades in the hpelong
             # reservation than the ones that are actually down for doing work on
-            if hpe_restrictlong_sliding_res == "dynamic+50%extra":
+            if hpe_restrictlong_sliding_res == "dynamic+%extra":
                 rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
                 for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
                     prev_blade_nids = {
@@ -437,16 +440,25 @@ class SlurmDataReader:
             lambda row: str(int(row.split("+")[0]) + int(row.split("+")[1])) if "+" in row else row
         )
 
+        # Function time :(
         df_jobs.JobID = df_jobs.JobID.apply(
             lambda row: (
                 [row.replace("[", "").replace("]", "")]
-                if "-" not in row
+                if "-" not in row and "," not in row
                 else [
                     row.split("[")[0]  + str(num)#]
-                    for num in range(
-                        int(row.split("_[")[1].split("-")[0]),#]
-                        int(row.split("_[")[1].split("-")[1].strip("]")) + 1
-                    )
+                    for num in [
+                        index
+                        for entry in row.split("_[")[1].strip("]").split("%")[0].split(",")
+                            for index in range(
+                                int(entry.split("-")[0]),
+                                (
+                                    int(entry.split("-")[1])
+                                    if len(entry.split("-")) == 2
+                                    else int(entry.split("-")[0]) + 1
+                                )
+                            )
+                    ]
                 ]
             )
         )

@@ -132,7 +132,7 @@ class Controller:
         elif (
             self.config.hpe_restrictlong_sliding_reservations == "dynamic" or
             self.config.hpe_restrictlong_sliding_reservations == "dynamic+const" or
-            self.config.hpe_restrictlong_sliding_reservations == "dynamic+50%extra"
+            self.config.hpe_restrictlong_sliding_reservations == "dynamic+%extra"
         ):
             nid_to_node = { node.id : node for node in self.partitions.nodes }
             self.sliding_reservations = [
@@ -715,7 +715,11 @@ class Controller:
                 continue
 
             # sched loop could've scheduled between loops
-            if job.state == JobState.RUNNING or job.state == JobState.COMPLETED:
+            if (
+                job.state == JobState.RUNNING or
+                job.state == JobState.COMPLETED or
+                job.state == JobState.CANCELLED
+            ):
                 continue
 
             n_try -= 1
