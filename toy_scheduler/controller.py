@@ -705,6 +705,8 @@ class Controller:
             queue.remove(job)
             self._submit(job.start_job(self.time), nodes=nodes)
 
+    # TODO Break this up into smaller functions, probably deserves its own class to control the
+    # loop
     def _get_backfill_jobs(self, n_try):
         backfill_now = []
 
@@ -825,22 +827,43 @@ class Controller:
                         if selected_interval[0] < usage_block_start:
                             free_blocks[(selected_interval[0], usage_block_start)].update(nodes)
 
-                            if selected_interval[0] <= self.bf_max_relevant_start:
-                                for node in nodes:
-                                    self.bf_nodes_free_now_min_reqtimes[resv][node] = (
-                                        usage_block_start - selected_interval[0]
-                                    )
-                                    recompute_bf_max_reqtime = True
-
-                        # The backfill resolution cannot fit another job on this node to start
-                        # before the end of the relevant time.
-                        elif selected_interval[0] <= self.bf_max_relevant_start:
-                            for node in nodes:
-                                self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
-                                recompute_bf_max_reqtime = True
-
                         if selected_interval[1] > usage_block_end:
                             free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
+
+                        if selected_interval[0] <= self.bf_max_relevant_start:
+                            new_reqtime = usage_block_start - selected_interval[0]
+                            old_reqtime = selected_interval[1] - selected_interval[0]
+                            for node in nodes:
+                                # NOTE new_reqtime > old_reqtime happens when the space before
+                                # bf_max_start relevant gets chopped up into mulitple free blocks
+                                if (
+                                    (
+                                        self.bf_nodes_free_now_min_reqtimes[resv][node] ==
+                                        old_reqtime
+                                    ) or
+                                    new_reqtime > old_reqtime
+                                ):
+                                    if new_reqtime <= 0:
+                                        self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
+                                    else:
+                                        self.bf_nodes_free_now_min_reqtimes[resv][node] = (
+                                            new_reqtime
+                                        )
+
+                                    recompute_bf_max_reqtime = True
+
+                            if usage_block_end < self.bf_max_relevant_start:
+                                new_reqtime = selected_interval[1] - usage_block_end
+                                for node in nodes:
+                                    if (
+                                        new_reqtime >
+                                        self.bf_nodes_free_now_min_reqtimes[resv][node]
+                                    ):
+                                        self.bf_nodes_free_now_min_reqtimes[resv][node] = (
+                                            new_reqtime
+                                        )
+
+                                        recompute_bf_max_reqtime = True
 
                         if not free_blocks[selected_interval]:
                             free_blocks.pop(selected_interval)
