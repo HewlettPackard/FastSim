@@ -189,7 +189,7 @@ class Controller:
         )
         self.bf_locks_remaining = 1
         self.bf_time = None
-        self.bf_nodes_free_now_min_reqtimes = None
+        self.bf_nodes_free_now_max_reqtimes = None
         self.bf_max_reqtime = None
         self.bf_queue_min_reqtime = None
         self.bf_job_reqtimes = None
@@ -585,13 +585,13 @@ class Controller:
         self.bf_time = self.time
         self.bf_secs_past = 0
 
-        self.bf_free_blocks, self.bf_nodes_free_now_min_reqtimes = {}, {}
+        self.bf_free_blocks, self.bf_nodes_free_now_max_reqtimes = {}, {}
 
         for resv, free_block in self.partitions.free_blocks.items():
             self.bf_free_blocks[resv] = defaultdict(set)
             bf_free_blocks = self.bf_free_blocks[resv]
-            self.bf_nodes_free_now_min_reqtimes[resv] = {}
-            bf_nodes_free_now_min_reqtimes = self.bf_nodes_free_now_min_reqtimes[resv]
+            self.bf_nodes_free_now_max_reqtimes[resv] = {}
+            bf_nodes_free_now_max_reqtimes = self.bf_nodes_free_now_max_reqtimes[resv]
 
             for interval, nodes in free_block.items():
                 if interval[1] == datetime.datetime.max:
@@ -618,7 +618,7 @@ class Controller:
                         bf_free_blocks[(interval_i, interval_f)].add(node)
 
                         if interval_i <= self.bf_max_relevant_start:
-                            bf_nodes_free_now_min_reqtimes[node] = interval_f - interval_i
+                            bf_nodes_free_now_max_reqtimes[node] = interval_f - interval_i
 
                 else:
                     interval_i = (interval[0] - self.time).total_seconds()
@@ -629,11 +629,11 @@ class Controller:
 
                 if interval_i <= self.bf_max_relevant_start:
                     for node in nodes:
-                        bf_nodes_free_now_min_reqtimes[node] = interval_f - interval_i
+                        bf_nodes_free_now_max_reqtimes[node] = interval_f - interval_i
 
         self.bf_max_reqtime = {
             resv : max(nodes_free_now_min_reqtimes.values()) if nodes_free_now_min_reqtimes else 0
-            for resv, nodes_free_now_min_reqtimes in self.bf_nodes_free_now_min_reqtimes.items()
+            for resv, nodes_free_now_min_reqtimes in self.bf_nodes_free_now_max_reqtimes.items()
         }
 
         self.bf_queue, self.bf_job_ordered_reqtimes = [], {}
@@ -831,47 +831,40 @@ class Controller:
                             free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
 
                         if selected_interval[0] <= self.bf_max_relevant_start:
-                            new_reqtime = usage_block_start - selected_interval[0]
+                            new_reqtime_early = usage_block_start - selected_interval[0]
                             old_reqtime = selected_interval[1] - selected_interval[0]
-                            for node in nodes:
-                                # NOTE new_reqtime > old_reqtime happens when the space before
-                                # bf_max_start relevant gets chopped up into mulitple free blocks
-                                if (
-                                    (
-                                        self.bf_nodes_free_now_min_reqtimes[resv][node] ==
-                                        old_reqtime
-                                    ) or
-                                    new_reqtime > old_reqtime
-                                ):
-                                    if new_reqtime <= 0:
-                                        self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
-                                    else:
-                                        self.bf_nodes_free_now_min_reqtimes[resv][node] = (
-                                            new_reqtime
-                                        )
-
-                                    recompute_bf_max_reqtime = True
-
                             if usage_block_end < self.bf_max_relevant_start:
-                                new_reqtime = selected_interval[1] - usage_block_end
-                                for node in nodes:
-                                    if (
-                                        new_reqtime >
-                                        self.bf_nodes_free_now_min_reqtimes[resv][node]
-                                    ):
-                                        self.bf_nodes_free_now_min_reqtimes[resv][node] = (
-                                            new_reqtime
-                                        )
+                                new_reqtime_late = selected_intervals[1] - usage_block_end
+                            else:
+                                new_reqtime_late = None
 
-                                        recompute_bf_max_reqtime = True
+                            for node in nodes:
+                                if (
+                                    self.bf_nodes_free_now_max_reqtimes[resv][node] != old_reqtime
+                                ):
+                                    continue
+
+                                if new_reqtime_late is None:
+                                    if new_reqtime_early <= 0:
+                                        self.bf_nodes_free_now_max_reqtimes[resv].pop(node)
+                                    else:
+                                        self.bf_nodes_free_now_max_reqtimes[resv][node] = (
+                                            new_reqtime_early
+                                        )
+                                else:
+                                    self.bf_nodes_free_now_max_reqtimes[resv][node] = max(
+                                        new_reqtime_early, new_reqtime_late
+                                    )
+
+                                recompute_bf_max_reqtime = True
 
                         if not free_blocks[selected_interval]:
                             free_blocks.pop(selected_interval)
 
                     if recompute_bf_max_reqtime:
-                        if self.bf_nodes_free_now_min_reqtimes[resv]:
+                        if self.bf_nodes_free_now_max_reqtimes[resv]:
                             self.bf_max_reqtime[resv] = max(
-                                self.bf_nodes_free_now_min_reqtimes[resv].values()
+                                self.bf_nodes_free_now_max_reqtimes[resv].values()
                             )
                         else:
                             self.bf_max_reqtime[resv] = 0
