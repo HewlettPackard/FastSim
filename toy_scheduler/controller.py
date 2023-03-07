@@ -834,7 +834,7 @@ class Controller:
                             new_reqtime_early = usage_block_start - selected_interval[0]
                             old_reqtime = selected_interval[1] - selected_interval[0]
                             if usage_block_end < self.bf_max_relevant_start:
-                                new_reqtime_late = selected_intervals[1] - usage_block_end
+                                new_reqtime_late = selected_interval[1] - usage_block_end
                             else:
                                 new_reqtime_late = None
 
