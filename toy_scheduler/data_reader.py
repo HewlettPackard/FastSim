@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import timedelta
+import datetime; from datetime import timedelta
 
 import pandas as pd
 
@@ -200,7 +200,7 @@ class SlurmDataReader:
                         down_schedule[0].replace(minute=0, second=0) -
                         timedelta(hours=8, minutes=5)
                     )
-                    # Submit 10hrs before first down time
+                    # Submit 8hrs before first down time
                     for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 10):
                         hpe_restrictlong_nids[
                             first_submit + timedelta(hours=submit_hr)
@@ -241,8 +241,9 @@ class SlurmDataReader:
                         for first_nid in sorted(hpe_restrictlong_nids[submit_hr])[::4]
                     }
                     new_blade_nids = list(blade_nids - prev_blade_nids)
+                    # XXX Currently set to 30% XXX
                     target_blade_nids = int(
-                        (len(hpe_restrictlong_nids_nosubmitearly[prev_submit_hr]) / 5) * 1.5 + 1
+                        (len(hpe_restrictlong_nids_nosubmitearly[prev_submit_hr]) / 5) * 1.3 + 1
                     )
                     for blade_nids in new_blade_nids[
                         :max(target_blade_nids - len(prev_blade_nids), 0)
@@ -329,8 +330,12 @@ class SlurmDataReader:
         )
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "Unknown") & (df_jobs.Start.notna()) & (df_jobs.End != "Unknown") &
-            (df_jobs.End.notna()) & (df_jobs.AllocNodes != "0") & (df_jobs.AllocNodes != 0) &
-            (df_jobs.Partition.isin(considered_partitions)) & (df_jobs.Timelimit.notna())
+            (df_jobs.End.notna()) & (df_jobs.Partition.isin(considered_partitions)) &
+            (df_jobs.Timelimit.notna()) & (df_jobs.ReqNodes != "0") & (df_jobs.ReqNodes != 0) &
+            (
+                ((df_jobs.AllocNodes != "0") & (df_jobs.AllocNodes != 0)) |
+                ((df_jobs.State.str.contains("CANCELLED")) & (df_jobs.Start == df_jobs.End))
+            )
         ]
 
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
@@ -339,18 +344,20 @@ class SlurmDataReader:
         df_jobs.Elapsed = df_jobs.End - df_jobs.Start
         df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
 
-        print(
-            "{} duplicate ids present".format(
-                len(df_jobs) -  len(df_jobs[~df_jobs.duplicated(subset="JobID", keep="first")])
-            )
-        )
-
         convert_to_raw(df_jobs, "AllocNodes")
+        convert_to_raw(df_jobs, "ReqNodes")
+
+        df_jobs["Nodes"] = df_jobs.apply(
+            lambda row: row.ReqNodes if row.AllocNodes == 0 else row.AllocNodes, axis=1
+        )
 
         num_bad = len(
             df_jobs.loc[
-                (df_jobs.ConsumedEnergyRaw.isna()) | (df_jobs.ConsumedEnergyRaw == 0.0) |
-                (df_jobs.ConsumedEnergyRaw == "")
+                (~df_jobs.State.str.contains("CANCELLED")) &
+                (
+                    (df_jobs.ConsumedEnergyRaw.isna()) | (df_jobs.ConsumedEnergyRaw == 0.0) |
+                    (df_jobs.ConsumedEnergyRaw == "")
+                )
             ]
         )
         if num_bad / len(df_jobs) < 0.25:
@@ -376,9 +383,9 @@ class SlurmDataReader:
 
         df_jobs["Power"] = df_jobs.apply(
             lambda row: (
-                (
-                    float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds()
-                ) if row.Elapsed.total_seconds() != 0 else 0.0
+                float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds()
+                if row.Elapsed.total_seconds() != 0
+                else 0.0
             ),
             axis=1
         )
@@ -392,7 +399,8 @@ class SlurmDataReader:
             )
 
         df_jobs["TruePowerPerNode"] = df_jobs.apply(
-            lambda row: float(row.Power) / float(row.AllocNodes), axis=1
+            lambda row: float(row.Power) / float(row.AllocNodes) if row.AllocNodes != 0 else 0.0,
+            axis=1
         )
 
         df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(
@@ -403,14 +411,6 @@ class SlurmDataReader:
         )
         df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
             lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
-        )
-
-        df_jobs.JobID = df_jobs.JobID.apply(lambda row: str(row))
-        print("{} heterogeneous JobIDs converted to regular JobIDs".format(
-            len(df_jobs.loc[(df_jobs.JobID.str.contains("+", regex=False))])
-        ))
-        df_jobs.JobID = df_jobs.JobID.apply(
-            lambda row: str(int(row.split("+")[0]) + int(row.split("+")[1])) if "+" in row else row
         )
 
         # Some error in slurm accounting, can correct for case of one other user in account
@@ -424,7 +424,52 @@ class SlurmDataReader:
                 )
         print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
 
+        df_jobs["Cancelled"] = df_jobs.apply(
+            lambda row: None if row.AllocNodes != 0 else row.End - row.Submit,
+            axis=1
+        )
+
+        df_jobs.JobID = df_jobs.JobID.apply(lambda row: str(row))
+        print("{} heterogeneous JobIDs converted to regular JobIDs".format(
+            len(df_jobs.loc[(df_jobs.JobID.str.contains("+", regex=False))])
+        ))
+        df_jobs.JobID = df_jobs.JobID.apply(
+            lambda row: str(int(row.split("+")[0]) + int(row.split("+")[1])) if "+" in row else row
+        )
+
+        df_jobs.JobID = df_jobs.JobID.apply(
+            lambda row: (
+                [row.replace("[", "").replace("]", "")]
+                if "-" not in row
+                else [
+                    row.split("[")[0]  + str(num)#]
+                    for num in range(
+                        int(row.split("_[")[1].split("-")[0]),#]
+                        int(row.split("_[")[1].split("-")[1].strip("]")) + 1
+                    )
+                ]
+            )
+        )
+        num_jobs_with_arrs = len(df_jobs)
+        df_jobs = df_jobs.explode("JobID")
+        print(
+            "{} cancelled job arrays converted to individual job entries".format(
+                len(df_jobs) - num_jobs_with_arrs
+            )
+        )
+
+        df_jobs_orig_len = len(df_jobs)
+        df_jobs = df_jobs[~df_jobs.duplicated(subset=["JobID", "Submit"], keep="first")]
+        print(
+            "{} duplicate (JobID,Submit) present, deleting".format(df_jobs_orig_len - len(df_jobs))
+        )
+
         print("{} Jobs in workload trace".format(len(df_jobs)))
+        print(
+            "{} Jobs in workload trace cancelled before running".format(
+                len(df_jobs.loc[(df_jobs.AllocNodes == 0)])
+            )
+        )
 
         return df_jobs
 

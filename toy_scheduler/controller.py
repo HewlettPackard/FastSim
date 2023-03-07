@@ -174,15 +174,18 @@ class Controller:
         self.sched_main_num = 0
 
         self.bf_free_blocks = None
-        self.bf_window_in_res = self.config.bf_window // self.config.bf_resolution
+        self.bf_window = self.config.bf_window.total_seconds()
+        self.bf_end_padding = (self.config.OverTimeLimit + self.config.KillWait).total_seconds()
+        self.bf_resolution = self.config.bf_resolution.total_seconds()
+        self.bf_max_relevant_start = (
+            (self.config.bf_max_time - self.config.bf_yield_interval).total_seconds()
+        )
         self.bf_loop_active = False
         self.bf_try_per_lock_hold = int(
             self.config.bf_yield_interval.total_seconds() * self.config.approx_bf_try_per_sec
         )
-        print(self.bf_try_per_lock_hold)
         self.bf_max_lock_holds = int(
-            self.config.bf_max_time /
-            (self.config.bf_yield_interval + self.config.bf_yield_sleep)
+            self.config.bf_max_time / (self.config.bf_yield_interval + self.config.bf_yield_sleep)
         )
         self.bf_locks_remaining = 1
         self.bf_time = None
@@ -190,6 +193,7 @@ class Controller:
         self.bf_max_reqtime = None
         self.bf_queue_min_reqtime = None
         self.bf_job_reqtimes = None
+        self.bf_secs_past = None
 
     def _next_job_finish(self):
         if not self.running_jobs:
@@ -346,6 +350,9 @@ class Controller:
         if len(job.assigned_nodes) != job.nodes:
             raise Exception("bruh")
 
+        if job.cancel is not None:
+            raise Exception("brew")
+
         return True
 
     def _check_finished_jobs(self):
@@ -400,9 +407,11 @@ class Controller:
             if not free_nodes_ready_now:
                 continue
 
-            jobs_submitted = []
+            jobs_submitted, jobs_cancelled, i_job = [], [], len(res_queue)
 
-            for i_job_rev, job in enumerate(reversed(res_queue)):
+            for job in reversed(res_queue):
+                i_job -= 1
+
                 if self.num_sched_test_step >= sched_depth:
                     continue
                 self.num_sched_test_step += 1
@@ -434,8 +443,13 @@ class Controller:
                     n_nodes += 1
 
                 if len(valid_nodes) == job.nodes:
+                    if job.cancel is not None:
+                        jobs_cancelled.append(i_job)
+                        jobs_submitted = [ i - 1 for i in jobs_submitted ]
+                        continue
+
                     self._submit(job.start_job(self.time), nodes=valid_nodes)
-                    jobs_submitted.append(-(i_job_rev + 1))
+                    jobs_submitted.append(i_job)
 
                 else:
                     # Would still need to iterate over the job and confirm we cant schedule
@@ -448,7 +462,12 @@ class Controller:
 
             self.sched_main_num += len(jobs_submitted)
 
-            for i_job in reversed(jobs_submitted):
+            for i_job in jobs_cancelled:
+                cancelled_job = res_queue.pop(i_job)
+                cancelled_job.cancel_job()
+                self.queue.jobs_to_cancel.remove(cancelled_job)
+
+            for i_job in jobs_submitted:
                 res_queue.pop(i_job)
 
     def _sched_main(self, sched_depth):
@@ -462,9 +481,12 @@ class Controller:
         if not free_nodes_ready_now:
             return
 
-        jobs_submitted, partitions_failed = [], set()
+        jobs_submitted, jobs_cancelled, partitions_failed = [], [], set()
+        i_job = len(self.queue.queue)
 
-        for i_job_rev, job in enumerate(reversed(self.queue.queue)):
+        for job in reversed(self.queue.queue):
+            i_job -= 1
+
             if self.num_sched_test_step >= sched_depth:
                 break
             self.num_sched_test_step += 1
@@ -502,8 +524,14 @@ class Controller:
                 n_nodes += 1
 
             if len(valid_nodes) == job.nodes:
+                # Cancel early if set to be cancelled in queue at later time
+                if job.cancel is not None:
+                    jobs_cancelled.append(i_job)
+                    jobs_submitted = [ i - 1 for i in jobs_submitted ]
+                    continue
+
                 self._submit(job.start_job(self.time), nodes=valid_nodes)
-                jobs_submitted.append(-(i_job_rev + 1))
+                jobs_submitted.append(i_job)
 
                 for node in valid_nodes:
                     free_nodes_ready_now.remove(node)
@@ -521,7 +549,12 @@ class Controller:
 
         self.sched_main_num += len(jobs_submitted)
 
-        for i_job in reversed(jobs_submitted):
+        for i_job in jobs_cancelled:
+            cancelled_job = self.queue.queue.pop(i_job)
+            cancelled_job.cancel_job()
+            self.queue.jobs_to_cancel.remove(cancelled_job)
+
+        for i_job in jobs_submitted:
             self.queue.queue.pop(i_job)
 
     # XXX Not using this anymore
@@ -550,6 +583,7 @@ class Controller:
 
         self.bf_locks_remaining = self.bf_max_lock_holds
         self.bf_time = self.time
+        self.bf_secs_past = 0
 
         self.bf_free_blocks, self.bf_nodes_free_now_min_reqtimes = {}, {}
 
@@ -560,26 +594,42 @@ class Controller:
             bf_nodes_free_now_min_reqtimes = self.bf_nodes_free_now_min_reqtimes[resv]
 
             for interval, nodes in free_block.items():
-                if interval[0] <= self.time:
-                    interval_i = 0
-                else:
-                    interval_i = ((interval[0] - self.time) // self.config.bf_resolution) + 1
-                    if interval_i >= self.bf_window_in_res:
-                        continue
-
                 if interval[1] == datetime.datetime.max:
-                    interval_f = self.bf_window_in_res
+                    interval_f = self.bf_window
                 else:
                     interval_f = min(
-                        ((interval[1] - self.time) // self.config.bf_resolution) + 1,
-                        self.bf_window_in_res
+                        (interval[1] - self.time).total_seconds(), self.bf_window
                     )
 
-                bf_free_blocks[(interval_i, interval_f)].update(nodes)
-
-                if interval_i == 0:
+                if interval[0] <= self.time:
                     for node in nodes:
-                        bf_nodes_free_now_min_reqtimes[node] = interval_f
+                        if node.running_job is not None:
+                            interval_i = max(
+                                (
+                                    (node.running_job.endlimit - self.time).total_seconds() +
+                                    self.bf_end_padding
+                                ),
+                                1
+                            )
+
+                        else:
+                            interval_i = 0
+
+                        bf_free_blocks[(interval_i, interval_f)].add(node)
+
+                        if interval_i <= self.bf_max_relevant_start:
+                            bf_nodes_free_now_min_reqtimes[node] = interval_f - interval_i
+
+                else:
+                    interval_i = (interval[0] - self.time).total_seconds()
+                    if interval_i >= self.bf_window:
+                        continue
+
+                    bf_free_blocks[(interval_i, interval_f)].update(nodes)
+
+                if interval_i <= self.bf_max_relevant_start:
+                    for node in nodes:
+                        bf_nodes_free_now_min_reqtimes[node] = interval_f - interval_i
 
         self.bf_max_reqtime = {
             resv : max(nodes_free_now_min_reqtimes.values()) if nodes_free_now_min_reqtimes else 0
@@ -598,15 +648,15 @@ class Controller:
             self.bf_job_ordered_reqtimes[""] = {}
             for job in self.queue.queue[-max_test_from_normal_q:]:
                 self.bf_queue.append(job)
-                self.bf_job_ordered_reqtimes[""][job] = (
-                    job.reqtime // self.config.bf_resolution + 1
+                self.bf_job_ordered_reqtimes[""][job] = max(
+                    job.reqtime.total_seconds(), self.bf_resolution # XXX might not need this
                 )
         for resv, resv_q in self.queue.reservations.items():
             self.bf_job_ordered_reqtimes[resv] = {}
             for job in resv_q:
                 self.bf_queue.append(job)
-                self.bf_job_ordered_reqtimes[resv][job] = (
-                    job.reqtime // self.config.bf_resolution + 1
+                self.bf_job_ordered_reqtimes[resv][job] = max(
+                    job.reqtime.total_seconds(), self.bf_resolution
                 )
         # Earliest reqtime job at front so I can call next(iter()) to grab it
         self.bf_job_ordered_reqtimes = {
@@ -644,6 +694,7 @@ class Controller:
 
         self.bf_locks_remaining -= 1
         self.bf_loop_active = bool(not loop_finished and self.bf_locks_remaining)
+        self.bf_secs_past += self.config.bf_yield_interval.total_seconds()
 
         self.sched_backfill_num += len(backfill_now)
 
@@ -681,13 +732,9 @@ class Controller:
 
             reqtime = self.bf_job_ordered_reqtimes[resv].pop(job)
 
-            if self.bf_max_reqtime[resv] == 1 and reqtime != 1:
-                continue
-
-            num_free_nodes = 0
-            selected_intervals, unsorted_intervals = defaultdict(set), set()
-
             free_blocks = self.bf_free_blocks[resv]
+
+            num_free_nodes, selected_intervals = 0, defaultdict(set)
 
             # NOTE Earliest starting first, then sort by earliest end
             sorted_free_blocks = sorted(free_blocks.items(), key=lambda block: block[0])
@@ -699,22 +746,22 @@ class Controller:
                     valid_nodes = { node for node in nodes if job.partition in node.partitions }
                     if valid_nodes:
                         selected_intervals[interval] = valid_nodes
-                        unsorted_intervals.add(interval)
                         num_free_nodes += len(valid_nodes)
                         usage_block_start = interval[0]
                         usage_block_end = usage_block_start + reqtime
-                        if usage_block_end > self.bf_window_in_res:
+                        if usage_block_end > self.bf_window:
                             break
 
-                # Only move forward once we have gathered all valid nodes that
-                # share an interval start time
-                if not i_block + 1 == len(sorted_free_blocks):
-                    if sorted_free_blocks[i_block + 1][0][0] != interval[0]:
-                        if job.nodes > num_free_nodes:
-                            unsorted_intervals.clear()
-                            continue
-                    else:
-                        continue
+                # Only move forward once we have gathered all valid nodes that share an interval
+                # start time and have checked all nodes that we may be able to run on immediately
+                if (
+                    not i_block + 1 == len(sorted_free_blocks) and
+                    (
+                        sorted_free_blocks[i_block + 1][0][0] == interval[0] or
+                        sorted_free_blocks[i_block + 1][0][0] <= self.bf_secs_past
+                    )
+                ):
+                    continue
 
                 if job.nodes <= num_free_nodes:
                     # Remove blocks that do not remain free long enough for job to run
@@ -725,82 +772,82 @@ class Controller:
                             num_free_nodes -= len(selected_intervals.pop(selected_interval))
 
                     if job.nodes > num_free_nodes:
-                        unsorted_intervals.clear()
                         continue
 
-                    # Need to sort this last bunch of nodes by weight to choose which to run on
-                    possible_node_intervals = []
-                    for unsorted_interval in unsorted_intervals:
-                        unsorted_nodes = selected_intervals.pop(unsorted_interval)
-                        num_free_nodes -= len(unsorted_nodes)
-                        for unsorted_node in unsorted_nodes:
-                            possible_node_intervals.append((unsorted_node, unsorted_interval))
-                    possible_node_intervals.sort(
-                        key=lambda node_interval: (node_interval[0].weight, node_interval[0].id),
-                        reverse=True
-                    )
-                    for node_interval in possible_node_intervals[num_free_nodes - job.nodes:]:
-                        selected_intervals[node_interval[1]].add(node_interval[0])
+                    # Need to sort the nodes by weight to choose which to run on
+                    selected_nodes = [
+                        node for nodes in selected_intervals.values() for node in nodes
+                    ]
+
+                    # Prioritise nodes that are available if job might be able to start now
+                    if usage_block_start <= self.bf_secs_past:
+                        selected_nodes.sort(
+                            key=lambda node: (node.running_job is not None, node.weight, node.id),
+                            reverse=True
+                        )
+                    else:
+                        selected_nodes.sort(key=lambda node: (node.weight, node.id), reverse=True)
+
+                    selected_nodes = selected_nodes[num_free_nodes - job.nodes:]
 
                     # Run the job
-                    if usage_block_start == 0:
-                        valid_nodes = {
-                            node for nodes in selected_intervals.values() for node in nodes
-                        }
+                    if usage_block_start <= self.bf_secs_past:
+                        if job.cancel is not None:
+                            self.queue.cancel_job(job)
+                            break
 
-                        can_submit = True
-                        for node in valid_nodes:
-                            self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
-
-                            if node.running_job is None:
-                                continue
-
-                            # Think BF is able to do this
-                            if node.running_job.endlimit <= self.bf_time:
-                                running_job = node.running_job
-                                self.running_jobs.remove(running_job)
-                                self._end_job(running_job)
-                            # Node may have been allocated by sched during the yield_sleep. Cannot
-                            # schedule the job in this case
-                            else:
-                                can_submit = False
-                                break
-
-                        if self.bf_nodes_free_now_min_reqtimes[resv]:
-                            self.bf_max_reqtime[resv] = max(
-                                self.bf_nodes_free_now_min_reqtimes[resv].values()
-                            )
-                        else:
-                            self.bf_max_reqtime[resv] = 0
-
-                        if can_submit:
-                            backfill_now.append((job, valid_nodes))
+                        # Node may have been allocated by sched during the yield_sleep or
+                        # job is running overtime. Cannot schedule the job in this case
+                        if all(node.running_job is None for node in selected_nodes):
+                            backfill_now.append((job, selected_nodes))
 
                     recompute_bf_max_reqtime = False
 
+                    usage_block_start = (
+                        int(usage_block_start // self.bf_resolution * self.bf_resolution)
+                    )
+                    usage_block_end = max(
+                        int(usage_block_end // self.bf_resolution * self.bf_resolution),
+                        self.bf_resolution
+                    )
+
                     for selected_interval, nodes in selected_intervals.items():
+                        nodes = nodes.intersection(selected_nodes)
+                        if not nodes:
+                            continue
+
                         free_blocks[selected_interval] -= nodes
 
-                        if selected_interval[0] != usage_block_start:
+                        if selected_interval[0] < usage_block_start:
                             free_blocks[(selected_interval[0], usage_block_start)].update(nodes)
 
-                            if selected_interval[0] == 0:
+                            if selected_interval[0] <= self.bf_max_relevant_start:
                                 for node in nodes:
                                     self.bf_nodes_free_now_min_reqtimes[resv][node] = (
-                                        usage_block_start
+                                        usage_block_start - selected_interval[0]
                                     )
+                                    recompute_bf_max_reqtime = True
+
+                        # The backfill resolution cannot fit another job on this node to start
+                        # before the end of the relevant time.
+                        elif selected_interval[0] <= self.bf_max_relevant_start:
+                            for node in nodes:
+                                self.bf_nodes_free_now_min_reqtimes[resv].pop(node)
                                 recompute_bf_max_reqtime = True
 
-                        if selected_interval[1] != usage_block_end:
+                        if selected_interval[1] > usage_block_end:
                             free_blocks[(usage_block_end, selected_interval[1])].update(nodes)
 
                         if not free_blocks[selected_interval]:
                             free_blocks.pop(selected_interval)
 
                     if recompute_bf_max_reqtime:
-                        self.bf_max_reqtime[resv] = max(
-                            self.bf_nodes_free_now_min_reqtimes[resv].values()
-                        )
+                        if self.bf_nodes_free_now_min_reqtimes[resv]:
+                            self.bf_max_reqtime[resv] = max(
+                                self.bf_nodes_free_now_min_reqtimes[resv].values()
+                            )
+                        else:
+                            self.bf_max_reqtime[resv] = 0
 
                     break
 
@@ -1070,8 +1117,9 @@ class Controller:
                 sum(1 for node in self.down_nodes if not node.running_job),
                 self.power_usage
             ) +
-            "Priority Queue = {} (partition ".format(
+            "Priority Queue = {} (cancel {} partition ".format(
                 len(self.queue.queue) + len(self.queue.waiting_dependency),
+                sum(1 for job in self.queue.queue if job.cancel is not None)
             ) +
             " ".join(
                 "{}={}".format(
