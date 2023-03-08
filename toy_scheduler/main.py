@@ -23,8 +23,8 @@ def print_sim_result(controller):
     max_submit = max(controller.job_history, key=lambda job: job.true_submit).true_submit
     job_history = [
         job for job in controller.job_history if (
-            controller.init_time + timedelta(days=4) < job.true_submit <
-            max_submit - timedelta(days=4)
+            controller.init_time + timedelta(days=2) < job.true_submit <
+            max_submit - timedelta(days=2)
         )
     ]
     data_bd_slowdowns = [

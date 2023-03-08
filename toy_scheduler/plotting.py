@@ -99,8 +99,8 @@ def main(args):
             job
             for job in controller.job_history
                 if (
-                    controller.init_time + timedelta(days=4) < job.true_submit <
-                    max_submit - timedelta(days=4)
+                    controller.init_time + timedelta(days=args.days_ignore) < job.true_submit <
+                    max_submit - timedelta(days=args.days_ignore)
                 )
         ]
         for controller in controllers
@@ -314,7 +314,10 @@ def main(args):
             controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
             for hr in range(
                 int(
-                    (max_submit - timedelta(days=14) - controllers[0].init_time).total_seconds() /
+                    (
+                        max_submit - timedelta(days=args.rolling_window_days) -
+                        controllers[0].init_time#
+                    ).total_seconds() /
                     (60 * 60)
                 )
             )
@@ -333,12 +336,14 @@ def main(args):
                 )
             sims_submit_hour_waits.append(sim_submit_hour_waits)
 
+        window_hrs = int(args.rolling_window_days * 24)
+
         sims_mean_wait_times_rolling_window, sims_mean_wait_times_rolling_window_err = [], []
         for sim_submit_hour_waits in sims_submit_hour_waits:
             sim_mean_wait_times_rolling_window = np.zeros(len(hours))
             sim_mean_wait_times_rolling_window_err = np.zeros(len(hours))
             wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
-            for hr_num in range(336): # 2 weeks
+            for hr_num in range(window_hrs):
                 wait_times_rolling_window += (
                     sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -351,9 +356,9 @@ def main(args):
                 wait_times_rolling_window = (
                     wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
                 )
-                wait_times_rolling_window += sim_submit_hour_waits[hour + timedelta(hours=336)]
+                wait_times_rolling_window += sim_submit_hour_waits[hour + timedelta(hours=window_hrs)]
                 wait_times_rolling_window_hour_lens.append(
-                    len(sim_submit_hour_waits[hour + timedelta(hours=336)])
+                    len(sim_submit_hour_waits[hour + timedelta(hours=window_hrs)])
                 )
 
             sims_mean_wait_times_rolling_window.append(sim_mean_wait_times_rolling_window)
@@ -372,7 +377,7 @@ def main(args):
             data_mean_wait_times_rolling_window = np.zeros(len(hours))
             data_mean_wait_times_rolling_window_err = np.zeros(len(hours))
             wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
-            for hr_num in range(336):
+            for hr_num in range(window_hrs):
                 wait_times_rolling_window += (
                     data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -385,9 +390,9 @@ def main(args):
                 wait_times_rolling_window = (
                     wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
                 )
-                wait_times_rolling_window += data_submit_hour_waits[hour + timedelta(hours=336)]
+                wait_times_rolling_window += data_submit_hour_waits[hour + timedelta(hours=window_hrs)]
                 wait_times_rolling_window_hour_lens.append(
-                    len(data_submit_hour_waits[hour + timedelta(hours=336)])
+                    len(data_submit_hour_waits[hour + timedelta(hours=window_hrs)])
                 )
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -483,10 +488,10 @@ def main(args):
                     bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
                 )
                 bdslowdowns_rolling_window += (
-                    sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+                    sim_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)]
                 )
                 bdslowdowns_rolling_window_hour_lens.append(
-                    len(sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+                    len(sim_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)])
                 )
 
             sims_mean_bdslowdowns_rolling_window.append(sim_mean_bdslowdowns_rolling_window)
@@ -510,7 +515,7 @@ def main(args):
             data_mean_bdslowdowns_rolling_window = np.zeros(len(hours))
             data_mean_bdslowdowns_rolling_window_err = np.zeros(len(hours))
             bdslowdowns_rolling_window, bdslowdowns_rolling_window_hour_lens = [], []
-            for hr_num in range(336):
+            for hr_num in range(window_hrs):
                 bdslowdowns_rolling_window += (
                     data_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -526,10 +531,10 @@ def main(args):
                     bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
                 )
                 bdslowdowns_rolling_window += (
-                    data_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+                    data_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)]
                 )
                 bdslowdowns_rolling_window_hour_lens.append(
-                    len(data_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+                    len(data_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)])
                 )
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -815,6 +820,11 @@ def parse_arguments():
         "--plot_dir", type=str, default="/work/y02/y02/awilkins/data/plots/archer2_jobdata_plots",
         help="Override ARCHER2 plot dir"
     )
+    parser.add_argument(
+        "--days_ignore", type=float, default=4.0,
+        help="ovveride the default ignore period (4 days) at the start and end of job data"
+    )
+    parser.add_argument("--rolling_window_days", type=float, default=14.0)
 
     args = parser.parse_args()
 
