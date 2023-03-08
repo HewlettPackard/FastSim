@@ -185,6 +185,9 @@ def main(args):
         proj_sim_wait, proj_data_wait = defaultdict(list), defaultdict(list)
         proj_nodehours = defaultdict(float)
         for job in job_history:
+            if job.ignore_in_eval:
+                continue
+
             proj = assoc_tree.assocs[job.assoc].parent.parent.name
             sim_wait = (job.start - job.submit).total_seconds() / 60 / 60
             data_wait = (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
@@ -262,6 +265,8 @@ def main(args):
             "(id - nodes - submit - elapsed - reqtime - sim wait - true wait - user - account)"
         )
         for job in job_history:
+            if job.ignore_in_eval:
+                continue
             sim_qos_waits[job.qos.name].append((job.start - job.submit).total_seconds() / 60 / 60)
             data_qos_waits[job.qos.name].append(
                 (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
@@ -320,6 +325,9 @@ def main(args):
         for job_history in job_histories:
             sim_submit_hour_waits = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 sim_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                     (job.start - job.submit).total_seconds() / 60 / 60
                 )
@@ -354,6 +362,9 @@ def main(args):
         if not args.no_data_comparison:
             data_submit_hour_waits = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 data_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                     (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
                 )
@@ -442,6 +453,9 @@ def main(args):
         for job_history in job_histories:
             sim_submit_hour_bdslowdowns = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 sim_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
                     max(
                         (job.end - job.submit) / max(job.runtime, controller.config.bd_threshold),
@@ -711,6 +725,8 @@ def main(args):
         )
 
         for job in tqdm(job_history):
+            if job.ignore_in_eval:
+                continue
             l_mins = int((job.submit - sim_min_submit).total_seconds() / 60) + 1
             u_mins = int((job.start - sim_min_submit).total_seconds() / 60)
             sim_queue_length[l_mins:u_mins] += 1
