@@ -43,14 +43,16 @@ class Controller:
 
         df_jobs = self.data_reader.get_cleaned_job_df(self.config.considered_partitions, 550)
 
-        self.init_time = df_jobs.Start.min()
-        self.time = self.init_time
-
         ret = self.data_reader.get_nodes_partitions(
             self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations,
             df_jobs.End.max(), self.config.nodes_down_in_blades
         )
         nid_data, partition_data, valid_resv, hpe_restrictlong = ret
+
+        # Could use for this math.stackexchange.com/questions/473229/ \
+        # expected-value-of-maximum-and-minimum-of-n-normal-random-variables
+        self.init_time = df_jobs.Start.min()
+        self.time = self.init_time
 
         qos_data = self.data_reader.get_qos()
 
@@ -74,6 +76,15 @@ class Controller:
         self.queue = Queue(
             df_jobs, self.partitions.partitions_by_name, qos_data, valid_resv, priority_sorter
         )
+
+        self.sched_start = self.init_time
+        nodes = len(self.partitions.nodes)
+        for job in sorted(self.queue.all_jobs, key=lambda job: job.true_job_start):
+            nodes -= job.nodes
+            job.ignore_in_eval = True
+            if nodes <= 0:
+                self.sched_start = job.true_job_start
+                break
 
         self.num_sched_test_step = 0
         self.num_bf_test_step = 0
@@ -209,9 +220,9 @@ class Controller:
 
         # NOTE Assuming: defer,bf_continue
 
-        previous_small_sched = self.time
-        next_bf_time = self.time + self.config.bf_interval
-        next_sched_time = self.time + self.config.sched_interval
+        previous_small_sched = self.sched_start
+        next_bf_time = self.sched_start + self.config.bf_interval
+        next_sched_time = self.sched_start + self.config.sched_interval
         small_sched_waiting_time = None
         next_fairtree_time = self.time + self.config.PriorityCalcPeriod
         while self.queue.all_jobs or self.queue.queue or self.running_jobs:
