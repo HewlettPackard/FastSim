@@ -165,11 +165,22 @@ class SlurmDataReader:
                 "resv_schedule" : resv_schedule, "partitions" : nid_partitions[nid]
             }
 
+
         # For ARCHER2 it looks like nodes that go down with a reason like
         # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
         # something like "Not responding" are unplanned down states. Fill hpe_restriclong resv
         # with nodes that go down for these reasons, extend the time they are in the resv such that
         # the resv has at least the same number of nodes as the in the current resv dump
+
+        # Submit some hrs before first down time, add a -num to the end to overrride 8 hrs
+        if "-" in hpe_restrictlong_sliding_res:
+            hpe_restrictlong_sliding_res, submit_hrs_before = (
+                hpe_restrictlong_sliding_res.split("-")
+            )
+            submit_hrs_before = int(submit_hrs_before)
+        else:
+            submit_hrs_before = 8
+
         if (
             hpe_restrictlong_sliding_res == "dynamic" or
             hpe_restrictlong_sliding_res == "dynamic+const" or
@@ -197,8 +208,6 @@ class SlurmDataReader:
                     # Nodes go down in sets of 4 like this
                     nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
 
-                    # Submit some hrs before first down time
-                    submit_hrs_before = 48 # 8 48
                     first_submit = (
                         down_schedule[0].replace(minute=0, second=0) -
                         timedelta(hours=submit_hrs_before, minutes=5)
