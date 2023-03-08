@@ -186,35 +186,50 @@ class SlurmDataReader:
                     if nid not in nid_data:
                         continue
 
-                    new_down_schedule = [
-                        down_block
-                        for down_block in nid_data[nid]["down_schedule"]
-                            if down_block[2] == "DOWN"
-                    ]
-                    new_down_schedule += deepcopy(shared_drain_schedule)
-                    new_down_schedule.sort(key=lambda schedule: schedule[0])
+                    # new_down_schedule = [
+                    #     down_block
+                    #     for down_block in nid_data[nid]["down_schedule"]
+                    #         if down_block[2] == "DOWN"
+                    # ]
+                    for drain_block in shared_drain_schedule:
+                        # If any overlap with existing DRAINs on the node, assume this node was
+                        # in a maintenance reservation
+                        if any(
+                            max(
+                                0,
+                                (
+                                    min(block[0] + block[1], drain_block[0] + drain_block[1]) -
+                                    max(block[0], drain_block[0])
+                                ).total_seconds()
+                            )
+                            for block in nid_data[nid]["down_schedule"]
+                                if block[2] == "DRAIN"
+                        ):
+                            nid_data[nid]["down_schedule"].append(list(drain_block))
+
+                    # new_down_schedule += deepcopy(shared_drain_schedule)
+                    # new_down_schedule.sort(key=lambda schedule: schedule[0])
+                    nid_data[nid]["down_schedule"].sort(key=lambda schedule: schedule[0])
 
                     i_event = 0
-                    while i_event < len(new_down_schedule) - 1:
-                        event = new_down_schedule[i_event]
-                        next_event = new_down_schedule[i_event + 1]
+                    while i_event < len(nid_data[nid]["down_schedule"]) - 1:
+                        event = nid_data[nid]["down_schedule"][i_event]
+                        next_event = nid_data[nid]["down_schedule"][i_event + 1]
 
                         if event[0] + event[1] <= next_event[0]:
                             i_event += 1
                             continue
 
                         else:
-                            new_down_schedule[i_event][1] = max(
+                            nid_data[nid]["down_schedule"][i_event][1] = max(
                                 event[1], next_event[0] + next_event[1] - event[0]
                             )
-                            new_down_schedule[i_event][2] = "DRAIN"
-                            new_down_schedule[i_event][3] = "blade down maintenance"
-                            new_down_schedule.pop(i_event + 1)
+                            nid_data[nid]["down_schedule"][i_event][2] = "DRAIN"
+                            nid_data[nid]["down_schedule"][i_event][3] = "blade down maintenance"
+                            nid_data[nid]["down_schedule"].pop(i_event + 1)
                             continue
 
-                    new_down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
-
-                    nid_data[nid]["down_schedule"] = new_down_schedule
+                    nid_data[nid]["down_schedule"].sort(key=lambda schedule: schedule[0], reverse=True)
 
         # For ARCHER2 it looks like nodes that go down with a reason like
         # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
