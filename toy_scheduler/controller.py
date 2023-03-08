@@ -68,7 +68,7 @@ class Controller:
             self.config.PriorityWeightFairshare, self.config.PriorityMaxAge,
             self.config.PriorityWeightPartition, self.config.PriorityWeightQOS,
             len({ partition.priority_tier for partition in self.partitions.partitions }) == 1,
-            self.fairtree
+            self.fairtree, len(self.partitions.nodes)
         )
 
         self.queue = Queue(
