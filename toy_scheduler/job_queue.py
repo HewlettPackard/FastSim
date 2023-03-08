@@ -61,7 +61,8 @@ class Queue:
                 job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
                 job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
                 partitions_by_name[job_row.Partition], job_row.DependencyArg, job_row.JobName,
-                job_row.Reason, job_row.ReservationArg, job_row.BeginArg, job_row.Cancelled
+                job_row.Reason, job_row.ReservationArg, job_row.BeginArg, job_row.Cancelled,
+                job_row.NodelistArg, job_row.ExcludeArg
             ) for _, job_row in df_jobs.iterrows()
         ]
         self.all_jobs.sort(key=lambda job: (job.submit, job.id), reverse=True)
@@ -566,7 +567,7 @@ class Job:
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
-        reason, reservation_arg, begin_arg, cancelled
+        reason, reservation_arg, begin_arg, cancelled, nodelist_arg, exclude_arg
     ):
         self.id = id
         self.nodes = nodes
@@ -614,7 +615,7 @@ class Job:
                 "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
                 "DependencyNeverSatisfied", "JobArrayTaskLimit"
             ] or
-            begin_arg
+            begin_arg or nodelist_arg or exclude_arg
         )
 
         self.launch_time = None

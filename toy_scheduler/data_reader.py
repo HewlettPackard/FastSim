@@ -417,6 +417,12 @@ class SlurmDataReader:
         df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
             lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
         )
+        df_jobs["NodelistArg"] = df_jobs.SubmitLine.apply(
+            lambda row: get_sbatch_cli_arg(row, long="--nodelist", short="-w")
+        )
+        df_jobs["ExcludeArg"] = df_jobs.SubmitLine.apply(
+            lambda row: get_sbatch_cli_arg(row, long="--exclude", short="-x")
+        )
 
         # Some error in slurm accounting, can correct for case of one other user in account
         num_broken, num_fixed = len(df_jobs.loc[(df_jobs.User == "00:00:00")]), 0
