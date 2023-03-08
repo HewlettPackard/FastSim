@@ -18,7 +18,7 @@ defaults = {
     "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0, "PriorityWeightFairshare" : 0,
     "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0, "PriorityWeightQOS" : 0,
     "approx_excess_assocs" : 0, "JobRequeue" : 1, "approx_bf_try_per_sec" : 10, "KillWait" : 30,
-    "OverTimeLimit" : 0
+    "OverTimeLimit" : 0, "nodes_down_in_blades" : False
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]

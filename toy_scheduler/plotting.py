@@ -679,7 +679,14 @@ def main(args):
         )
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
-        ax.set_ylim(3000, 6000)
+        ax.set_ylim(
+            (
+               len(controllers[0].partitions.nodes) * 0.5
+               if len(controllers[0].partitions.nodes) > 2000
+               else 0
+            ),
+            len(controllers[0].partitions.nodes) * 1.1
+        )
         ax.grid(axis="y")
         plt.legend()
         fig.tight_layout()

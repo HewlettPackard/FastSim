@@ -16,7 +16,9 @@ class SlurmDataReader:
         self.job_dump = job_dump
         self.qos_dump = qos_dump
 
-    def get_nodes_partitions(self, considered_partitions, hpe_restrictlong_sliding_res, max_sim_t):
+    def get_nodes_partitions(
+        self, considered_partitions, hpe_restrictlong_sliding_res, max_sim_t, nodes_down_in_blades
+    ):
         df_events = pd.read_csv(
             self.node_events_dump, delimiter='|', lineterminator='\n', header=0,
             usecols=["NodeName", "TimeStart", "TimeEnd", "State", "Reason"]
@@ -165,6 +167,47 @@ class SlurmDataReader:
                 "resv_schedule" : resv_schedule, "partitions" : nid_partitions[nid]
             }
 
+        # It looks like LUMI puts blades with a down node into a maintenance reservation that
+        # blocks all jobs. Recreate this by putting all the nodes in blade down when one of them
+        # goes down
+        if nodes_down_in_blades:
+            # Give all nodes in blade same down schedule
+            for first_blade_nid in list(nid_data)[::4]:
+                shared_down_schedule = sorted(
+                    [
+                        down_block
+                        for nid in range(first_blade_nid, first_blade_nid + 4)
+                            if nid in nid_data
+                            for down_block in nid_data[nid]["down_schedule"]
+                    ],
+                    key=lambda schedule: schedule[0]
+                )
+
+                i_event = 0
+                while i_event < len(shared_down_schedule) - 1:
+                    event = shared_down_schedule[i_event]
+                    next_event = shared_down_schedule[i_event + 1]
+
+                    if event[0] + event[1] <= next_event[0]:
+                        i_event += 1
+                        continue
+
+                    else:
+                        shared_down_schedule[i_event][1] = max(
+                            event[1], next_event[0] + next_event[1] - event[0]
+                        )
+                        shared_down_schedule[i_event][2] = "DOWN"
+                        shared_down_schedule[i_event][3] = "blade down maintenance"
+                        shared_down_schedule.pop(i_event + 1)
+                        continue
+
+                shared_down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
+
+                for nid in range(first_blade_nid, first_blade_nid + 4):
+                    if nid in nid_data:
+                        nid_data[nid]["down_schedule"] = [
+                            down_block for down_block in shared_down_schedule
+                        ]
 
         # For ARCHER2 it looks like nodes that go down with a reason like
         # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
@@ -445,8 +488,7 @@ class SlurmDataReader:
         print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
 
         df_jobs["Cancelled"] = df_jobs.apply(
-            lambda row: None if row.AllocNodes != 0 else row.End - row.Submit,
-            axis=1
+            lambda row: None if row.AllocNodes != 0 else row.End - row.Submit, axis=1
         )
 
         df_jobs.JobID = df_jobs.JobID.apply(lambda row: str(row))

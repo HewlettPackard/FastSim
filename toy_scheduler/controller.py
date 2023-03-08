@@ -48,7 +48,7 @@ class Controller:
 
         ret = self.data_reader.get_nodes_partitions(
             self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations,
-            df_jobs.End.max()
+            df_jobs.End.max(), self.config.nodes_down_in_blades
         )
         nid_data, partition_data, valid_resv, hpe_restrictlong = ret
 
