@@ -1,5 +1,6 @@
 from collections import defaultdict
 import datetime; from datetime import timedelta
+from copy import deepcopy
 
 import pandas as pd
 
@@ -173,41 +174,47 @@ class SlurmDataReader:
         if nodes_down_in_blades:
             # Give all nodes in blade same down schedule
             for first_blade_nid in list(nid_data)[::4]:
-                shared_down_schedule = sorted(
-                    [
-                        down_block
-                        for nid in range(first_blade_nid, first_blade_nid + 4)
-                            if nid in nid_data
-                            for down_block in nid_data[nid]["down_schedule"]
-                    ],
-                    key=lambda schedule: schedule[0]
-                )
-
-                i_event = 0
-                while i_event < len(shared_down_schedule) - 1:
-                    event = shared_down_schedule[i_event]
-                    next_event = shared_down_schedule[i_event + 1]
-
-                    if event[0] + event[1] <= next_event[0]:
-                        i_event += 1
-                        continue
-
-                    else:
-                        shared_down_schedule[i_event][1] = max(
-                            event[1], next_event[0] + next_event[1] - event[0]
-                        )
-                        shared_down_schedule[i_event][2] = "DOWN"
-                        shared_down_schedule[i_event][3] = "blade down maintenance"
-                        shared_down_schedule.pop(i_event + 1)
-                        continue
-
-                shared_down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
+                shared_drain_schedule = [
+                    down_block
+                    for nid in range(first_blade_nid, first_blade_nid + 4)
+                        if nid in nid_data
+                        for down_block in nid_data[nid]["down_schedule"]
+                            if down_block[2] == "DRAIN"
+                ]
 
                 for nid in range(first_blade_nid, first_blade_nid + 4):
-                    if nid in nid_data:
-                        nid_data[nid]["down_schedule"] = [
-                            down_block for down_block in shared_down_schedule
-                        ]
+                    if nid not in nid_data:
+                        continue
+
+                    new_down_schedule = [
+                        down_block
+                        for down_block in nid_data[nid]["down_schedule"]
+                            if down_block[2] == "DOWN"
+                    ]
+                    new_down_schedule += deepcopy(shared_drain_schedule)
+                    new_down_schedule.sort(key=lambda schedule: schedule[0])
+
+                    i_event = 0
+                    while i_event < len(new_down_schedule) - 1:
+                        event = new_down_schedule[i_event]
+                        next_event = new_down_schedule[i_event + 1]
+
+                        if event[0] + event[1] <= next_event[0]:
+                            i_event += 1
+                            continue
+
+                        else:
+                            new_down_schedule[i_event][1] = max(
+                                event[1], next_event[0] + next_event[1] - event[0]
+                            )
+                            new_down_schedule[i_event][2] = "DRAIN"
+                            new_down_schedule[i_event][3] = "blade down maintenance"
+                            new_down_schedule.pop(i_event + 1)
+                            continue
+
+                    new_down_schedule.sort(key=lambda schedule: schedule[0], reverse=True)
+
+                    nid_data[nid]["down_schedule"] = new_down_schedule
 
         # For ARCHER2 it looks like nodes that go down with a reason like
         # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
@@ -243,6 +250,9 @@ class SlurmDataReader:
                     continue
 
                 for down_schedule in data["down_schedule"]:
+                    if down_schedule[2] == "DOWN":
+                        continue
+
                     reason_prefix = down_schedule[3].split(" ")[0]
 
                     if not reason_prefix.isupper():
