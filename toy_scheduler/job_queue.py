@@ -341,7 +341,7 @@ class Queue:
 # or ARCHER). Also ignoring per account resource limits.
 class QOS:
     def __init__(
-        self, name, priority, grp_nodes, grp_submit, grp_jobs, usr_nodes, usr_jobs, assoc_jobs,
+        self, name, priority, grp_nodes, grp_jobs, grp_submit, usr_nodes, usr_jobs, assoc_jobs,
         usr_submit, assoc_submit
     ):
         self.name = name

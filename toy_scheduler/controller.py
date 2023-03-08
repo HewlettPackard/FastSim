@@ -1209,18 +1209,18 @@ class Controller:
         # )
 
         # if self.queue.queue:
-            # print("ID - QOS - Age - Size - FairShare - Total")
-            # print("User - FairShare")
-            # for job in self.queue.queue:
-                # qos_factor = int(self.queue.priority_sorter._qos_priority(job))
-                # age_factor = int(self.queue.priority_sorter._age_priority(job))
-                # size_factor = int(self.queue.priority_sorter._size_priority(job))
-                # fairshare_factor = int(self.queue.priority_sorter._fairshare_priority(job))
-                # print(
-                #     job.id, qos_factor, age_factor, size_factor, fairshare_factor,
-                #     qos_factor + age_factor + size_factor + fairshare_factor, sep=" - "
-                # )
-                # print(job.user, self.queue.priority_sorter._fairshare_priority(job))
+        #     print("ID - User - QOS - Age - Size - FairShare - Total")
+        #     # print("User - FairShare")
+        #     for job in self.queue.queue:
+        #         qos_factor = int(self.queue.priority_sorter._qos_priority(job) + 0.5)
+        #         age_factor = int(self.queue.priority_sorter._age_priority(job) + 0.5)
+        #         size_factor = int(self.queue.priority_sorter._size_priority(job) + 0.5)
+        #         fairshare_factor = int(self.queue.priority_sorter._fairshare_priority(job) + 0.5)
+        #         print(
+        #             job.id, job.user, qos_factor, age_factor, size_factor, fairshare_factor,
+        #             qos_factor + age_factor + size_factor + fairshare_factor, sep=" - "
+        #         )
+        #         # print(job.user, self.queue.priority_sorter._fairshare_priority(job))
 
         # max_endtime_ready_num_nodes = defaultdict(int)
         # for interval, nodes in self.partitions.free_blocks[""].items():
