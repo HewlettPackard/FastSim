@@ -78,13 +78,17 @@ class Controller:
         )
 
         self.sched_start = self.init_time
-        nodes = len(self.partitions.nodes)
+        nodes, init_phase_jobs = len(self.partitions.nodes), set()
         for job in sorted(self.queue.all_jobs, key=lambda job: job.true_job_start):
             nodes -= job.nodes
-            job.ignore_in_eval = True
+            init_phase_jobs.add(job)
             if nodes <= 0:
                 self.sched_start = job.true_job_start
                 break
+
+        for job in init_phase_jobs:
+            job.ignore_in_eval = True
+            job.runtime = max(job.runtime - (self.sched_start - job.true_job_start), timedelta())
 
         self.num_sched_test_step = 0
         self.num_bf_test_step = 0

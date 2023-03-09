@@ -188,8 +188,8 @@ def main(args):
             if job.ignore_in_eval:
                 continue
 
-            # proj = assoc_tree.assocs[job.assoc].parent.parent.name
-            proj = assoc_tree.assocs[job.assoc].parent.name
+            proj = assoc_tree.assocs[job.assoc].parent.parent.name
+            # proj = assoc_tree.assocs[job.assoc].parent.name
             sim_wait = (job.start - job.submit).total_seconds() / 60 / 60
             data_wait = (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
 
