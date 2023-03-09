@@ -237,7 +237,7 @@ class SlurmDataReader:
             )
             submit_hrs_before = int(submit_hrs_before)
         else:
-            submit_hrs_before = 8
+            submit_hrs_before = 0
 
         if (
             hpe_restrictlong_sliding_res == "dynamic" or

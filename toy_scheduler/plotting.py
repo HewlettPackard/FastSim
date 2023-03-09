@@ -188,7 +188,8 @@ def main(args):
             if job.ignore_in_eval:
                 continue
 
-            proj = assoc_tree.assocs[job.assoc].parent.parent.name
+            # proj = assoc_tree.assocs[job.assoc].parent.parent.name
+            proj = assoc_tree.assocs[job.assoc].parent.name
             sim_wait = (job.start - job.submit).total_seconds() / 60 / 60
             data_wait = (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
 
@@ -307,6 +308,67 @@ def main(args):
         ax.bar_label(data_bars, padding=3, fmt="%.1f")
         fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "qos_mean_waits{}.pdf".format(args.save_suffix)))
+        to_plot_or_not_to_plot(args.batch)
+
+    if "partition_waits" in args.plots:
+        sim_partition_waits, data_partition_waits = defaultdict(list), defaultdict(list)
+        print(
+            "\nlargescale jobs "
+            "(id - nodes - submit - elapsed - reqtime - sim wait - true wait - user - account)"
+        )
+        for job in job_history:
+            if job.ignore_in_eval:
+                continue
+            sim_partition_waits[job.partition.name].append((job.start - job.submit).total_seconds() / 60 / 60)
+            data_partition_waits[job.partition.name].append(
+                (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
+            )
+
+            if job.partition.name == "largescale":
+                print(
+                    job.id, job.nodes, job.true_submit,
+                    job.runtime, job.reqtime, (job.start - job.submit).round(freq="S"),
+                    job.true_job_start - job.true_submit, job.user, job.account,
+                    sep=" - "
+                )
+        print()
+
+        print("Num Jobs by Partition:")
+        print(
+            " | ".join(
+                "{} - {}".format(partition, len(waits))
+                for partition, waits in sim_partition_waits.items()
+            )
+        )
+
+        sim_partition_mean_waits = {
+            partition : np.mean(waits) for partition, waits in sim_partition_waits.items()
+        }
+        data_partition_mean_waits = {
+            partition : np.mean(waits) for partition, waits in data_partition_waits.items()
+        }
+        sorted_partition = [
+            partition for partition, _ in sorted(
+                data_partition_mean_waits.items(),
+                key=lambda partition_wait: partition_wait[1], reverse=True
+            )
+        ]
+        sim_mean_waits = [ sim_partition_mean_waits[partition] for partition in sorted_partition ]
+        data_mean_waits = [
+            data_partition_mean_waits[partition] for partition in sorted_partition
+        ]
+        x = np.arange(len(sim_mean_waits))
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
+        ax.set_xticks(x, sorted_partition)
+        ax.legend()
+        ax.bar_label(sim_bars, padding=3, fmt="%.1f")
+        ax.bar_label(data_bars, padding=3, fmt="%.1f")
+        fig.tight_layout()
+        fig.savefig(os.path.join(PLOT_DIR, "partition_mean_waits{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
     if "rolling_window" in args.plots:
@@ -699,12 +761,8 @@ def main(args):
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
         ax.set_ylim(
-            (
-               len(controllers[0].partitions.nodes) * 0.5
-               if len(controllers[0].partitions.nodes) > 2000
-               else 0
-            ),
-            len(controllers[0].partitions.nodes) * 1.1
+            max(data_allocated_nodes) * 0.5 if max(data_allocated_nodes) > 2000 else 0,
+            len(controllers[0].partitions.nodes)
         )
         ax.grid(axis="y")
         plt.legend()
