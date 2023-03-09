@@ -88,7 +88,11 @@ class Controller:
 
         for job in init_phase_jobs:
             job.ignore_in_eval = True
-            job.runtime = max(job.runtime - (self.sched_start - job.true_job_start), timedelta())
+            new_runtime = job.runtime - (self.sched_start - job.true_job_start)
+            if new_runtime <= timedelta():
+                self.queue.all_jobs.remove(job)
+            else:
+                job.runtime = new_runtime
 
         self.num_sched_test_step = 0
         self.num_bf_test_step = 0
@@ -145,9 +149,10 @@ class Controller:
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
 
         elif (
-            self.config.hpe_restrictlong_sliding_reservations == "dynamic" or
-            self.config.hpe_restrictlong_sliding_reservations == "dynamic+const" or
-            self.config.hpe_restrictlong_sliding_reservations == "dynamic+%extra"
+            # self.config.hpe_restrictlong_sliding_reservations == "dynamic" or
+            # self.config.hpe_restrictlong_sliding_reservations == "dynamic+const" or
+            # self.config.hpe_restrictlong_sliding_reservations == "dynamic+%extra" or
+            self.config.hpe_restrictlong_sliding_reservations != ""
         ):
             nid_to_node = { node.id : node for node in self.partitions.nodes }
             self.sliding_reservations = [
@@ -161,23 +166,23 @@ class Controller:
             ]
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
 
-        elif self.config.hpe_restrictlong_sliding_reservations:
-            with open(self.config.hpe_restrictlong_sliding_reservations, "rb") as f:
-                hpe_restrictlong_res = pickle.load(f)
+        # elif self.config.hpe_restrictlong_sliding_reservations:
+        #     with open(self.config.hpe_restrictlong_sliding_reservations, "rb") as f:
+        #         hpe_restrictlong_res = pickle.load(f)
 
-            for submitted in sorted(hpe_restrictlong_res):
-                print("{}: {}".format(submitted, len(hpe_restrictlong_res[submitted])))
+        #     for submitted in sorted(hpe_restrictlong_res):
+        #         print("{}: {}".format(submitted, len(hpe_restrictlong_res[submitted])))
 
-            nid_to_node = { node.id : node for node in self.partitions.nodes }
-            self.sliding_reservations = [
-                [
-                    submitted, submitted, submitted + timedelta(hours=1),
-                    submitted + timedelta(hours=1, minutes=5),
-                    submitted + timedelta(days=365, hours=1, minutes=5),
-                    [ nid_to_node[nid] for nid in hpe_restrictlong_res[submitted] ],
-                    "HPE_RestrictLongJobs"
-                ] for submitted in sorted(hpe_restrictlong_res)
-            ]
+        #     nid_to_node = { node.id : node for node in self.partitions.nodes }
+        #     self.sliding_reservations = [
+        #         [
+        #             submitted, submitted, submitted + timedelta(hours=1),
+        #             submitted + timedelta(hours=1, minutes=5),
+        #             submitted + timedelta(days=365, hours=1, minutes=5),
+        #             [ nid_to_node[nid] for nid in hpe_restrictlong_res[submitted] ],
+        #             "HPE_RestrictLongJobs"
+        #         ] for submitted in sorted(hpe_restrictlong_res)
+        #     ]
 
         else:
             self.sliding_reservations = []
