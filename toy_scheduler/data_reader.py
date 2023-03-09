@@ -186,11 +186,6 @@ class SlurmDataReader:
                     if nid not in nid_data:
                         continue
 
-                    # new_down_schedule = [
-                    #     down_block
-                    #     for down_block in nid_data[nid]["down_schedule"]
-                    #         if down_block[2] == "DOWN"
-                    # ]
                     for drain_block in shared_drain_schedule:
                         # If any overlap with existing DRAINs on the node, assume this node was
                         # in a maintenance reservation
@@ -207,8 +202,6 @@ class SlurmDataReader:
                         ):
                             nid_data[nid]["down_schedule"].append(list(drain_block))
 
-                    # new_down_schedule += deepcopy(shared_drain_schedule)
-                    # new_down_schedule.sort(key=lambda schedule: schedule[0])
                     nid_data[nid]["down_schedule"].sort(key=lambda schedule: schedule[0])
 
                     i_event = 0
@@ -528,7 +521,7 @@ class SlurmDataReader:
         df_jobs.JobID = df_jobs.JobID.apply(
             lambda row: (
                 [row.replace("[", "").replace("]", "")]
-                if "-" not in row and "," not in row
+                if( "-" not in row and "," not in row) or ":" in row # Get out im not doing array steps
                 else [
                     row.split("[")[0]  + str(num)#]
                     for num in [
