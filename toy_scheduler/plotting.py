@@ -99,8 +99,8 @@ def main(args):
             job
             for job in controller.job_history
                 if (
-                    controller.init_time + timedelta(days=4) < job.true_submit <
-                    max_submit - timedelta(days=4)
+                    controller.init_time + timedelta(days=args.days_ignore) < job.true_submit <
+                    max_submit - timedelta(days=args.days_ignore)
                 )
         ]
         for controller in controllers
@@ -185,7 +185,11 @@ def main(args):
         proj_sim_wait, proj_data_wait = defaultdict(list), defaultdict(list)
         proj_nodehours = defaultdict(float)
         for job in job_history:
+            if job.ignore_in_eval:
+                continue
+
             proj = assoc_tree.assocs[job.assoc].parent.parent.name
+            # proj = assoc_tree.assocs[job.assoc].parent.name
             sim_wait = (job.start - job.submit).total_seconds() / 60 / 60
             data_wait = (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
 
@@ -257,15 +261,25 @@ def main(args):
 
     if "qos_waits" in args.plots:
         sim_qos_waits, data_qos_waits = defaultdict(list), defaultdict(list)
-        print("\nlargescale jobs (id - nodes - submit - sim wait - true wait")
+        print(
+            "\nlargescale jobs "
+            "(id - nodes - submit - elapsed - reqtime - sim wait - true wait - user - account)"
+        )
         for job in job_history:
+            if job.ignore_in_eval:
+                continue
             sim_qos_waits[job.qos.name].append((job.start - job.submit).total_seconds() / 60 / 60)
             data_qos_waits[job.qos.name].append(
                 (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
             )
 
             if job.qos.name == "largescale":
-                print(job.id, job.nodes, job.true_submit, job.start - job.submit, job.true_job_start - job.true_submit, sep=" - ")
+                print(
+                    job.id, job.nodes, job.true_submit,
+                    job.runtime, job.reqtime, (job.start - job.submit).round(freq="S"),
+                    job.true_job_start - job.true_submit, job.user, job.account,
+                    sep=" - "
+                )
         print()
 
         print("Num Jobs by QOS:")
@@ -296,12 +310,76 @@ def main(args):
         fig.savefig(os.path.join(PLOT_DIR, "qos_mean_waits{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
+    if "partition_waits" in args.plots:
+        sim_partition_waits, data_partition_waits = defaultdict(list), defaultdict(list)
+        print(
+            "\nlargescale jobs "
+            "(id - nodes - submit - elapsed - reqtime - sim wait - true wait - user - account)"
+        )
+        for job in job_history:
+            if job.ignore_in_eval:
+                continue
+            sim_partition_waits[job.partition.name].append((job.start - job.submit).total_seconds() / 60 / 60)
+            data_partition_waits[job.partition.name].append(
+                (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
+            )
+
+            if job.partition.name == "largescale":
+                print(
+                    job.id, job.nodes, job.true_submit,
+                    job.runtime, job.reqtime, (job.start - job.submit).round(freq="S"),
+                    job.true_job_start - job.true_submit, job.user, job.account,
+                    sep=" - "
+                )
+        print()
+
+        print("Num Jobs by Partition:")
+        print(
+            " | ".join(
+                "{} - {}".format(partition, len(waits))
+                for partition, waits in sim_partition_waits.items()
+            )
+        )
+
+        sim_partition_mean_waits = {
+            partition : np.mean(waits) for partition, waits in sim_partition_waits.items()
+        }
+        data_partition_mean_waits = {
+            partition : np.mean(waits) for partition, waits in data_partition_waits.items()
+        }
+        sorted_partition = [
+            partition for partition, _ in sorted(
+                data_partition_mean_waits.items(),
+                key=lambda partition_wait: partition_wait[1], reverse=True
+            )
+        ]
+        sim_mean_waits = [ sim_partition_mean_waits[partition] for partition in sorted_partition ]
+        data_mean_waits = [
+            data_partition_mean_waits[partition] for partition in sorted_partition
+        ]
+        x = np.arange(len(sim_mean_waits))
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
+        ax.set_xticks(x, sorted_partition)
+        ax.legend()
+        ax.bar_label(sim_bars, padding=3, fmt="%.1f")
+        ax.bar_label(data_bars, padding=3, fmt="%.1f")
+        fig.tight_layout()
+        fig.savefig(os.path.join(PLOT_DIR, "partition_mean_waits{}.pdf".format(args.save_suffix)))
+        to_plot_or_not_to_plot(args.batch)
+
     if "rolling_window" in args.plots:
         hours = [
             controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
             for hr in range(
                 int(
-                    (max_submit - timedelta(days=14) - controllers[0].init_time).total_seconds() /
+                    (
+                        max_submit - timedelta(days=args.rolling_window_days) -
+                        controllers[0].init_time#
+                    ).total_seconds() /
                     (60 * 60)
                 )
             )
@@ -312,17 +390,22 @@ def main(args):
         for job_history in job_histories:
             sim_submit_hour_waits = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 sim_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                     (job.start - job.submit).total_seconds() / 60 / 60
                 )
             sims_submit_hour_waits.append(sim_submit_hour_waits)
+
+        window_hrs = int(args.rolling_window_days * 24)
 
         sims_mean_wait_times_rolling_window, sims_mean_wait_times_rolling_window_err = [], []
         for sim_submit_hour_waits in sims_submit_hour_waits:
             sim_mean_wait_times_rolling_window = np.zeros(len(hours))
             sim_mean_wait_times_rolling_window_err = np.zeros(len(hours))
             wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
-            for hr_num in range(336): # 2 weeks
+            for hr_num in range(window_hrs):
                 wait_times_rolling_window += (
                     sim_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -335,9 +418,9 @@ def main(args):
                 wait_times_rolling_window = (
                     wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
                 )
-                wait_times_rolling_window += sim_submit_hour_waits[hour + timedelta(hours=336)]
+                wait_times_rolling_window += sim_submit_hour_waits[hour + timedelta(hours=window_hrs)]
                 wait_times_rolling_window_hour_lens.append(
-                    len(sim_submit_hour_waits[hour + timedelta(hours=336)])
+                    len(sim_submit_hour_waits[hour + timedelta(hours=window_hrs)])
                 )
 
             sims_mean_wait_times_rolling_window.append(sim_mean_wait_times_rolling_window)
@@ -346,6 +429,9 @@ def main(args):
         if not args.no_data_comparison:
             data_submit_hour_waits = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 data_submit_hour_waits[job.submit.replace(minute=0, second=0)].append(
                     (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
                 )
@@ -353,7 +439,7 @@ def main(args):
             data_mean_wait_times_rolling_window = np.zeros(len(hours))
             data_mean_wait_times_rolling_window_err = np.zeros(len(hours))
             wait_times_rolling_window, wait_times_rolling_window_hour_lens = [], []
-            for hr_num in range(336):
+            for hr_num in range(window_hrs):
                 wait_times_rolling_window += (
                     data_submit_hour_waits[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -366,9 +452,9 @@ def main(args):
                 wait_times_rolling_window = (
                     wait_times_rolling_window[wait_times_rolling_window_hour_lens.pop(0):]
                 )
-                wait_times_rolling_window += data_submit_hour_waits[hour + timedelta(hours=336)]
+                wait_times_rolling_window += data_submit_hour_waits[hour + timedelta(hours=window_hrs)]
                 wait_times_rolling_window_hour_lens.append(
-                    len(data_submit_hour_waits[hour + timedelta(hours=336)])
+                    len(data_submit_hour_waits[hour + timedelta(hours=window_hrs)])
                 )
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -434,6 +520,9 @@ def main(args):
         for job_history in job_histories:
             sim_submit_hour_bdslowdowns = defaultdict(list)
             for job in job_history:
+                if job.ignore_in_eval:
+                    continue
+
                 sim_submit_hour_bdslowdowns[job.submit.replace(minute=0, second=0)].append(
                     max(
                         (job.end - job.submit) / max(job.runtime, controller.config.bd_threshold),
@@ -461,10 +550,10 @@ def main(args):
                     bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
                 )
                 bdslowdowns_rolling_window += (
-                    sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+                    sim_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)]
                 )
                 bdslowdowns_rolling_window_hour_lens.append(
-                    len(sim_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+                    len(sim_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)])
                 )
 
             sims_mean_bdslowdowns_rolling_window.append(sim_mean_bdslowdowns_rolling_window)
@@ -488,7 +577,7 @@ def main(args):
             data_mean_bdslowdowns_rolling_window = np.zeros(len(hours))
             data_mean_bdslowdowns_rolling_window_err = np.zeros(len(hours))
             bdslowdowns_rolling_window, bdslowdowns_rolling_window_hour_lens = [], []
-            for hr_num in range(336):
+            for hr_num in range(window_hrs):
                 bdslowdowns_rolling_window += (
                     data_submit_hour_bdslowdowns[hours[0] + timedelta(hours=hr_num)]
                 )
@@ -504,10 +593,10 @@ def main(args):
                     bdslowdowns_rolling_window[bdslowdowns_rolling_window_hour_lens.pop(0):]
                 )
                 bdslowdowns_rolling_window += (
-                    data_submit_hour_bdslowdowns[hour + timedelta(hours=336)]
+                    data_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)]
                 )
                 bdslowdowns_rolling_window_hour_lens.append(
-                    len(data_submit_hour_bdslowdowns[hour + timedelta(hours=336)])
+                    len(data_submit_hour_bdslowdowns[hour + timedelta(hours=window_hrs)])
                 )
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -665,11 +754,16 @@ def main(args):
             sim_min_start + timedelta(minutes=min_num)
             for min_num in range(len(sim_allocated_nodes))
         ]
-        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Sim", linewidth=0.75)
-        ax.plot_date(data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.75)
+        ax.plot_date(sim_minutes, sim_allocated_nodes, 'g', label="Sim", linewidth=0.75, alpha=0.8)
+        ax.plot_date(
+            data_minutes, data_allocated_nodes, 'r', label="Data", linewidth=0.75, alpha=0.8
+        )
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
-        ax.set_ylim(3000, 6000)
+        ax.set_ylim(
+            max(data_allocated_nodes) * 0.5 if max(data_allocated_nodes) > 2000 else 0,
+            len(controllers[0].partitions.nodes)
+        )
         ax.grid(axis="y")
         plt.legend()
         fig.tight_layout()
@@ -694,6 +788,8 @@ def main(args):
         )
 
         for job in tqdm(job_history):
+            if job.ignore_in_eval:
+                continue
             l_mins = int((job.submit - sim_min_submit).total_seconds() / 60) + 1
             u_mins = int((job.start - sim_min_submit).total_seconds() / 60)
             sim_queue_length[l_mins:u_mins] += 1
@@ -782,6 +878,11 @@ def parse_arguments():
         "--plot_dir", type=str, default="/work/y02/y02/awilkins/data/plots/archer2_jobdata_plots",
         help="Override ARCHER2 plot dir"
     )
+    parser.add_argument(
+        "--days_ignore", type=float, default=4.0,
+        help="ovveride the default ignore period (4 days) at the start and end of job data"
+    )
+    parser.add_argument("--rolling_window_days", type=float, default=14.0)
 
     args = parser.parse_args()
 

@@ -105,11 +105,8 @@ class FairTree:
         self.last_calc_time = init_time
         self.calc_period = calc_period
         # decay constant for 1 second applied for the duration of a calc interval
-        self.decay_constant = (
-            (1 + np.log(1/2) / decay_halflife.total_seconds()) ** calc_period.total_seconds()
-        )
-
-        self.current_period_num = 0
+        self.decay_constant = (1 + np.log(1/2) / decay_halflife.total_seconds())
+        self.decay_constant_this_traversal = None
 
         self.root_node, flat_tree = self._load_tree_slurm(
             assoc_file, active_usrs, excess_usr_assocs, partitions
@@ -148,23 +145,44 @@ class FairTree:
     def next_calc(self):
         return self.last_calc_time + self.calc_period
 
-    def job_finish_usage_update(self, job):
-        node = self.assocs[job.assoc]
-        usage = job.nodes * (job.end - max(self.last_calc_time, job.start)).total_seconds()
-        self._update_usages(node, usage)
+    def job_finish_usage_update(self, job, time):
+        # This is just how it's implemented in source code as far as I can tell
+        delta_t = max(
+            (min(job.endlimit, time) - max(self.last_calc_time, job.start)).total_seconds(), 0
+        )
+        usage = job.nodes * delta_t ** (self.decay_constant ** delta_t)
+        user_node = self.assocs[job.assoc]
+        self._update_usages(user_node, usage)
 
     def fairshare_calc(self, running_jobs, time):
-        # Collect usages from running jobs
-        for job in running_jobs:
-            user_node = self.assocs[job.assoc]
-            usage = job.nodes * (time - max(self.last_calc_time, job.start)).total_seconds()
-            self._update_usages(user_node, usage)
+        decay_constant = (
+            self.decay_constant ** (time - self.last_calc_time).total_seconds()
+        )
 
-        self.current_period_num += 1
-        self.last_calc_time = time
+        self._decay_all(decay_constant)
+
+        # Collect usages from running jobs between now and last_calc_time
+        for job in running_jobs:
+            if job.start > self.last_calc_time:
+                delta_t = (time - job.start).total_seconds()
+                usage = job.nodes * delta_t * (self.decay_constant ** delta_t)
+            else:
+                delta_t = (time - self.last_calc_time).total_seconds()
+                usage = job.nodes * delta_t * decay_constant
+
+            user_node = self.assocs[job.assoc]
+
+            self._update_usages(user_node, usage)
 
         # Compute levelFS and sort (decay past usages as we go)
         self._tree_traversal(self.root_node)
+
+        self.last_calc_time = time
+
+    def _decay_all(self, decay_constant):
+        for nodes in self.levels:
+            for node in nodes:
+                node.usage *= decay_constant
 
     # NOTE Ties between sibling users handled properly by not implemented ties between accounts
     # (merge children and sort). This merging is only relevant when ties are caused by exact
@@ -183,12 +201,8 @@ class FairTree:
 
             return rank, last_leaf_levelfs, tie_cnt
 
-        if not current_node.new_child_usage: # Avoid re-sorting when order is unchanged
+        if current_node.new_child_usage: # Avoid re-sorting when order is unchanged
             for child_node in current_node.children:
-                child_node.usage *= self.decay_constant
-        else:
-            for child_node in current_node.children:
-                child_node.usage *= self.decay_constant
                 if child_node.usage:
                     child_node.levelfs = child_node.shares / child_node.usage
                 else:

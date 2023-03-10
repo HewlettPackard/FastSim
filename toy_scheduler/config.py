@@ -4,7 +4,7 @@ from collections import namedtuple
 
 import yaml
 
-# XXX Priority weights are set to ARCHER2 defaults currently
+# NOTE Priority weight defaults are set to ARCHER2 defaults currently
 # NOTE: approx_excess_assocs remove a number of unused in workload traceassocs from the assoc tree,
 # this is relevant since the fairshare factor scales with the tot number of user assocs. This
 # happend because to capture all assocs they need to be dumped "withDeleted" so you end up with
@@ -14,19 +14,16 @@ defaults = {
     "sched_min_interval" : 2000000, "PriorityCalcPeriod" : 5, "bf_resolution" : 60,
     "bf_max_job_test" : 500, "bf_window" : 1440, "bf_interval" : 30, "bf_max_time" : 30,
     "bf_yield_interval" : 2000000, "bf_yield_sleep" : 500000, "bf_continue" : False,
-    "slowdown_with_queuesize" : False, "sched_interval_perpendingjob" : 0.028,
-    "bf_time_perpriorityjob" : 0.1125, "hpe_restrictlong_sliding_reservations" : "const",
-    "PriorityMaxAge" : 7, "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0,
-    "PriorityWeightFairshare" : 0, "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0,
-    "PriorityWeightQOS" : 0, "approx_excess_assocs" : 0, "JobRequeue" : 0
+    "hpe_restrictlong_sliding_reservations" : "const", "PriorityMaxAge" : 7,
+    "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0, "PriorityWeightFairshare" : 0,
+    "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0, "PriorityWeightQOS" : 0,
+    "approx_excess_assocs" : 0, "JobRequeue" : 1, "approx_bf_try_per_sec" : 10, "KillWait" : 30,
+    "OverTimeLimit" : 0, "nodes_down_in_blades" : False
 }
 
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
-vals_s = [
-    "sched_interval", "bf_resolution", "bf_interval", "bf_max_time",
-    "sched_interval_perpendingjob", "bf_time_perpriorityjob"
-]
-vals_min = ["bd_threshold", "PriorityCalcPeriod", "bf_window"]
+vals_s = ["sched_interval", "bf_resolution", "bf_interval", "bf_max_time", "KillWait"]
+vals_min = ["bd_threshold", "PriorityCalcPeriod", "bf_window", "OverTimeLimit"]
 vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
 vals_bool = ["JobRequeue"]
 

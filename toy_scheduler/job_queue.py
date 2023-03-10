@@ -57,11 +57,12 @@ class Queue:
         self.time = df_jobs.Start.min()
         self.all_jobs = [
             Job(
-                job_row.JobID, job_row.Submit, job_row.AllocNodes, job_row.Elapsed,
+                job_row.JobID, job_row.Submit, job_row.Nodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
                 job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
                 partitions_by_name[job_row.Partition], job_row.DependencyArg, job_row.JobName,
-                job_row.Reason, job_row.ReservationArg, job_row.BeginArg
+                job_row.Reason, job_row.ReservationArg, job_row.BeginArg, job_row.Cancelled,
+                job_row.NodelistArg, job_row.ExcludeArg
             ) for _, job_row in df_jobs.iterrows()
         ]
         self.all_jobs.sort(key=lambda job: (job.submit, job.id), reverse=True)
@@ -87,6 +88,8 @@ class Queue:
         self._verify_reservations(valid_resv)
         self.reservations = defaultdict(list)
 
+        self.jobs_to_cancel = []
+
     def next_newjob(self):
         try:
             return self.all_jobs[-1].submit
@@ -100,6 +103,7 @@ class Queue:
             res : len(res_queue) for res, res_queue in self.reservations.items()
         }
         pre_step_priority_len = len(self.queue)
+        pre_step_jobs_to_cancel_len = len(self.jobs_to_cancel)
 
         self._check_dependencies(running_jobs)
         self._check_qos_holds(running_jobs)
@@ -132,9 +136,9 @@ class Queue:
                 # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
                 # the user's next submission. This works slightly better as entire sustem
                 # metrics but makes the wait times by qos an project worse
-                # if new_job.qos.hold_job_submit(new_job):
-                #     self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
-                #     continue
+                if new_job.qos.hold_job_submit(new_job):
+                    self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
+                    continue
 
                 # if new_job.qos.hold_job_submit(new_job):
                 #     if new_job.is_dependency_target:
@@ -146,6 +150,9 @@ class Queue:
                 #     continue
 
                 new_job.submit_job()
+
+                if new_job.cancel is not None:
+                    self.jobs_to_cancel.append(new_job)
 
                 if new_job.dependency:
                     if not new_job.dependency.can_release(self.queue, running_jobs):
@@ -178,9 +185,14 @@ class Queue:
         if len(self.queue) != pre_step_priority_len:
             self.priority_sorter.sort(self.queue, self.time)
 
+        if len(self.jobs_to_cancel) != pre_step_jobs_to_cancel_len:
+            self.jobs_to_cancel.sort(key=lambda job: job.cancel, reverse=True)
+
         for res, res_queue in self.reservations.items():
             if len(res_queue) != pre_step_res_priority_len.get(res, 0):
                 self.priority_sorter.sort(res_queue, self.time)
+
+        self._check_cancel_jobs()
 
     def _check_dependencies(self, running_jobs):
         released = []
@@ -219,6 +231,9 @@ class Queue:
                 job.submit_job(self.time)
                 released.append(i_job)
 
+                if job.cancel is not None:
+                    self.jobs_to_cancel.append(job)
+
                 if job.dependency:
                     if not job.dependency.can_release(self.queue, running_jobs):
                         self.waiting_dependency.append(job.dependency_hold())
@@ -232,11 +247,29 @@ class Queue:
             for i_job in reversed(released):
                 self.qos_submit_held[qos].pop(i_job)
 
+    def _check_cancel_jobs(self):
+        while self.jobs_to_cancel and self.jobs_to_cancel[-1].cancel <= self.time:
+            cancelled_job = self.jobs_to_cancel.pop()
+            self.cancel_job(cancelled_job, remove=False)
+
+    def cancel_job(self, job, remove=True):
+        if remove:
+            self.jobs_to_cancel.remove(job)
+
+        if job.state == JobState.DEPENDENCY:
+            self.waiting_dependency.remove(job)
+        elif job.reservation == "":
+            self.queue.remove(job)
+        else:
+            self.reservations[job.reservation].remove(job)
+
+        job.cancel_job()
+
     def _verify_reservations(self, valid_reservations):
         removed_res, removed_res_cnt = set(), 0
         for job in self.all_jobs:
             if not job.reservation:
-                # short qos is reservation required
+                # short qos is reservation required XXX This is only for ARCHER2
                 if job.qos.name == "short":
                     job.reservation = "shortqos"
                 else:
@@ -308,7 +341,7 @@ class Queue:
 # or ARCHER). Also ignoring per account resource limits.
 class QOS:
     def __init__(
-        self, name, priority, grp_nodes, grp_submit, grp_jobs, usr_nodes, usr_jobs, assoc_jobs,
+        self, name, priority, grp_nodes, grp_jobs, grp_submit, usr_nodes, usr_jobs, assoc_jobs,
         usr_submit, assoc_submit
     ):
         self.name = name
@@ -397,6 +430,16 @@ class QOS:
             self.assoc_submit_quota_remaining[job.assoc] += 1
 
         self.assoc_limits[job.assoc].job_ended()
+
+    def job_cancelled(self, job):
+        if ResourceLimit.GRP_SUBMIT in self.tracked_limits:
+            self.submit_quota_remaining += 1
+        if ResourceLimit.USR_SUBMIT in self.tracked_limits:
+            self.usr_submit_quota_remaining[job.user] += 1
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining[job.assoc] += 1
+
+        self.assoc_limits[job.assoc].job_cancelled()
 
     def hold_job(self, job):
         return self.hold_job_grp(job) or self.hold_job_usr(job)
@@ -496,6 +539,10 @@ class AssocLimit:
         if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
             self.assoc_job_quota_remaining += 1
 
+    def job_cancelled(self):
+        if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
+            self.assoc_submit_quota_remaining += 1
+
     def hold_job(self, limits):
         if (
             ResourceLimit.ASSOC_JOBS in self.tracked_limits and
@@ -520,7 +567,7 @@ class Job:
     def __init__(
         self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
-        reason, reservation_arg, begin_arg
+        reason, reservation_arg, begin_arg, cancelled, nodelist_arg, exclude_arg
     ):
         self.id = id
         self.nodes = nodes
@@ -568,7 +615,7 @@ class Job:
                 "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
                 "DependencyNeverSatisfied", "JobArrayTaskLimit"
             ] or
-            begin_arg
+            begin_arg or nodelist_arg or exclude_arg
         )
 
         self.launch_time = None
@@ -579,6 +626,9 @@ class Job:
         self.state = JobState.FUTURE
 
         self.planned_block = None
+
+        self.cancelled_t = None if pd.isnull(cancelled) else cancelled
+        self.cancel = None
 
     def __hash__(self):
         return hash((self.id, self.true_submit))
@@ -600,6 +650,13 @@ class Job:
         if time:
             self.submit = time
         self.qos.job_submitted(self)
+        if self.cancelled_t is not None:
+            self.cancel = time + self.cancelled_t
+        return self
+
+    def cancel_job(self):
+        self.qos.job_cancelled(self)
+        self.state = JobState.CANCELLED
         return self
 
     def start_job(self, time : datetime):
@@ -723,6 +780,7 @@ class JobState(Enum):
     QOS_SUBMIT = 5
     DEPENDENCY = 6
     QOS_RESOURCES = 7
+    CANCELLED = 8
 
 
 class ResourceLimit(Enum):

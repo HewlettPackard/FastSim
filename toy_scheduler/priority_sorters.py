@@ -3,9 +3,9 @@
 class MFPrioritySorter:
     def __init__(
         self, init_time, size_weight, age_weight, fairshare_weight, max_age, partition_weight,
-        qos_weight, no_partition_priority_tiers, fairtree
+        qos_weight, no_partition_priority_tiers, fairtree, total_nodes
     ):
-        self.size_weight = size_weight / 5860
+        self.size_weight = size_weight / total_nodes
         self.age_weight = age_weight
         self.fairshare_weight = fairshare_weight
         self.max_age = max_age.total_seconds()
@@ -63,10 +63,7 @@ class MFPrioritySorter:
         return job.nodes * self.size_weight
 
     def _fairshare_priority(self, job):
-        return (
-            self.fairtree.assocs[job.assoc].fairshare_factor *
-            self.fairshare_weight
-        )
+        return self.fairtree.assocs[job.assoc].fairshare_factor * self.fairshare_weight
 
     def _partition_priority(self, job):
         return job.partition.priority_weight * self.partition_weight
