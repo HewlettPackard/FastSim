@@ -1,4 +1,3 @@
-import sys
 from collections import defaultdict
 import datetime; from datetime import timedelta
 from copy import deepcopy
