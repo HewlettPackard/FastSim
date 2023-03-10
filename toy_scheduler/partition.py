@@ -26,7 +26,11 @@ class Partitions:
 
         print("Using partitions:")
         for partition in self.partitions:
-            print(partition.name, " - ", len(partition.nodes), " nodes", sep="")
+            print(
+                partition.name, partition.priority_tier, partition.priority_weight, "-",
+                len(partition.nodes), "nodes",
+                sep=" "
+            )
         print("With {} unique nodes total".format(len(self.nodes)))
 
         self.reservations = defaultdict(list)
@@ -171,11 +175,17 @@ class Node:
 
         self.partitions = []
 
+        # NOTE This is from when I was allowing the BF sched to plan nodes in a way that would be
+        # respected by the main scheduling loop. Not doing this anymore so there is only ever 2
+        # entries. Might be useful I want to implement a node going in and then out of a
+        # reservation.
         self.interval_times = [
             datetime.datetime.min,
             datetime.datetime.max if not reservation_schedule else reservation_schedule[-1][0]
         ]
         self.jobs_plnd = set()
+
+        self.bf_free_blocks_start = None
 
     def __hash__(self):
         return hash(self.id)
