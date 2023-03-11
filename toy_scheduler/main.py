@@ -22,10 +22,15 @@ def main(args):
 def print_sim_result(controller):
     max_submit = max(controller.job_history, key=lambda job: job.true_submit).true_submit
     job_history = [
-        job for job in controller.job_history if (
-            controller.init_time + timedelta(days=2) < job.true_submit <
-            max_submit - timedelta(days=2)
-        )
+        job
+        for job in controller.job_history 
+            if (
+                (
+                    controller.init_time + timedelta(days=2) < job.true_submit <
+                    max_submit - timedelta(days=2)
+                ) and
+                not job.ignore_in_eval
+            )
     ]
     data_bd_slowdowns = [
         max(
@@ -34,26 +39,20 @@ def print_sim_result(controller):
                 max(job.runtime, controller.config.bd_threshold)
             ),
             1
-        ) for job in job_history if not job.ignore_in_eval
+        )
+        for job in job_history
     ]
     sim_bd_slowdowns = [
-        max(
-            (
-                (job.start + job.runtime - job.submit) /
-                max(job.runtime, controller.config.bd_threshold)
-            ),
-            1
-        ) for job in job_history if not job.ignore_in_eval
+        max((job.end - job.submit) / max(job.runtime, controller.config.bd_threshold), 1)
+        for job in job_history
     ]
     data_wait_times = [
-        (
-            (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
-        ) for job in job_history if not job.ignore_in_eval
+        (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
+        for job in job_history
     ]
     sim_wait_times = [
-        (
-            (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-        ) for job in job_history if not job.ignore_in_eval
+        (job.start - job.submit).total_seconds() / 60 / 60
+        for job in job_history 
     ]
     print(
         "True starts mean bd slowdown={}+-{} (total = {})\n".format(

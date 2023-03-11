@@ -31,6 +31,9 @@ def to_plot_or_not_to_plot(batch):
 def metric_property_hist2d(job_history, job_to_metric_sim, job_to_metric_data, property, metric):
     job_property, sim_metrics, data_metrics = [], [], []
 
+    # if property == "user_usage":
+        
+
     for job in job_history:
         if job.ignore_in_eval:
             continue
@@ -328,22 +331,23 @@ def mean_metrics(job_history, controller):
             (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, bd_threshold),
             1
         )
-        for job in job_history if not job.ignore_in_eval
+        for job in job_history
+            if not job.ignore_in_eval
     ]
     sim_bd_slowdowns = [
-        max(
-            (job.start + job.runtime - job.submit) / max(job.runtime, bd_threshold),
-            1
-        )
-        for job in job_history if not job.ignore_in_eval
+        max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+        for job in job_history
+            if not job.ignore_in_eval
     ]
     data_wait_times = [
-        (job.true_job_start + job.runtime - job.true_submit).total_seconds() / 60 / 60
-        for job in job_history if not job.ignore_in_eval
+        (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
+        for job in job_history 
+            if not job.ignore_in_eval
     ]
     sim_wait_times = [
-        (job.start + job.runtime - job.submit).total_seconds() / 60 / 60
-        for job in job_history if not job.ignore_in_eval
+        (job.start - job.submit).total_seconds() / 60 / 60
+        for job in job_history 
+            if not job.ignore_in_eval
     ]
 
     print(
@@ -483,7 +487,7 @@ def main(args):
 
     if "wait_times_hist2d" in args.plots:
         job_to_wait_sim = lambda job: (job.start - job.submit).total_seconds() / 60
-        job_to_wait_data = lambda job: (job.start - job.true_submit).total_seconds() / 60
+        job_to_wait_data = lambda job: (job.true_job_start - job.true_submit).total_seconds() / 60
 
         h_data, h_sim, bins_allocnodes, bins_wait_times = metric_property_hist2d(
             job_history, job_to_wait_sim, job_to_wait_data, "nodes", "wait_time"
@@ -666,7 +670,9 @@ def main(args):
             sims_mean_wait_times_rolling_window_err.append(errs)
 
         if not args.no_data_comparison:
-            job_to_wait_data = lambda job: (job.start - job.true_submit).total_seconds() / 60 / 60
+            job_to_wait_data = lambda job: (
+                (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
+            )
 
             means, errs = rolling_window(
                 job_history, job_to_wait_data, hours, window_hrs, data=True
