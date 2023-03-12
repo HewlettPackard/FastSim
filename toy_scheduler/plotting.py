@@ -392,6 +392,24 @@ def spider_plot_metrics(job_history):
     return spider_plot_data
 
 
+def spider_plot_wait_qos(job_history):
+    qos_jobs = defaultdict(list)
+    for job in job_history:
+        if job.ignore_in_eval or job.qos.name == "short":
+            continue
+
+        qos_jobs[job.qos.name].append(job)
+
+    spider_plot_data = {}
+
+    for qos, jobs in qos_jobs.items():
+        avg_wait = np.mean([ (job.start - job.submit).total_seconds() for job in jobs ])
+
+        spider_plot_data[qos] = avg_wait
+
+    return spider_plot_data
+
+
 # Treating slurm to cab as a scaling factor + baseline power of any nodes without jobs runnning
 # and so not reported by slurm. Ignore any down nodes that may not be drawing power.
 # NOTE These numbers are for ARCHER2
@@ -1152,6 +1170,9 @@ def main(args):
         spider_plot_data = {}
 
         for job_history, label in zip(job_histories, args.labels):
+            if label == args.baseline_label:
+                continue
+
             spider_plot_data[label] = spider_plot_metrics(job_history)
 
             for metric in spider_plot_data[label]:
@@ -1204,6 +1225,65 @@ def main(args):
 
         fig.savefig(os.path.join( PLOT_DIR, "spider_plot_metrics{}.pdf".format(args.save_suffix)))
 
+    if "spider_mean_wait_qos" in args.plots:
+        baseline_data = spider_plot_wait_qos(job_histories[args.labels.index(args.baseline_label)])
+
+        spider_plot_data = {}
+
+        for job_history, label in zip(job_histories, args.labels):
+            if label == args.baseline_label:
+                continue
+
+            spider_plot_data[label] = spider_plot_wait_qos(job_history)
+
+            for metric in spider_plot_data[label]:
+                spider_plot_data[label][metric] /= baseline_data[metric]
+
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, polar=True)
+
+        categories = list(baseline_data)
+        angles = [ i / float(len(categories)) * 2 * np.pi for i in range(len(categories)) ]
+        angles += angles[:1]
+
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        category_labels = list(baseline_data)
+        plt.xticks(angles[:-1], category_labels, size=14)
+        # for label in ax.get_xticklabels():
+        #     if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
+        #         label.set_verticalalignment("bottom")
+        #         label.set_horizontalalignment("left")
+        #     elif label.get_text() == r"$(\mathrm{avg\_wait})^{-1}$":
+        #         label.set_verticalalignment("top")
+        #         label.set_horizontalalignment("left")
+        #     elif label.get_text() == r"$(\mathrm{max\_wait})^{-1}$":
+        #         label.set_verticalalignment("top")
+        #         label.set_horizontalalignment("right")
+        #     elif label.get_text() == r"$(\mathrm{avg\_response})^{-1}$":
+        #         label.set_verticalalignment("bottom")
+        #         label.set_horizontalalignment("right")
+        ax.tick_params(axis='x', which='major', pad=10)
+        ax.set_rlabel_position(0)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
+        plt.ylim(0.55,1.3)
+
+        for label, plot_data in spider_plot_data.items():
+            vals = [ 1 / plot_data[metric] for metric in categories ]
+            vals += vals[:1]
+            colour = next(ax._get_lines.prop_cycler)["color"]
+            ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=label)
+
+        ax.plot(
+            angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
+        )
+        
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
+        plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
+        plt.title("1/mean(wait_time) relative to baseline")
+
+        fig.savefig(os.path.join(PLOT_DIR, "spider_plot_wait_qos{}.pdf".format(args.save_suffix)))
+
     if "power" in args.plots:
         hours = [
             controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
@@ -1247,7 +1327,8 @@ def parse_arguments():
             "comma delimited list or plots to plot\n"
             "(bdslowdowns_hist2d|wait_times_hist2d|top_projs|top_qccounts|top_users|qos_waits|"
             "partition_waits|rolling_window|rolling_window_qos|cumulative_throughput|"
-            "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics)"
+            "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics|"
+            "spider_mean_wait_qos|power_usage)"
         )
     )
 
