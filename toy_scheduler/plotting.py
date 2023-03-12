@@ -21,7 +21,6 @@ from helpers import mkdir_p
 global bd_threshold
 bd_threshold = timedelta(minutes=10)
 
-
 def to_plot_or_not_to_plot(batch):
     if batch:
         plt.close()
@@ -30,9 +29,6 @@ def to_plot_or_not_to_plot(batch):
 
 def metric_property_hist2d(job_history, job_to_metric_sim, job_to_metric_data, property, metric):
     job_property, sim_metrics, data_metrics = [], [], []
-
-    # if property == "user_usage":
-        
 
     for job in job_history:
         if job.ignore_in_eval:
@@ -68,7 +64,8 @@ def metric_property_hist2d(job_history, job_to_metric_sim, job_to_metric_data, p
     elif metric == "wait_time":
         min_metric = max(min(min(sim_metrics), min(data_metrics)), 1 / 60 / 60)
         nbins = 50
-    max_metric = np.percentile(sim_metrics + data_metrics, 99)
+    # max_metric = np.percentile(sim_metrics + data_metrics, 99)
+    max_metric = max(max(sim_metrics), max(data_metrics))
     bins_metric = np.logspace(np.log10(min_metric), np.log10(max_metric), nbins)
 
     h_data = np.histogram2d(job_property, data_metrics, bins=[bins_property, bins_metric])
@@ -366,6 +363,33 @@ def mean_metrics(job_history, controller):
     )
 
     return data_bd_slowdowns, data_wait_times, sim_bd_slowdowns, sim_wait_times
+
+
+def spider_plot_metrics(job_history):
+    wait_times = [
+        (job.start - job.submit).total_seconds() for job in job_history if not job.ignore_in_eval
+    ]
+    avg_wait = np.mean(wait_times)
+    max_wait = max(wait_times)
+
+    bd_slowdowns = [
+        max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+        for job in job_history
+            if not job.ignore_in_eval
+    ]
+    avg_slowdown = np.mean(bd_slowdowns)
+
+    responses = [
+        (job.end - job.submit).total_seconds() for job in job_history if not job.ignore_in_eval
+    ]
+    avg_response = np.mean(responses)
+
+    spider_plot_data = { 
+        "avg_wait" : avg_wait, "max_wait" : max_wait, "avg_slowdown" : avg_slowdown,
+        "avg_response" : avg_response
+    }
+        
+    return spider_plot_data
 
 
 def main(args):
@@ -725,18 +749,13 @@ def main(args):
         for sim_mean_wait_times_rolling_window, label in zip(
             sims_mean_wait_times_rolling_window, args.labels
         ):
-            ax.plot_date(
-                hour_dates, sim_mean_wait_times_rolling_window, "-", label=label, linewidth=1.0
-            )
+            ax.plot_date(hour_dates, sim_mean_wait_times_rolling_window, "-", label=label)
         if not args.no_data_comparison:
-            ax.plot_date(
-                hour_dates, data_mean_wait_times_rolling_window, "k-", label="Data",
-                linewidth=2.0
-            )
+            ax.plot_date(hour_dates, data_mean_wait_times_rolling_window, "k-", label="Data")
 
-        ax.set_ylabel("Mean Wait Time in Window", fontsize=18)
-        ax.set_xlabel("Middle Hour of 2 Week Rolling Window", fontsize=18)
-        ax.grid(axis="x")
+        ax.set_ylabel("Mean Wait Time")
+        ax.set_ylim(bottom=0.0)
+        ax.set_xlabel("Middle Hour of Rolling Window")
         plt.legend()
 
         fig.tight_layout()
@@ -783,7 +802,7 @@ def main(args):
             sim_mean_bdslowdowns_rolling_window_err = sims_mean_bdslowdowns_rolling_window_err[0]
             sim_mean_bdslowdowns_rolling_window = sims_mean_bdslowdowns_rolling_window[0]
 
-            ax_big = fig.add_axes((.1, .3, .8, .6))
+            ax_big = fig.add_axes((.1, .32, .8, .58))
             ax_big.plot_date(
                 hour_dates, sim_mean_bdslowdowns_rolling_window, 'b', label="Sim", linewidth=1
             )
@@ -819,18 +838,14 @@ def main(args):
         for sim_mean_bdslowdowns_rolling_window, label in zip(
             sims_mean_bdslowdowns_rolling_window, args.labels
         ):
-            ax.plot_date(
-                hour_dates, sim_mean_bdslowdowns_rolling_window, "-", label=label, linewidth=1.0
-            )
+            ax.plot_date(hour_dates, sim_mean_bdslowdowns_rolling_window, "-", label=label)
         if not args.no_data_comparison:
-            ax.plot_date(
-                hour_dates, data_mean_bdslowdowns_rolling_window, "k-", label="Data",
-                linewidth=2.0
-            )
+            ax.plot_date(hour_dates, data_mean_bdslowdowns_rolling_window, "k-", label="Data")
 
-        ax.set_ylabel("Mean Bounded Slowdown in Window", fontsize=18)
-        ax.set_xlabel("Middle Hour of 2 Week Rolling Window", fontsize=18)
-        ax.grid(axis="x")
+        ax.set_ylabel("Mean Bounded Slowdown")
+        ax.set_ylim(bottom=0.0)
+        ax.set_xlabel("Middle Hour of Rolling Window")
+        plt.legend()
 
         plt.legend()
         fig.tight_layout()
@@ -912,6 +927,66 @@ def main(args):
         fig.savefig(
             os.path.join(
                 PLOT_DIR, "wait_times_rolling_window_byqos{}.pdf".format(args.save_suffix)
+            )
+        )
+        to_plot_or_not_to_plot(args.batch)
+
+        qos_sim_mean_wait_times_rolling_window_6 = {
+            qos : waits
+            for qos, waits in qos_sim_mean_wait_times_rolling_window.items()
+                if qos != "all"
+        }
+        means, _ = rolling_window(
+            qos_job_history["largescale"], job_to_wait_sim, hours, window_hrs
+        )
+        qos_sim_mean_wait_times_rolling_window_6["largescale"] = means
+        qos_data_mean_wait_times_rolling_window_6 = {
+            qos : waits
+            for qos, waits in qos_data_mean_wait_times_rolling_window.items()
+                if qos != "all"
+        }
+        means, _ = rolling_window(
+            qos_job_history["largescale"], job_to_wait_data, hours, window_hrs, data=True
+        )
+        qos_data_mean_wait_times_rolling_window_6["largescale"] = means
+
+        fig, ax = plt.subplots(2, 3, figsize=(12, 8))
+
+        min_wait_sim = min(
+            min(waits)
+            for qos, waits in qos_sim_mean_wait_times_rolling_window_6.items()
+                if qos != "largescale"
+        )
+        min_wait_data = min(
+            min(waits)
+            for qos, waits in qos_data_mean_wait_times_rolling_window_6.items()
+                if qos != "largescale"
+        )
+        min_wait = min(min_wait_data, min_wait_sim)
+        max_wait_sim = max(
+            max(waits)
+            for qos, waits in qos_sim_mean_wait_times_rolling_window_6.items()
+        )
+        max_wait_data = max(
+            max(waits)
+            for qos, waits in qos_data_mean_wait_times_rolling_window_6.items()
+        )
+        max_wait = max(max_wait_sim, max_wait_data)
+
+        for qos, a in zip(qos_sim_mean_wait_times_rolling_window_6, ax.flatten()):
+            a.plot_date(hour_dates, qos_sim_mean_wait_times_rolling_window_6[qos], fmt='-b')
+            a.plot_date(hour_dates, qos_data_mean_wait_times_rolling_window_6[qos], fmt='-k')
+
+            a.set_ylim(0.9 * min_wait, 1.1 * max_wait)
+            a.set_xticklabels([])
+            a.set_title(qos)
+            a.set_yscale("log")
+            
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                "wait_times_rolling_window_byqos_subplots{}.pdf".format(args.save_suffix)
             )
         )
         to_plot_or_not_to_plot(args.batch)
@@ -1005,6 +1080,64 @@ def main(args):
         fig.savefig(os.path.join(PLOT_DIR, "queue_size_nodes{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
+    if "spider_mean_metrics" in args.plots:
+        baseline_data = spider_plot_metrics(job_histories[args.labels.index("baseline")])
+
+        spider_plot_data = {}
+
+        for job_history, label in zip(job_histories, args.labels):
+            spider_plot_data[label] = spider_plot_metrics(job_history)
+
+            for metric in spider_plot_data[label]:
+                spider_plot_data[label][metric] /= baseline_data[metric]
+
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, polar=True)
+
+        categories = ["avg_slowdown", "avg_wait", "max_wait", "avg_response"]
+        angles = [ i / float(len(categories)) * 2 * np.pi for i in range(len(categories)) ]
+        angles += angles[:1]
+
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        category_labels = [
+            r"$(\mathrm{avg\_slowdown})^{-1}$", r"$(\mathrm{avg\_wait})^{-1}$",
+            r"$(\mathrm{max\_wait})^{-1}$", r"$(\mathrm{avg\_response})^{-1}$"
+        ]
+        plt.xticks(angles[:-1], category_labels, size=14)
+        # for label in ax.get_xticklabels():
+        #     if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
+        #         label.set_verticalalignment("bottom")
+        #         label.set_horizontalalignment("left")
+        #     elif label.get_text() == r"$(\mathrm{avg\_wait})^{-1}$":
+        #         label.set_verticalalignment("top")
+        #         label.set_horizontalalignment("left")
+        #     elif label.get_text() == r"$(\mathrm{max\_wait})^{-1}$":
+        #         label.set_verticalalignment("top")
+        #         label.set_horizontalalignment("right")
+        #     elif label.get_text() == r"$(\mathrm{avg\_response})^{-1}$":
+        #         label.set_verticalalignment("bottom")
+        #         label.set_horizontalalignment("right")
+        ax.tick_params(axis='x', which='major', pad=10)
+        ax.set_rlabel_position(0)
+        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
+        plt.ylim(0.7,1.3)
+
+        for label, plot_data in spider_plot_data.items():
+            vals = [ 1 / plot_data[metric] for metric in categories ]
+            vals += vals[:1]
+            colour = next(ax._get_lines.prop_cycler)["color"]
+            ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=label)
+
+        ax.plot(
+            angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
+        )
+        
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
+        plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
+
+        fig.savefig(os.path.join( PLOT_DIR, "spider_plot_metrics{}.pdf".format(args.save_suffix)))
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -1024,7 +1157,7 @@ def parse_arguments():
             "comma delimited list or plots to plot\n"
             "(bdslowdowns_hist2d|wait_times_hist2d|top_projs|top_qccounts|top_users|qos_waits|"
             "partition_waits|rolling_window|rolling_window_qos|cumulative_throughput|"
-            "total_allocnodes_timeseries|queue_size_timeseries)"
+            "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics)"
         )
     )
 
