@@ -56,14 +56,14 @@ def metric_property_hist2d(job_history, job_to_metric_sim, job_to_metric_data, p
         _, uniq_i = np.unique(bins_property, return_index=True)
         bins_property = bins_property[np.sort(uniq_i)]
     elif property == "reqtime":
-        bins_property = np.logspace(np.log10(min(job_property)), np.log10(max(job_property)), 50)
+        bins_property = np.logspace(np.log10(min(job_property)), np.log10(max(job_property)), 30)
 
     if metric == "bdslowdown":
         min_metric = 1.0
-        nbins = 100
+        nbins = 20
     elif metric == "wait_time":
-        min_metric = max(min(min(sim_metrics), min(data_metrics)), 1 / 60 / 60)
-        nbins = 50
+        min_metric = 1 / 6
+        nbins = 20
     # max_metric = np.percentile(sim_metrics + data_metrics, 99)
     max_metric = max(max(sim_metrics), max(data_metrics))
     bins_metric = np.logspace(np.log10(min_metric), np.log10(max_metric), nbins)
@@ -325,14 +325,14 @@ def q_size(job_history):
 def mean_metrics(job_history, controller):
     data_bd_slowdowns = [
         max(
-            (job.true_job_start + job.runtime - job.true_submit) / max(job.runtime, bd_threshold),
+            (job.true_job_start + job.reqtime - job.true_submit) / max(job.reqtime, bd_threshold),
             1
         )
         for job in job_history
             if not job.ignore_in_eval
     ]
     sim_bd_slowdowns = [
-        max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+        max((job.endlimit - job.submit) / max(job.reqtime, bd_threshold), 1)
         for job in job_history
             if not job.ignore_in_eval
     ]
@@ -373,7 +373,7 @@ def spider_plot_metrics(job_history):
     max_wait = max(wait_times)
 
     bd_slowdowns = [
-        max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+        max((job.endlimit - job.submit) / max(job.reqtime, bd_threshold), 1)
         for job in job_history
             if not job.ignore_in_eval
     ]
@@ -390,6 +390,40 @@ def spider_plot_metrics(job_history):
     }
         
     return spider_plot_data
+
+
+# Treating slurm to cab as a scaling factor + baseline power of any nodes without jobs runnning
+# and so not reported by slurm. Ignore any down nodes that may not be drawing power.
+# NOTE These numbers are for ARCHER2
+def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
+    # From comparing with cab data
+    baseline_power = 1.692
+    full_slurm_to_cab = 1.185
+
+    return slurm_power * full_slurm_to_cab + (1 - occupancy) * baseline_power
+
+
+def power_usage(times, job_history, max_nodes):
+    power, nodes = np.zeros_like(times), np.zeros_like(times, dtype=int)
+    tick = 0
+
+    for job in job_history:
+        while job.end > times[tick]:
+            tick += 1
+
+        prev_tick = tick - 1
+
+        while job.start <= times[prev_tick]:
+            power[prev_tick] += job.true_node_power * job.nodes
+            nodes[prev_tick] += job.nodes
+            prev_tick -= 1
+
+    power /= 1e+6 # MW
+    
+    for tick, slurm_power in enumerate(power):
+        power[tick] = slurm_to_cab(slurm_power, nodes[tick] / max_nodes)
+
+    return power
 
 
 def main(args):
@@ -447,13 +481,13 @@ def main(args):
 
     if "bdslowdowns_hist2d" in args.plots:
         job_to_bdslowdown_sim = lambda job: (
-            max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+            max((job.endlimit - job.submit) / max(job.reqtime, bd_threshold), 1)
         )
         job_to_bdslowdown_data = lambda job: (
             max(
                 (
-                    (job.true_job_start + job.runtime - job.true_submit) /
-                    max(job.runtime, bd_threshold)
+                    (job.true_job_start + job.reqtime - job.true_submit) /
+                    max(job.reqtime, bd_threshold)
                 ),
                 1
             )
@@ -464,9 +498,17 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+        cmap = plt.cm.viridis
+        cmap.set_under("w")
 
-        ax[0].pcolormesh(bins_allocnodes, bins_bdslowdowns, h_data.T, vmin=0.0, vmax=1.0)
-        ax[1].pcolormesh(bins_allocnodes, bins_bdslowdowns, h_sim.T, vmin=0.0, vmax=1.0)
+        h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
+
+        ax[0].pcolormesh(
+            bins_allocnodes, bins_bdslowdowns, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
+        )
+        im = ax[1].pcolormesh(
+            bins_allocnodes, bins_bdslowdowns, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
+        )
 
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
@@ -478,6 +520,7 @@ def main(args):
         ax[1].set_xlabel("Nodes")
         ax[1].set_ylabel("Bounded Slowdown")
         ax[1].set_title("Sim")
+        plt.colorbar(im, extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "allocnodes_bdslowdowns_hist2d{}.pdf".format(args.save_suffix))
@@ -489,9 +532,15 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+        cmap = plt.cm.viridis
+        cmap.set_under("w")
 
-        ax[0].pcolormesh(bins_reqtime, bins_bdslowdowns, h_data.T, vmin=0.0, vmax=1.0)
-        ax[1].pcolormesh(bins_reqtime, bins_bdslowdowns, h_sim.T, vmin=0.0, vmax=1.0)
+        h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
+
+        ax[0].pcolormesh(bins_reqtime, bins_bdslowdowns, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap)
+        im = ax[1].pcolormesh(
+            bins_reqtime, bins_bdslowdowns, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
+        )
 
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
@@ -503,6 +552,7 @@ def main(args):
         ax[1].set_xlabel("Req Time (mins)")
         ax[1].set_ylabel("Bounded Slowdown")
         ax[1].set_title("Sim")
+        plt.colorbar(im, extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "reqtime_bdslowdowns_hist2d{}.pdf".format(args.save_suffix))
@@ -518,9 +568,17 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+        cmap = plt.cm.viridis
+        cmap.set_under("w")
 
-        ax[0].pcolormesh(bins_allocnodes, bins_wait_times, h_data.T, vmin=0.0, vmax=1.0)
-        ax[1].pcolormesh(bins_allocnodes, bins_wait_times, h_sim.T, vmin=0.0, vmax=1.0)
+        h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
+
+        ax[0].pcolormesh(
+            bins_allocnodes, bins_wait_times, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
+        )
+        im = ax[1].pcolormesh(
+            bins_allocnodes, bins_wait_times, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
+        )
 
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
@@ -532,6 +590,7 @@ def main(args):
         ax[1].set_xlabel("Nodes")
         ax[1].set_ylabel("Wait (mins)")
         ax[1].set_title("Sim")
+        plt.colorbar(im, extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "allocnodes_wait_time_hist2d{}.pdf".format(args.save_suffix))
@@ -543,10 +602,16 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+        cmap = plt.cm.viridis
+        cmap.set_under("w")
 
-        ax[0].pcolormesh(bins_reqtime, bins_wait_times, h_data.T, vmin=0.0, vmax=1.0
+        h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
+
+        ax[0].pcolormesh(
+            bins_reqtime, bins_wait_times, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
         )
-        ax[1].pcolormesh(bins_reqtime, bins_wait_times, h_sim.T, vmin=0.0, vmax=1.0
+        im = ax[1].pcolormesh(
+            bins_reqtime, bins_wait_times, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
         )
 
         ax[0].set_yscale("log")
@@ -559,6 +624,7 @@ def main(args):
         ax[1].set_xlabel("Req Time (mins)")
         ax[1].set_ylabel("Wait (mins)")
         ax[1].set_title("Sim")
+        plt.colorbar(im, extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "reqtime_wait_time_hist2d{}.pdf".format(args.save_suffix))
@@ -768,7 +834,7 @@ def main(args):
 
         # Rolling window mean bd slowdown
         job_to_bdslowdown_sim = lambda job: (
-            max((job.end - job.submit) / max(job.runtime, bd_threshold), 1)
+            max((job.endlimit - job.submit) / max(job.reqtime, bd_threshold), 1)
         )
 
         sims_mean_bdslowdowns_rolling_window, sims_mean_bdslowdowns_rolling_window_err = [], []
@@ -782,8 +848,8 @@ def main(args):
             job_to_bdslowdown_data = lambda job: (
                 max(
                     (
-                        (job.true_job_start + job.runtime - job.true_submit) /
-                        max(job.runtime, bd_threshold)
+                        (job.true_job_start + job.reqtime - job.true_submit) /
+                        max(job.reqtime, bd_threshold)
                     ),
                     1
                 )
@@ -1081,7 +1147,7 @@ def main(args):
         to_plot_or_not_to_plot(args.batch)
 
     if "spider_mean_metrics" in args.plots:
-        baseline_data = spider_plot_metrics(job_histories[args.labels.index("baseline")])
+        baseline_data = spider_plot_metrics(job_histories[args.labels.index(args.baseline_label)])
 
         spider_plot_data = {}
 
@@ -1138,6 +1204,30 @@ def main(args):
 
         fig.savefig(os.path.join( PLOT_DIR, "spider_plot_metrics{}.pdf".format(args.save_suffix)))
 
+    if "power" in args.plots:
+        hours = [
+            controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
+            for hr in range(
+                int((controller.times[-1] - controller.times[0]).total_seconds() / 60 / 60) + 1
+            )
+        ]
+        hours = np.array(hours)
+
+        power = power_usage(hours, job_history, len(controller.partitions.nodes))
+
+        hour_dates = matplotlib.dates.date2num(hours)
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        ax.plot_date(hour_dates, power, 'k', linewidth=0.5)
+    
+        ax.set_ylim(0.9 * power.min(), 1.1 * power.max())
+        ax.set_ylabel("Power (MW)")
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(PLOT_DIR, "power_usage{}.pdf".format(args.save_suffix)))
+        to_plot_or_not_to_plot(args.batch)
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -1177,6 +1267,9 @@ def parse_arguments():
         help="ovveride the default ignore period (4 days) at the start and end of job data"
     )
     parser.add_argument("--rolling_window_days", type=float, default=14.0)
+    parser.add_argument(
+        "--baseline_label", type=str, default="baseline", help="ovverride baseline label"
+    )
 
     args = parser.parse_args()
 
