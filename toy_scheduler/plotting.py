@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes, mark_inset
 import numpy as np
 from tqdm import tqdm
+# import pandas # Needed for its converter for fill_between with datetimes
 
 from controller import Controller
 from fairshare import FairTree
@@ -21,11 +22,13 @@ from helpers import mkdir_p
 global bd_threshold
 bd_threshold = timedelta(minutes=10)
 
+
 def to_plot_or_not_to_plot(batch):
     if batch:
         plt.close()
     else:
         plt.show()
+
 
 def metric_property_hist2d(job_history, job_to_metric_sim, job_to_metric_data, property, metric):
     job_property, sim_metrics, data_metrics = [], [], []
@@ -338,12 +341,12 @@ def mean_metrics(job_history, controller):
     ]
     data_wait_times = [
         (job.true_job_start - job.true_submit).total_seconds() / 60 / 60
-        for job in job_history 
+        for job in job_history
             if not job.ignore_in_eval
     ]
     sim_wait_times = [
         (job.start - job.submit).total_seconds() / 60 / 60
-        for job in job_history 
+        for job in job_history
             if not job.ignore_in_eval
     ]
 
@@ -384,11 +387,11 @@ def spider_plot_metrics(job_history):
     ]
     avg_response = np.mean(responses)
 
-    spider_plot_data = { 
+    spider_plot_data = {
         "avg_wait" : avg_wait, "max_wait" : max_wait, "avg_slowdown" : avg_slowdown,
         "avg_response" : avg_response
     }
-        
+
     return spider_plot_data
 
 
@@ -422,7 +425,7 @@ def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
 
 
 def power_usage(times, job_history, max_nodes):
-    power, nodes = np.zeros_like(times), np.zeros_like(times, dtype=int)
+    power, nodes = np.zeros_like(times, dtype=float), np.zeros_like(times, dtype=int)
     tick = 0
 
     for job in job_history:
@@ -437,7 +440,7 @@ def power_usage(times, job_history, max_nodes):
             prev_tick -= 1
 
     power /= 1e+6 # MW
-    
+
     for tick, slurm_power in enumerate(power):
         power[tick] = slurm_to_cab(slurm_power, nodes[tick] / max_nodes)
 
@@ -1074,7 +1077,7 @@ def main(args):
             a.set_xticklabels([])
             a.set_title(qos)
             a.set_yscale("log")
-            
+
         fig.tight_layout()
         fig.savefig(
             os.path.join(
@@ -1288,7 +1291,7 @@ def main(args):
         ax.plot(
             angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
         )
-        
+
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
 
@@ -1298,6 +1301,7 @@ def main(args):
         baseline_data = spider_plot_wait_qos(job_histories[args.labels.index(args.baseline_label)])
 
         spider_plot_data = {}
+        standard_qos, replaced_with_standard = "standard", set()
 
         for job_history, label in zip(job_histories, args.labels):
             if label == args.baseline_label:
@@ -1306,6 +1310,10 @@ def main(args):
             spider_plot_data[label] = spider_plot_wait_qos(job_history)
 
             for metric in spider_plot_data[label]:
+                if metric not in baseline_data:
+                    baseline_data[metric] = baseline_data[standard_qos]
+                    replaced_with_standard.add(metric)
+                    
                 spider_plot_data[label][metric] /= baseline_data[metric]
 
         fig = plt.figure(figsize=(12, 10))
@@ -1346,7 +1354,7 @@ def main(args):
         ax.plot(
             angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
         )
-        
+
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title("1/mean(wait_time) relative to baseline")
@@ -1369,12 +1377,80 @@ def main(args):
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
 
         ax.plot_date(hour_dates, power, 'k', linewidth=0.5)
-    
+
         ax.set_ylim(0.9 * power.min(), 1.1 * power.max())
         ax.set_ylabel("Power (MW)")
 
         fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "power_usage{}.pdf".format(args.save_suffix)))
+        to_plot_or_not_to_plot(args.batch)
+
+    if "power_diff" in args.plots:
+        if len(job_histories) != 2:
+            raise NotImplementedError
+
+        hours = [
+            controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
+            for hr in range(
+                int((controller.times[-1] - controller.times[0]).total_seconds() / 60 / 60) + 1
+            )
+        ]
+        hours = np.array(hours)
+
+        i_baseline = args.labels.index(args.baseline_label)
+        i_exp = 0 if i_baseline == 1 else 1
+
+        power_baseline = power_usage(
+            hours, job_histories[i_baseline], len(controller.partitions.nodes)
+        )
+        power_exp = power_usage(hours, job_histories[i_exp], len(controller.partitions.nodes))
+
+        hour_dates = matplotlib.dates.date2num(hours)
+
+        slice_l, slice_r = len(hour_dates) - 336 - 336, len(hour_dates) - 336
+        hour_dates = hour_dates[slice_l:slice_r]
+        power_baseline = power_baseline[slice_l:slice_r]
+        power_exp = power_exp[slice_l:slice_r]
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        ax.plot_date(hour_dates, power_baseline, 'k', linewidth=.0)
+        ax.plot_date(hour_dates, power_exp, 'b', linewidth=.0)
+        ax.fill_between(
+            hour_dates,
+            power_baseline,
+            power_exp,
+            where=power_baseline<=power_exp,
+            facecolor='red',
+            interpolate=True
+        )
+        ax.fill_between(
+            hour_dates,
+            power_baseline,
+            power_exp,
+            where=power_baseline>=power_exp,
+            facecolor='green',
+            interpolate=True
+        )
+
+        day = min(hours[slice_l:slice_r]).replace(hour=0)
+        max_day = max(hours[slice_l:slice_r]).replace(hour=0) + timedelta(days=1)
+
+        while day < max_day:
+            ax.axvspan(
+                matplotlib.dates.date2num(day + timedelta(hours=11)),
+                matplotlib.dates.date2num(day + timedelta(hours=16)),
+                color="gray",
+                alpha=0.3
+            )
+            day += timedelta(days=1)
+
+        ax.set_ylim(0.9 * power_baseline.min(), 1.1 * power_baseline.max())
+        ax.set_ylabel("Power (MW)")
+        plt.title("Baseline - experiment power usage (green when positive, red when negative)")
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(PLOT_DIR, "power_usage_diff{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
 
@@ -1393,11 +1469,13 @@ def parse_arguments():
     parser.add_argument(
         "--plots", default=[], type=lambda plots: [ plot for plot in plots.split(',') ],
         help=(
-            "comma delimited list or plots to plot\n"
+            "comma delimited list or plots to plot:\n"
             "(bdslowdowns_hist2d|wait_times_hist2d|top_projs|top_qccounts|top_users|qos_waits|"
             "partition_waits|rolling_window|rolling_window_qos|cumulative_throughput|"
             "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics|"
-            "spider_mean_wait_qos|power_usage)"
+            "spider_mean_wait_qos|power_usage)\n"
+            "Plots that work for multiple experiments:\n"
+            "(rolling_window|spider_mean_metrics|spider_mean_wait_qos)"
         )
     )
 
