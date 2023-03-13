@@ -371,7 +371,7 @@ class QOS:
             limit
             for limit in [ResourceLimit.ASSOC_JOBS, ResourceLimit.ASSOC_SUBMIT]
                 if limit not in self.tracked_limits
-                }
+        }
 
         self.job_quota_remaining = grp_jobs
         self.node_quota_remaining = grp_nodes
@@ -423,7 +423,7 @@ class QOS:
         if ResourceLimit.USR_NODES in self.tracked_limits:
             self.usr_node_quota_remaining[job.user] += job.nodes
         if ResourceLimit.USR_SUBMIT in self.tracked_limits:
-            self.usr_submit_quota_remaining[job.user] += job.nodes
+            self.usr_submit_quota_remaining[job.user] += 1
         if ResourceLimit.ASSOC_JOBS in self.tracked_limits:
             self.assoc_job_quota_remaining[job.assoc] += 1
         if ResourceLimit.ASSOC_SUBMIT in self.tracked_limits:
