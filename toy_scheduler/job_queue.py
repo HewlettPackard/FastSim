@@ -124,11 +124,11 @@ class Queue:
                 if (
                     (
                         ResourceLimit.ASSOC_JOBS in new_job.qos.controlled_by_assoc and
-                        not self.assoc_limits[new_job.assoc].assoc_job_quota
+                        self.assoc_limits[new_job.assoc].assoc_job_quota == 0
                     ) or
                     (
                         ResourceLimit.ASSOC_SUBMIT in new_job.qos.controlled_by_assoc and
-                        not self.assoc_limits[new_job.assoc].assoc_submit_quota
+                        self.assoc_limits[new_job.assoc].assoc_submit_quota == 0
                     )
                 ):
                     continue
