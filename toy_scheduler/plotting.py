@@ -736,7 +736,9 @@ def main(args):
 
     if "partition_waits" in args.plots:
         job_to_partition = lambda job: job.partition.name
-        sorted_partition, data_mean_waits, sim_mean_waits = group_waits(job_history, job_to_qos)
+        sorted_partition, data_mean_waits, sim_mean_waits = group_waits(
+            job_history, job_to_partition
+        )
 
         x = np.arange(len(sim_mean_waits))
 
@@ -752,7 +754,11 @@ def main(args):
         fig.savefig(os.path.join(PLOT_DIR, "partition_mean_waits{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
-    if "rolling_window" in args.plots or "rolling_window_qos" in args.plots:
+    if (
+        "rolling_window" in args.plots or
+        "rolling_window_qos" in args.plots or
+        "rolling_window_partition" in args.plots
+    ):
         hours = [
             controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
             for hr in range(
@@ -1111,6 +1117,63 @@ def main(args):
         )
         to_plot_or_not_to_plot(args.batch)
 
+    if "rolling_window_partition" in args.plots:
+        partition_sim_mean_wait_times_rolling_window = {}
+        partition_data_mean_wait_times_rolling_window = {}
+        partition_job_history = defaultdict(list)
+
+        for job in job_history:
+            partition_job_history[job.partition.name].append(job)
+
+        for partition, job_history in partition_job_history.items():
+            means, _ = rolling_window(job_history, job_to_wait_sim, hours, window_hrs)
+            partition_sim_mean_wait_times_rolling_window[partition] = means
+            means, _ = rolling_window(job_history, job_to_wait_data, hours, window_hrs, data=True)
+            partition_data_mean_wait_times_rolling_window[partition] = means
+
+        fig, ax = plt.subplots(1, 2, figsize=(12, 8))
+
+        min_wait_sim = min(
+            min(waits)
+            for partition, waits in partition_sim_mean_wait_times_rolling_window.items()
+        )
+        min_wait_data = min(
+            min(waits)
+            for partition, waits in partition_data_mean_wait_times_rolling_window.items()
+        )
+        min_wait = min(min_wait_data, min_wait_sim)
+        max_wait_sim = max(
+            max(waits)
+            for partition, waits in partition_sim_mean_wait_times_rolling_window.items()
+        )
+        max_wait_data = max(
+            max(waits)
+            for partition, waits in partition_data_mean_wait_times_rolling_window.items()
+        )
+        max_wait = max(max_wait_sim, max_wait_data)
+
+        for partition, a in zip(partition_sim_mean_wait_times_rolling_window, ax.flatten()):
+            a.plot_date(
+                hour_dates, partition_sim_mean_wait_times_rolling_window[partition], fmt='-b'
+            )
+            a.plot_date(
+                hour_dates, partition_data_mean_wait_times_rolling_window[partition], fmt='-k'
+            )
+
+            a.set_ylim(0.9 * min_wait, 1.1 * max_wait)
+            a.set_xticklabels([])
+            a.set_title(partition)
+            a.set_yscale("log")
+            
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                "wait_times_rolling_window_bypartition_subplots{}.pdf".format(args.save_suffix)
+            )
+        )
+        to_plot_or_not_to_plot(args.batch)
+
     if "total_allocnodes_timeseries" in args.plots:
         data_alloc_nodes, data_minutes, sim_alloc_nodes, sim_minutes = total_alloc_nodes(
             job_history
@@ -1125,7 +1188,10 @@ def main(args):
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
         ax.set_ylim(
             max(data_alloc_nodes) * 0.5 if max(data_alloc_nodes) > 2000 else 0,
-            len(controller.partitions.nodes)
+            min(
+                len(controller.partitions.nodes),
+                max(max(data_alloc_nodes), max(sim_alloc_nodes)) * 1.2
+            )
         )
         ax.grid(axis="y")
         plt.legend()
