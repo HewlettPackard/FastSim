@@ -218,8 +218,10 @@ class Queue:
                 continue
 
             # Pretending that the user resubmits in order of original submission as soon as allowed
-            released, users_waiting = [], set()
-            for i_job, job in enumerate(self.qos_submit_held[qos]):
+            released, users_waiting, i_job = [], set(), len(self.qos_submit_held[qos])
+            for job in reversed(self.qos_submit_held[qos]):
+                i_job -= 1
+
                 if job.user in users_waiting:
                     continue
 
@@ -244,7 +246,7 @@ class Queue:
                 else:
                     self.queue.append(job.priority(self.time))
 
-            for i_job in reversed(released):
+            for i_job in released:
                 self.qos_submit_held[qos].pop(i_job)
 
     def _check_cancel_jobs(self):
