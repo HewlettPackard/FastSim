@@ -822,9 +822,9 @@ def main(args):
             ax_small.set_ylabel("Std dev Wait Time")
             ax_small.set_ylim(bottom=0.0)
 
-            fig.tight_layout()
             fig.savefig(
-                os.path.join(PLOT_DIR, "wait_times_rolling_window{}.pdf".format(args.save_suffix))
+                os.path.join(PLOT_DIR, "wait_times_rolling_window{}.pdf".format(args.save_suffix)),
+                bbox_inches="tight"
             )
             to_plot_or_not_to_plot(args.batch)
 
@@ -911,9 +911,12 @@ def main(args):
             ax_small.set_ylabel("Std dev Bounded Slowdown")
             ax_small.set_ylim(bottom=0.0)
 
-            fig.tight_layout()
             fig.savefig(
-                os.path.join(PLOT_DIR, "bd_slowdowns_rolling_window{}.pdf".format(args.save_suffix))
+                os.path.join(
+                    PLOT_DIR,
+                    "bd_slowdowns_rolling_window{}.pdf".format(args.save_suffix)
+                ),
+                bbox_inches="tight"
             )
             to_plot_or_not_to_plot(args.batch)
 
