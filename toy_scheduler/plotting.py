@@ -973,7 +973,7 @@ def main(args):
 
         for qos, job_history in qos_job_history.items():
             # short goes through instantly and there are too few largescale
-            if qos == "largescale" or qos == "short":
+            if qos == "largescale" or qos == "short" or qos == "reservation":
                 continue
 
             means, _ = rolling_window(job_history, job_to_wait_sim, hours, window_hrs)
@@ -1051,12 +1051,12 @@ def main(args):
         min_wait_sim = min(
             min(waits)
             for qos, waits in qos_sim_mean_wait_times_rolling_window_6.items()
-                if qos != "largescale"
+                if qos != "largescale" and qos != "reservation"
         )
         min_wait_data = min(
             min(waits)
             for qos, waits in qos_data_mean_wait_times_rolling_window_6.items()
-                if qos != "largescale"
+                if qos != "largescale" and qos != "reservation"
         )
         min_wait = min(min_wait_data, min_wait_sim)
         max_wait_sim = max(
