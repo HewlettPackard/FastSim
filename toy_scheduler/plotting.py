@@ -398,7 +398,7 @@ def spider_plot_metrics(job_history):
 def spider_plot_wait_qos(job_history):
     qos_jobs = defaultdict(list)
     for job in job_history:
-        if job.ignore_in_eval or job.qos.name == "short":
+        if job.ignore_in_eval or job.qos.name == "short" or job.qos.name == "reservation":
             continue
 
         qos_jobs[job.qos.name].append(job)
