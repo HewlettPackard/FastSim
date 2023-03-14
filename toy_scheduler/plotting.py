@@ -1325,7 +1325,12 @@ def main(args):
 
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
-        category_labels = list(baseline_data)
+        category_labels = [
+            label + " (relative to standard)"
+            if label in replaced_with_standard else
+            label
+            for label in baseline_data
+        ]
         plt.xticks(angles[:-1], category_labels, size=14)
         # for label in ax.get_xticklabels():
         #     if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
@@ -1342,18 +1347,32 @@ def main(args):
         #         label.set_horizontalalignment("right")
         ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
-        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
-        plt.ylim(0.55,1.3)
 
+        log = False
         for label, plot_data in spider_plot_data.items():
             vals = [ 1 / plot_data[metric] for metric in categories ]
             vals += vals[:1]
+
             colour = next(ax._get_lines.prop_cycler)["color"]
             ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=label)
+
+            if any(val > 2 for val in vals):
+                log = True
 
         ax.plot(
             angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
         )
+
+        if log:
+            ax.set_yscale("symlog", linthresh=0.1)
+            plt.yticks(
+                [0.75,1,2,4,8], ["0.75","1","2","4","8"],
+                color="grey", size=14
+            )
+            plt.ylim(0.55,10)
+        else:
+            plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
+            plt.ylim(0.55,1.3)
 
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
