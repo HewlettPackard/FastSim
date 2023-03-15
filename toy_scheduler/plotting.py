@@ -447,6 +447,51 @@ def power_usage(times, job_history, max_nodes):
     return power
 
 
+def plot_power_diff(hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=True):
+    hour_dates_slice = hour_dates[slice_l:slice_r]
+    power_baseline_slice = power_baseline[slice_l:slice_r]
+    power_exp_slice = power_exp[slice_l:slice_r]
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+    ax.plot_date(hour_dates_slice, power_baseline_slice, 'k', linewidth=.0)
+    ax.plot_date(hour_dates_slice, power_exp_slice, 'b', linewidth=.0)
+    ax.fill_between(
+        hour_dates_slice, power_baseline_slice, power_exp_slice,
+        where=power_baseline_slice<=power_exp_slice, facecolor='red', interpolate=True
+    )
+    ax.fill_between(
+        hour_dates_slice, power_baseline_slice, power_exp_slice,
+        where=power_baseline_slice>=power_exp_slice, facecolor='green', interpolate=True
+    )
+
+    day = min(hours[slice_l:slice_r]).replace(hour=0)
+    max_day = max(hours[slice_l:slice_r]).replace(hour=0) + timedelta(days=1)
+
+    while day < max_day:
+        ax.axvspan(
+            matplotlib.dates.date2num(day + timedelta(hours=11)),
+            matplotlib.dates.date2num(day + timedelta(hours=16)),
+            color="gray",
+            alpha=0.3
+        )
+        if vlines:
+            ax.vlines(
+                matplotlib.dates.date2num(day + timedelta(hours=9)),
+                ymin=0, ymax=1.1 * power_baseline_slice.max(),
+                color="b"
+            )
+        day += timedelta(days=1)
+
+    ax.set_ylim(0.9 * power_baseline_slice.min(), 1.1 * power_baseline_slice.max())
+    ax.set_ylabel("Power (MW)")
+    plt.title("Baseline - experiment power usage (green when positive, red when negative)")
+
+    fig.tight_layout()
+
+    return fig, ax
+
+
 def main(args):
     PLOT_DIR = os.path.join(
         args.plot_dir, "-".join(os.path.basename(sim).split(".")[0] for sim in args.sim)
@@ -1354,6 +1399,8 @@ def main(args):
             colour = next(ax._get_lines.prop_cycler)["color"]
             ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=label)
 
+            print(vals)
+
             if any(val > 2 for val in vals):
                 log = True
 
@@ -1424,49 +1471,26 @@ def main(args):
 
         hour_dates = matplotlib.dates.date2num(hours)
 
-        slice_l, slice_r = len(hour_dates) - 336 - 336, len(hour_dates) - 336
-        hour_dates = hour_dates[slice_l:slice_r]
-        power_baseline = power_baseline[slice_l:slice_r]
-        power_exp = power_exp[slice_l:slice_r]
+        slice_r = len(hour_dates) - 336
+        while slice_r > 336:
+            slice_l = slice_r - 336
 
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-
-        ax.plot_date(hour_dates, power_baseline, 'k', linewidth=.0)
-        ax.plot_date(hour_dates, power_exp, 'b', linewidth=.0)
-        ax.fill_between(
-            hour_dates,
-            power_baseline,
-            power_exp,
-            where=power_baseline<=power_exp,
-            facecolor='red',
-            interpolate=True
-        )
-        ax.fill_between(
-            hour_dates,
-            power_baseline,
-            power_exp,
-            where=power_baseline>=power_exp,
-            facecolor='green',
-            interpolate=True
-        )
-
-        day = min(hours[slice_l:slice_r]).replace(hour=0)
-        max_day = max(hours[slice_l:slice_r]).replace(hour=0) + timedelta(days=1)
-
-        while day < max_day:
-            ax.axvspan(
-                matplotlib.dates.date2num(day + timedelta(hours=11)),
-                matplotlib.dates.date2num(day + timedelta(hours=16)),
-                color="gray",
-                alpha=0.3
+            fig, ax = plot_power_diff(
+                hours, hour_dates, power_baseline, power_exp, slice_l, slice_r
             )
-            day += timedelta(days=1)
+            fig.savefig(
+                os.path.join(
+                    PLOT_DIR,
+                    "power_usage_diff_2weeks_slicer{}{}.pdf".format(slice_r, args.save_suffix)
+                )
+            )
+            to_plot_or_not_to_plot(args.batch)
 
-        ax.set_ylim(0.9 * power_baseline.min(), 1.1 * power_baseline.max())
-        ax.set_ylabel("Power (MW)")
-        plt.title("Baseline - experiment power usage (green when positive, red when negative)")
+            slice_r -= 336
 
-        fig.tight_layout()
+        fig, ax = plot_power_diff(
+            hours, hour_dates, power_baseline, power_exp, None, None, vlines=False
+        )
         fig.savefig(os.path.join(PLOT_DIR, "power_usage_diff{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
