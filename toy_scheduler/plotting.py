@@ -251,7 +251,7 @@ def total_alloc_nodes(job_history):
         u_mins = int((job.true_job_start + job.runtime - data_min_start).total_seconds() / 60)
         data_alloc_nodes[l_mins:u_mins] += job.nodes
 
-    pad = 24 * 60 * 60
+    pad = 24 * 60 * 2
     print("Sim mean(max) allocations nodes = {} +- {} ({})".format(
         np.mean(sim_alloc_nodes[pad:-pad]), np.std(sim_alloc_nodes[pad:-pad]),
         np.max(sim_alloc_nodes)
@@ -296,7 +296,7 @@ def q_size(job_history):
         data_q_length[l_mins:u_mins] += 1
         data_q_length_nodes[l_mins:u_mins] += job.nodes
 
-    pad = 24 * 60 * 60
+    pad = 24 * 60 * 2
     print("Sim mean(max) queue size (jobs) = {} +- {} ({})".format(
         np.mean(sim_q_length[pad:-pad]), np.std(sim_q_length[pad:-pad]), np.max(sim_q_length)
     ))
@@ -971,21 +971,19 @@ def main(args):
         for job in job_history:
             qos_job_history[job.qos.name].append(job)
 
-        for qos, job_history in qos_job_history.items():
+        for qos, jobs in qos_job_history.items():
             # short goes through instantly and there are too few largescale
             if qos == "largescale" or qos == "short" or qos == "reservation":
                 continue
 
-            means, _ = rolling_window(job_history, job_to_wait_sim, hours, window_hrs)
+            means, _ = rolling_window(jobs, job_to_wait_sim, hours, window_hrs)
             qos_sim_mean_wait_times_rolling_window[qos] = means
-            means, _ = rolling_window(job_history, job_to_wait_data, hours, window_hrs, data=True)
+            means, _ = rolling_window(jobs, job_to_wait_data, hours, window_hrs, data=True)
             qos_data_mean_wait_times_rolling_window[qos] = means
 
-            means, _ = rolling_window(job_history, job_to_bdslowdown_sim, hours, window_hrs)
+            means, _ = rolling_window(jobs, job_to_bdslowdown_sim, hours, window_hrs)
             qos_sim_mean_bdslowdowns_rolling_window[qos] = means
-            means, _ = rolling_window(
-                job_history, job_to_bdslowdown_data, hours, window_hrs, data=True
-            )
+            means, _ = rolling_window(jobs, job_to_bdslowdown_data, hours, window_hrs, data=True)
             qos_data_mean_bdslowdowns_rolling_window[qos] = means
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -1128,10 +1126,10 @@ def main(args):
         for job in job_history:
             partition_job_history[job.partition.name].append(job)
 
-        for partition, job_history in partition_job_history.items():
-            means, _ = rolling_window(job_history, job_to_wait_sim, hours, window_hrs)
+        for partition, jobs in partition_job_history.items():
+            means, _ = rolling_window(jobs, job_to_wait_sim, hours, window_hrs)
             partition_sim_mean_wait_times_rolling_window[partition] = means
-            means, _ = rolling_window(job_history, job_to_wait_data, hours, window_hrs, data=True)
+            means, _ = rolling_window(jobs, job_to_wait_data, hours, window_hrs, data=True)
             partition_data_mean_wait_times_rolling_window[partition] = means
 
         fig, ax = plt.subplots(1, 2, figsize=(12, 8))
