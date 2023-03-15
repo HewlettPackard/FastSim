@@ -136,7 +136,8 @@ class Queue:
                 # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
                 # the user's next submission. This works slightly better as entire sustem
                 # metrics but makes the wait times by qos an project worse
-                if new_job.qos.hold_job_submit(new_job):
+                # NOTE Don't want mess up any dependency chains
+                if not new_job.is_dependency_target and new_job.qos.hold_job_submit(new_job):
                     self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                     continue
 
@@ -227,6 +228,7 @@ class Queue:
 
                 if job.qos.hold_job_submit(job):
                     users_waiting.add(job.user)
+                    # NOTE Don't want mess up any dependency chains
                     continue
 
                 # Pretend the job is now resubmitted
