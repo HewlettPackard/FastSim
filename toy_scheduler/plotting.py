@@ -984,7 +984,7 @@ def main(args):
             ax.plot_date(hour_dates, data_mean_bdslowdowns_rolling_window, "k-", label="Data")
 
         ax.set_ylabel("Mean Bounded Slowdown")
-        ax.set_ylim(bottom=0.0)
+        ax.set_ylim(bottom=1.0)
         ax.set_xlabel("Middle Hour of Rolling Window")
         plt.legend()
 
