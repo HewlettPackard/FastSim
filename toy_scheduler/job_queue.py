@@ -109,6 +109,7 @@ class Queue:
         self._check_qos_holds(running_jobs)
 
         if self.time < self.next_newjob():
+            self._check_cancel_jobs()
             if len(self.queue) != pre_step_priority_len:
                 self.priority_sorter.sort(self.queue, self.time)
             return
