@@ -484,16 +484,24 @@ class SlurmDataReader:
             never_down_nids = {
                 nid
                 for nid, data in nid_data.items()
-                    if (
-                        not data["down_schedule"] and
-                        not data["resv_schedule"] and
-                        not any(partition == "highmem" for partition in data["partitions"])
-                    )
+                    if not data["down_schedule"] and not data["resv_schedule"]
             }
             for i_shortqos_nid, shortqos_nid in enumerate(shortqos_nids_to_replace):
-                if not never_down_nids:
-                    break
-                never_down_nid = never_down_nids.pop()
+                found_nid = False
+
+                for never_down_nid in never_down_nids:
+                    if (
+                        nid_data[never_down_nid]["partitions"] ==
+                        nid_data[shortqos_nid]["partitions"]
+                    ):
+                        found_nid = True
+                        break
+
+                if not found_nid:
+                    continue
+
+                never_down_nids.remove(never_down_nid)
+
                 nid_data[never_down_nid]["resv_schedule"] = nid_data[shortqos_nid]["resv_schedule"]
                 nid_data[shortqos_nid]["resv_schedule"] = []
             print(
