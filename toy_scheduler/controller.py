@@ -646,16 +646,12 @@ class Controller:
             self.bf_job_ordered_reqtimes[""] = {}
             for job in self.queue.queue[-max_test_from_normal_q:]:
                 self.bf_queue.append(job)
-                self.bf_job_ordered_reqtimes[""][job] = max(
-                    job.reqtime.total_seconds(), self.bf_resolution # XXX might not need this
-                )
+                self.bf_job_ordered_reqtimes[""][job] = job.reqtime.total_seconds()
         for resv, resv_q in self.queue.reservations.items():
             self.bf_job_ordered_reqtimes[resv] = {}
             for job in resv_q:
                 self.bf_queue.append(job)
-                self.bf_job_ordered_reqtimes[resv][job] = max(
-                    job.reqtime.total_seconds(), self.bf_resolution
-                )
+                self.bf_job_ordered_reqtimes[resv][job] = job.reqtime.total_seconds()
         # Earliest reqtime job at front so I can call next(iter()) to grab it
         self.bf_job_ordered_reqtimes = {
             resv : OrderedDict(
