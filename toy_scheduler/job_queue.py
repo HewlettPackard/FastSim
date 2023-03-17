@@ -652,11 +652,11 @@ class Job:
                     job.is_dependency_target = True
 
     def submit_job(self, time=None):
-        if time:
+        if time is not None:
             self.submit = time
         self.qos.job_submitted(self)
         if self.cancelled_t is not None:
-            self.cancel = time + self.cancelled_t
+            self.cancel = self.submit + self.cancelled_t
         return self
 
     def cancel_job(self):
