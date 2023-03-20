@@ -1,5 +1,5 @@
 import os, argparse
-from datetime import timedelta
+import datetime; from datetime import timedelta
 import dill as pickle
 from collections import defaultdict
 
@@ -488,6 +488,25 @@ def plot_power_diff(hours, hour_dates, power_baseline, power_exp, slice_l, slice
     plt.title("Baseline - experiment power usage (green when positive, red when negative)")
 
     fig.tight_layout()
+
+    power_baseline_slice_peak, power_exp_slice_peak = [], []
+
+    for i_hour, hour in enumerate(hours[slice_l:slice_r]):
+        if 11 <= hour.hour < 16:
+            power_baseline_slice_peak.append(power_baseline_slice[i_hour])
+            power_exp_slice_peak.append(power_exp_slice[i_hour])
+
+    baseline_slice_peak_mu = np.mean(power_baseline_slice_peak)
+    exp_slice_peak_mu = np.mean(power_exp_slice_peak)
+    print("Time range slicer {}".format(slice_r))
+    print("Baseline peak mean power {} MW".format(baseline_slice_peak_mu))
+    print("Exp peak mean power {} MW".format(exp_slice_peak_mu))
+    print(
+        "Baseline - Exp {} MW ({} KW)".format(
+            baseline_slice_peak_mu - exp_slice_peak_mu,
+            (baseline_slice_peak_mu - exp_slice_peak_mu) * 1000
+        )
+    )
 
     return fig, ax
 
@@ -1210,7 +1229,7 @@ def main(args):
             a.set_xticklabels([])
             a.set_title(partition)
             a.set_yscale("log")
-            
+
         fig.tight_layout()
         fig.savefig(
             os.path.join(
@@ -1307,19 +1326,11 @@ def main(args):
             r"$(\mathrm{max\_wait})^{-1}$", r"$(\mathrm{avg\_response})^{-1}$"
         ]
         plt.xticks(angles[:-1], category_labels, size=14)
-        # for label in ax.get_xticklabels():
-        #     if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
-        #         label.set_verticalalignment("bottom")
-        #         label.set_horizontalalignment("left")
-        #     elif label.get_text() == r"$(\mathrm{avg\_wait})^{-1}$":
-        #         label.set_verticalalignment("top")
-        #         label.set_horizontalalignment("left")
-        #     elif label.get_text() == r"$(\mathrm{max\_wait})^{-1}$":
-        #         label.set_verticalalignment("top")
-        #         label.set_horizontalalignment("right")
-        #     elif label.get_text() == r"$(\mathrm{avg\_response})^{-1}$":
-        #         label.set_verticalalignment("bottom")
-        #         label.set_horizontalalignment("right")
+        half = len(ax.get_xticklabels()) // 2
+        for label in ax.get_xticklabels()[1:half]:
+            label.set_horizontalalignment("left")
+        for label in ax.get_xticklabels()[-half+1:]:
+            label.set_horizontalalignment("right")
         ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
         plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
@@ -1338,6 +1349,7 @@ def main(args):
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
 
+        # fig.tight_layout()
         fig.savefig(os.path.join( PLOT_DIR, "spider_plot_metrics{}.pdf".format(args.save_suffix)))
 
     if "spider_mean_wait_qos" in args.plots:
@@ -1356,7 +1368,7 @@ def main(args):
                 if metric not in baseline_data:
                     baseline_data[metric] = baseline_data[standard_qos]
                     replaced_with_standard.add(metric)
-                    
+
                 spider_plot_data[label][metric] /= baseline_data[metric]
 
         fig = plt.figure(figsize=(12, 10))
@@ -1375,19 +1387,11 @@ def main(args):
             for label in baseline_data
         ]
         plt.xticks(angles[:-1], category_labels, size=14)
-        # for label in ax.get_xticklabels():
-        #     if label.get_text() == r"$(\mathrm{avg\_slowdown})^{-1}$":
-        #         label.set_verticalalignment("bottom")
-        #         label.set_horizontalalignment("left")
-        #     elif label.get_text() == r"$(\mathrm{avg\_wait})^{-1}$":
-        #         label.set_verticalalignment("top")
-        #         label.set_horizontalalignment("left")
-        #     elif label.get_text() == r"$(\mathrm{max\_wait})^{-1}$":
-        #         label.set_verticalalignment("top")
-        #         label.set_horizontalalignment("right")
-        #     elif label.get_text() == r"$(\mathrm{avg\_response})^{-1}$":
-        #         label.set_verticalalignment("bottom")
-        #         label.set_horizontalalignment("right")
+        half = len(ax.get_xticklabels()) // 2
+        for label in ax.get_xticklabels()[1:half]:
+            label.set_horizontalalignment("left")
+        for label in ax.get_xticklabels()[-half+1:]:
+            label.set_horizontalalignment("right")
         ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
 
@@ -1399,6 +1403,7 @@ def main(args):
             colour = next(ax._get_lines.prop_cycler)["color"]
             ax.plot(angles, vals, linewidth=2, linestyle='solid', c=colour, label=label)
 
+            print(categories)
             print(vals)
 
             if any(val > 2 for val in vals):
@@ -1410,19 +1415,19 @@ def main(args):
 
         if log:
             ax.set_yscale("symlog", linthresh=0.1)
-            plt.yticks(
-                [0.75,1,2,4,8], ["0.75","1","2","4","8"],
-                color="grey", size=14
-            )
+            plt.yticks([0.75,1,2,4,8], ["0.75","1","2","4","8"], color="grey", size=14)
             plt.ylim(0.55,10)
         else:
-            plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
-            plt.ylim(0.55,1.3)
+            # plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
+            # plt.ylim(0.55,1.3)
+            plt.yticks([0.5,0.75,1], ["0.5","0.75","1"], color="grey", size=14)
+            plt.ylim(0.3,1.2)
 
         plt.legend(loc='center', bbox_to_anchor=(0.5, -0.075), fontsize=16, ncol=5)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title("1/mean(wait_time) relative to baseline")
 
+        fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "spider_plot_wait_qos{}.pdf".format(args.save_suffix)))
 
     if "power" in args.plots:
@@ -1445,7 +1450,7 @@ def main(args):
         ax.set_ylim(0.9 * power.min(), 1.1 * power.max())
         ax.set_ylabel("Power (MW)")
 
-        fig.tight_layout()
+        # fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "power_usage{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
 
@@ -1476,7 +1481,7 @@ def main(args):
             slice_l = slice_r - 336
 
             fig, ax = plot_power_diff(
-                hours, hour_dates, power_baseline, power_exp, slice_l, slice_r
+                hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=False
             )
             fig.savefig(
                 os.path.join(
@@ -1493,6 +1498,41 @@ def main(args):
         )
         fig.savefig(os.path.join(PLOT_DIR, "power_usage_diff{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
+
+        power_baseline_peak, power_exp_peak = [], []
+
+        for i_hour, hour in enumerate(hours):
+            if 11 <= hour.hour < 16:
+                power_baseline_peak.append(power_baseline[i_hour])
+                power_exp_peak.append(power_exp[i_hour])
+
+        baseline_peak_mu, exp_peak_mu = np.mean(power_baseline_peak), np.mean(power_exp_peak)
+        print("Full time range:")
+        print("Baseline peak mean power {} MW".format(baseline_peak_mu))
+        print("Exp peak mean power {} MW".format(exp_peak_mu))
+        print(
+            "Baseline - Exp {} MW ({} KW)".format(
+                baseline_peak_mu - exp_peak_mu, (baseline_peak_mu - exp_peak_mu) * 1000
+            )
+        )
+
+        start_date = datetime.datetime.strptime("2022-10-24", "%Y-%m-%d")
+
+        for slice_l, hour in enumerate(hours):
+            if hour.replace(hour=0, minute=0, second=0) == start_date:
+                slice_r = slice_l + 336
+                fig, ax = plot_power_diff(
+                    hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=False
+                )
+                fig.savefig(
+                    os.path.join(
+                        PLOT_DIR,
+                        "power_usage_diff_2weeks_slicer{}{}.pdf".format(slice_r, args.save_suffix)
+                    )
+                )
+                to_plot_or_not_to_plot(args.batch)
+
+                break
 
 
 def parse_arguments():
