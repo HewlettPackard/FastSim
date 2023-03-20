@@ -714,5 +714,18 @@ class SlurmDataReader:
             )
         )
 
+        # XXX For ARCHER2
+        bad_reasons = [
+            "AssocMaxCpuMinutesPerJobLimit", "ReqNodeNotAvail", "BeginTime", "JobHeldUser",
+            "DependencyNeverSatisfied", "JobArrayTaskLimit"
+        ]
+        df_jobs.loc[(df_jobs.Reason.str.isin(bad_reasons)), "QOS"] = "standard"
+        df_jobs.Submit = df_jobs.apply(
+            lambda row: (
+                row.Start - timedelta(hours=6) if row.Reason in bad_reasons else row.Submit
+            ),
+            axis=1
+        )
+
         return df_jobs
 
