@@ -8,5 +8,5 @@ considered_partitions: ["standard"]
 
 approx_excess_assocs: 150
 
-hpe_restrictlongjobs_sliding_reservations: ""
+hpe_restrictlong_sliding_reservations: ""
 nodes_down_in_blades: True
