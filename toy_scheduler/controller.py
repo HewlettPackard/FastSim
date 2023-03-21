@@ -29,8 +29,6 @@ from data_reader import SlurmDataReader
 # processing) and just tell me which jobs I should be scheduling
 # Merge reservation jobs into the normal queue sort them so they get processed first
 
-# NOTE Make assumption that node names start with "nid" in a few places
-
 
 class Controller:
     def __init__(self, config_file):
@@ -256,7 +254,6 @@ class Controller:
                     previous_small_sched = self.time
                     small_sched_waiting_time = None
 
-            # print("{}: sched {} (small {}), bf {}, bf_loop_active {}, fairtree {} job_finished {} job submitted {}".format(self.time, sched, sched_depth is not None, bf, self.bf_loop_active, fairtree, self.time == self._next_job_finish(), self.time == self.queue.next_newjob()))
             self._step(sched, sched_depth, bf, fairtree)
             self.step_cnt += 1
 
