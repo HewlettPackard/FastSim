@@ -2,10 +2,12 @@ import os, argparse
 import datetime; from datetime import timedelta
 import dill as pickle
 from collections import defaultdict
+from itertools import cycle
 
 import matplotlib.dates
 from cycler import cycler
 from matplotlib import pyplot as plt
+from matplotlib import colors as mpl_colors
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes, mark_inset
 import numpy as np
 from tqdm import tqdm
@@ -21,6 +23,8 @@ from helpers import mkdir_p
 
 global bd_threshold
 bd_threshold = timedelta(minutes=10)
+
+plt.style.use('tableau-colorblind10')
 
 
 def to_plot_or_not_to_plot(batch):
@@ -583,18 +587,14 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-        cmap = plt.cm.viridis
-        cmap.set_under("w")
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax[0].pcolormesh(
-            bins_allocnodes, bins_bdslowdowns, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
-        im = ax[1].pcolormesh(
-            bins_allocnodes, bins_bdslowdowns, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
+        ax0 = ax[0].pcolormesh(bins_allocnodes, bins_bdslowdowns, h_data.T, vmin=0.05, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_allocnodes, bins_bdslowdowns, h_sim.T, vmin=0.05, vmax=1.0)
 
+        ax0.set_edgecolor("face")
+        ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
         ax[0].set_xlabel("Nodes")
@@ -605,10 +605,12 @@ def main(args):
         ax[1].set_xlabel("Nodes")
         ax[1].set_ylabel("Bounded Slowdown")
         ax[1].set_title("Sim")
-        plt.colorbar(im, extend="min")
+        cax = fig.add_axes([0.92, 0.06, 0.02, 0.84])
+        fig.colorbar(ax0, cax, orientation="vertical", extend="min")
 
         fig.savefig(
-            os.path.join(PLOT_DIR, "allocnodes_bdslowdowns_hist2d{}.pdf".format(args.save_suffix))
+            os.path.join(PLOT_DIR, "allocnodes_bdslowdowns_hist2d{}.pdf".format(args.save_suffix)),
+            bbox_inches="tight"
         )
         to_plot_or_not_to_plot(args.batch)
 
@@ -617,16 +619,14 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-        cmap = plt.cm.viridis
-        cmap.set_under("w")
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax[0].pcolormesh(bins_reqtime, bins_bdslowdowns, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap)
-        im = ax[1].pcolormesh(
-            bins_reqtime, bins_bdslowdowns, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
+        ax0 = ax[0].pcolormesh(bins_reqtime, bins_bdslowdowns, h_data.T, vmin=0.05, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_reqtime, bins_bdslowdowns, h_sim.T, vmin=0.05, vmax=1.0)
 
+        ax0.set_edgecolor("face")
+        ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
         ax[0].set_xlabel("Req Time (mins)")
@@ -637,10 +637,12 @@ def main(args):
         ax[1].set_xlabel("Req Time (mins)")
         ax[1].set_ylabel("Bounded Slowdown")
         ax[1].set_title("Sim")
-        plt.colorbar(im, extend="min")
+        cax = fig.add_axes([0.92, 0.06, 0.02, 0.84])
+        fig.colorbar(ax0, cax, orientation='vertical', extend="min")
 
         fig.savefig(
-            os.path.join(PLOT_DIR, "reqtime_bdslowdowns_hist2d{}.pdf".format(args.save_suffix))
+            os.path.join(PLOT_DIR, "reqtime_bdslowdowns_hist2d{}.pdf".format(args.save_suffix)),
+            bbox_inches="tight"
         )
         to_plot_or_not_to_plot(args.batch)
 
@@ -653,18 +655,14 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-        cmap = plt.cm.viridis
-        cmap.set_under("w")
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax[0].pcolormesh(
-            bins_allocnodes, bins_wait_times, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
-        im = ax[1].pcolormesh(
-            bins_allocnodes, bins_wait_times, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
+        ax0 = ax[0].pcolormesh(bins_allocnodes, bins_wait_times, h_data.T, vmin=0.05, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_allocnodes, bins_wait_times, h_sim.T, vmin=0.05, vmax=1.0)
 
+        ax0.set_edgecolor("face")
+        ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
         ax[0].set_xlabel("Nodes")
@@ -675,10 +673,12 @@ def main(args):
         ax[1].set_xlabel("Nodes")
         ax[1].set_ylabel("Wait (mins)")
         ax[1].set_title("Sim")
-        plt.colorbar(im, extend="min")
+        cax = fig.add_axes([0.92, 0.06, 0.02, 0.82])
+        fig.colorbar(ax0, cax, orientation='vertical', extend="min")
 
         fig.savefig(
-            os.path.join(PLOT_DIR, "allocnodes_wait_time_hist2d{}.pdf".format(args.save_suffix))
+            os.path.join(PLOT_DIR, "allocnodes_wait_time_hist2d{}.pdf".format(args.save_suffix)),
+            bbox_inches="tight"
         )
         to_plot_or_not_to_plot(args.batch)
 
@@ -687,18 +687,14 @@ def main(args):
         )
 
         fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-        cmap = plt.cm.viridis
-        cmap.set_under("w")
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax[0].pcolormesh(
-            bins_reqtime, bins_wait_times, h_data.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
-        im = ax[1].pcolormesh(
-            bins_reqtime, bins_wait_times, h_sim.T, vmin=h_min, vmax=1.0, cmap=cmap
-        )
+        ax0 = ax[0].pcolormesh(bins_reqtime, bins_wait_times, h_data.T, vmin=0.05, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_reqtime, bins_wait_times, h_sim.T, vmin=0.05, vmax=1.0)
 
+        ax0.set_edgecolor("face")
+        ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
         ax[0].set_xlabel("Req Time (mins)")
@@ -709,10 +705,13 @@ def main(args):
         ax[1].set_xlabel("Req Time (mins)")
         ax[1].set_ylabel("Wait (mins)")
         ax[1].set_title("Sim")
-        plt.colorbar(im, extend="min")
+        cax = fig.add_axes([0.92, 0.06, 0.02, 0.84])
+        # fig.colorbar(ax0, cax, orientation='vertical', extend="min")
+        fig.colorbar(ax0, cax, orientation='vertical')
 
         fig.savefig(
-            os.path.join(PLOT_DIR, "reqtime_wait_time_hist2d{}.pdf".format(args.save_suffix))
+            os.path.join(PLOT_DIR, "reqtime_wait_time_hist2d{}.pdf".format(args.save_suffix)),
+            bbox_inches="tight"
         )
         to_plot_or_not_to_plot(args.batch)
 
@@ -723,7 +722,7 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
-        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
         ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
         ax.set_xticks(x, top_projs)
         ax.legend()
@@ -740,7 +739,7 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
-        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
         ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
         ax.set_xticks(x, top_accs)
         ax.legend()
@@ -757,7 +756,7 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
-        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
         ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
         ax.set_xticks(x, top_usr)
         ax.legend()
@@ -791,7 +790,7 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
-        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
         ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
         ax.set_xticks(x, sorted_qos)
         ax.legend()
@@ -811,7 +810,7 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
-        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data")
+        data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
         ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
         ax.set_xticks(x, sorted_partition)
         ax.legend()
@@ -872,20 +871,21 @@ def main(args):
 
             ax_big = fig.add_axes((.1, .32, .8, .58))
             ax_big.plot_date(
-                hour_dates, sim_mean_wait_times_rolling_window, 'b', label="Sim", linewidth=1
+                hour_dates, sim_mean_wait_times_rolling_window, 'C0', label="Sim", linewidth=1.2
             )
             ax_big.plot_date(
-                hour_dates, data_mean_wait_times_rolling_window, 'k', label="Data", linewidth=1
+                hour_dates, data_mean_wait_times_rolling_window, 'C3', label="Data", linewidth=1.2
             )
 
             plt.legend()
 
             ax_small = fig.add_axes((.1, .1, .8, .2))
             ax_small.plot_date(
-                hour_dates, sim_mean_wait_times_rolling_window_err, 'b', label="_", linewidth=1
+                hour_dates, sim_mean_wait_times_rolling_window_err, 'C0', label="_", linewidth=1.2
             )
             ax_small.plot_date(
-                hour_dates, data_mean_wait_times_rolling_window_err, 'k', label="_", linewidth=1
+                hour_dates, data_mean_wait_times_rolling_window_err,
+                'C3', label="_", linewidth=1.2
             )
 
             ax_big.set_ylabel("Mean Wait Time")
@@ -908,7 +908,7 @@ def main(args):
         ):
             ax.plot_date(hour_dates, sim_mean_wait_times_rolling_window, "-", label=label)
         if not args.no_data_comparison:
-            ax.plot_date(hour_dates, data_mean_wait_times_rolling_window, "k-", label="Data")
+            ax.plot_date(hour_dates, data_mean_wait_times_rolling_window, "k--", label="Data")
 
         ax.set_ylabel("Mean Wait Time")
         ax.set_ylim(bottom=0.0)
@@ -961,20 +961,23 @@ def main(args):
 
             ax_big = fig.add_axes((.1, .32, .8, .58))
             ax_big.plot_date(
-                hour_dates, sim_mean_bdslowdowns_rolling_window, 'b', label="Sim", linewidth=1
+                hour_dates, sim_mean_bdslowdowns_rolling_window, 'C0', label="Sim", linewidth=1.2
             )
             ax_big.plot_date(
-                hour_dates, data_mean_bdslowdowns_rolling_window, 'k', label="Data", linewidth=1
+                hour_dates, data_mean_bdslowdowns_rolling_window,
+                'C3', label="Data", linewidth=1.2
             )
 
             plt.legend()
 
             ax_small = fig.add_axes((.1, .1, .8, .2))
             ax_small.plot_date(
-                hour_dates, sim_mean_bdslowdowns_rolling_window_err, 'b', label="_", linewidth=1
+                hour_dates, sim_mean_bdslowdowns_rolling_window_err,
+                'C0', label="_", linewidth=1.2
             )
             ax_small.plot_date(
-                hour_dates, data_mean_bdslowdowns_rolling_window_err, 'k', label="_", linewidth=1
+                hour_dates, data_mean_bdslowdowns_rolling_window_err,
+                'C3', label="_", linewidth=1.2
             )
 
             ax_big.set_ylabel("Mean Bounded Slowdown")
@@ -1000,7 +1003,7 @@ def main(args):
         ):
             ax.plot_date(hour_dates, sim_mean_bdslowdowns_rolling_window, "-", label=label)
         if not args.no_data_comparison:
-            ax.plot_date(hour_dates, data_mean_bdslowdowns_rolling_window, "k-", label="Data")
+            ax.plot_date(hour_dates, data_mean_bdslowdowns_rolling_window, "k--", label="Data")
 
         ax.set_ylabel("Mean Bounded Slowdown")
         ax.set_ylim(bottom=1.0)
@@ -1051,11 +1054,8 @@ def main(args):
             qos_data_mean_bdslowdowns_rolling_window[qos] = means
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-        my_cycler = (
-            cycler(color=[
-                "r", "r", "g", "g", "b", "b", "c", "c", "m", "m", "y", "y", "tab:orange",
-                "tab:orange"
-            ])
+        color_cycle = cycle(
+            ("C0", "C0", "C1", "C1", "C2", "C2", "C3", "C3", "C4", "C4", "C5", "C5", "C6", "C6")
         )
 
         # ax.plot_date(
@@ -1064,16 +1064,17 @@ def main(args):
         # ax.plot_date(
         #     hour_dates, qos_data_mean_wait_times_rolling_window.pop("all"), fmt="--k", label="_"
         # )
-        ax.set_prop_cycle(my_cycler)
         for qos in qos_sim_mean_wait_times_rolling_window:
             sim_mean_wait_times_rolling_window = qos_sim_mean_wait_times_rolling_window[qos]
             data_mean_wait_times_rolling_window = qos_data_mean_wait_times_rolling_window[qos]
 
             ax.plot_date(
-                hour_dates, qos_sim_mean_wait_times_rolling_window[qos], fmt="-", label=qos
+                hour_dates, qos_sim_mean_wait_times_rolling_window[qos],
+                fmt="-" + next(color_cycle), label=qos
             )
             ax.plot_date(
-                hour_dates, qos_data_mean_wait_times_rolling_window[qos], fmt="--", label="_"
+                hour_dates, qos_data_mean_wait_times_rolling_window[qos],
+                fmt="--" + next(color_cycle), label="_"
             )
 
         ax.set_ylabel("Mean Wait Time", fontsize=18)
@@ -1132,8 +1133,8 @@ def main(args):
         max_wait = max(max_wait_sim, max_wait_data)
 
         for qos, a in zip(qos_sim_mean_wait_times_rolling_window_6, ax.flatten()):
-            a.plot_date(hour_dates, qos_sim_mean_wait_times_rolling_window_6[qos], fmt='-b')
-            a.plot_date(hour_dates, qos_data_mean_wait_times_rolling_window_6[qos], fmt='-k')
+            a.plot_date(hour_dates, qos_sim_mean_wait_times_rolling_window_6[qos], fmt='-C0')
+            a.plot_date(hour_dates, qos_data_mean_wait_times_rolling_window_6[qos], fmt='-C3')
 
             a.set_ylim(0.9 * min_wait, 1.1 * max_wait)
             a.set_xticklabels([])
@@ -1150,6 +1151,9 @@ def main(args):
         to_plot_or_not_to_plot(args.batch)
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        color_cycle = cycle(
+            ("C0", "C0", "C1", "C1", "C2", "C2", "C3", "C3", "C4", "C4", "C5", "C5", "C6", "C6")
+        )
 
         # ax.plot_date(
         #     hour_dates, qos_sim_mean_bdslowdowns_rolling_window.pop("all"), fmt="-k", label="all"
@@ -1157,16 +1161,17 @@ def main(args):
         # ax.plot_date(
         #     hour_dates, qos_data_mean_bdslowdowns_rolling_window.pop("all"), fmt="--k", label="_"
         # )
-        ax.set_prop_cycle(my_cycler)
         for qos in qos_sim_mean_bdslowdowns_rolling_window:
             sim_mean_bdslowdowns_rolling_window = qos_sim_mean_bdslowdowns_rolling_window[qos]
             data_mean_bdslowdowns_rolling_window = qos_data_mean_bdslowdowns_rolling_window[qos]
 
             ax.plot_date(
-                hour_dates, qos_sim_mean_bdslowdowns_rolling_window[qos], fmt="-", label=qos
+                hour_dates, qos_sim_mean_bdslowdowns_rolling_window[qos],
+                fmt="-" + next(color_cycle), label=qos
             )
             ax.plot_date(
-                hour_dates, qos_data_mean_bdslowdowns_rolling_window[qos], fmt="--", label="_"
+                hour_dates, qos_data_mean_bdslowdowns_rolling_window[qos],
+                fmt="--" + next(color_cycle), label="_"
             )
 
         ax.set_ylabel("Mean Bounded Slowdown", fontsize=18)
@@ -1219,10 +1224,10 @@ def main(args):
 
         for partition, a in zip(partition_sim_mean_wait_times_rolling_window, ax.flatten()):
             a.plot_date(
-                hour_dates, partition_sim_mean_wait_times_rolling_window[partition], fmt='-b'
+                hour_dates, partition_sim_mean_wait_times_rolling_window[partition], fmt='-C0'
             )
             a.plot_date(
-                hour_dates, partition_data_mean_wait_times_rolling_window[partition], fmt='-k'
+                hour_dates, partition_data_mean_wait_times_rolling_window[partition], fmt='-C3'
             )
 
             a.set_ylim(0.9 * min_wait, 1.1 * max_wait)
@@ -1246,8 +1251,8 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
 
-        ax.plot_date(sim_minutes, sim_alloc_nodes, 'g', label="Sim", linewidth=0.75, alpha=0.8)
-        ax.plot_date(data_minutes, data_alloc_nodes, 'r', label="Data", linewidth=0.75, alpha=0.8)
+        ax.plot_date(sim_minutes, sim_alloc_nodes, "C0", label="Sim", linewidth=0.75, alpha=0.8)
+        ax.plot_date(data_minutes, data_alloc_nodes, "C1", label="Data", linewidth=0.75, alpha=0.8)
 
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Number of Allocated Nodes", fontsize=18)
@@ -1274,8 +1279,8 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
 
-        ax.plot_date(sim_minutes, sim_q_length, 'g', label="Sim", linewidth=0.5)
-        ax.plot_date(data_minutes, data_q_length, 'r', label="Data", linewidth=0.5)
+        ax.plot_date(sim_minutes, sim_q_length, "C0", label="Sim", linewidth=0.5)
+        ax.plot_date(data_minutes, data_q_length, "C1", label="Data", linewidth=0.5)
 
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Queue Size (Jobs)", fontsize=18)
@@ -1287,8 +1292,8 @@ def main(args):
 
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
 
-        ax.plot_date(sim_minutes, sim_q_length_nodes, 'g', label="Sim", linewidth=0.5)
-        ax.plot_date(data_minutes, data_q_length_nodes, 'r', label="Data", linewidth=0.5)
+        ax.plot_date(sim_minutes, sim_q_length_nodes, "C0", label="Sim", linewidth=0.5)
+        ax.plot_date(data_minutes, data_q_length_nodes, "C1", label="Data", linewidth=0.5)
 
         ax.set_xlabel("Date (minute resolution)", fontsize=18)
         ax.set_ylabel("Queue Size (Nodes)", fontsize=18)
