@@ -1622,7 +1622,7 @@ def parse_arguments():
             "(bdslowdowns_hist2d|wait_times_hist2d|top_projs|top_qccounts|top_users|qos_waits|"
             "partition_waits|rolling_window|rolling_window_qos|cumulative_throughput|"
             "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics|"
-            "spider_mean_wait_qos|power_usage)\n"
+            "spider_mean_wait_qos|power|power_diff)\n"
             "Plots that work for multiple experiments:\n"
             "(rolling_window|spider_mean_metrics|spider_mean_wait_qos)"
         )
