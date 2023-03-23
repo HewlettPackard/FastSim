@@ -485,6 +485,18 @@ class SlurmDataReader:
             lambda row: row.ReqNodes if row.AllocNodes == 0 else row.AllocNodes, axis=1
         )
 
+        # XXX ARCHER2 specific
+        # Some error in slurm accounting, can correct for case of one other user in account
+        num_broken, num_fixed = len(df_jobs.loc[(df_jobs.User == "00:00:00")]), 0
+        for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
+            acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
+            if len(acc_users) == 2:
+                num_fixed += 1
+                df_jobs.at[i, "User"] = (
+                    acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
+                )
+        print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
+
         num_bad = len(
             df_jobs.loc[
                 (~df_jobs.State.str.contains("CANCELLED")) &
