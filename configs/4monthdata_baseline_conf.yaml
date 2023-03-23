@@ -8,7 +8,7 @@ considered_partitions: ["standard", "highmem"]
 
 approx_excess_assocs: 1200
 
-hpe_restrictlong_sliding_reservations: "dynamic"
+hpe_restrictlong_sliding_reservations: "/work/y02/y02/awilkins/data/HPE_Res_nids.txt"
 
 bf_max_job_test: 1000
 bf_window: 5760
