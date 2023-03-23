@@ -280,7 +280,19 @@ class SlurmDataReader:
                         continue
 
                     # Nodes go down in sets of 4 like this
-                    nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
+                    nid_prefix = re.sub("[!^0-9]", "", nid)
+                    nid_num_str = re.sub("[^0-9]", "", nid)
+                    digits, nid_num = len(nid_num_str), int(nid_num_str)
+
+                    nids = {
+                        str(nid) for nid in range(nid_num - nid_num % 4, nid_num - nid_num % 4 + 4)
+                    }
+                    for nid in list(nids):
+                        nids.remove(nid)
+                        while len(nid) < digits:
+                            nid = "0" + nid
+                        nid = nid_prefix + nid
+                        nids.add(nid)
 
                     first_submit = (
                         down_schedule[0].replace(minute=0, second=0) -
@@ -399,6 +411,7 @@ class SlurmDataReader:
                 nid_num_from_blade = []
 
                 for nid in nids:
+                    print(nid)
                     blade_nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
                     num_from_blade = len(blade_nids.intersection(nids))
 
