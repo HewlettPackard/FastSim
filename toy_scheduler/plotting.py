@@ -17,7 +17,6 @@ from controller import Controller
 from fairshare import FairTree
 from helpers import mkdir_p
 
-
 # TODO
 # - Total power usage plots
 
@@ -205,6 +204,10 @@ def rolling_window(job_history, job_to_metric, hours, window_hrs, data=False):
         job_to_hour = lambda job: job.true_submit.replace(minute=0, second=0)
     else:
         job_to_hour = lambda job: job.submit.replace(minute=0, second=0)
+
+    # job_to_hour = lambda job: job.true_submit.replace(minute=0, second=0)
+
+    # NOTE wait_time stand in for any metric
 
     submit_hour_waits = defaultdict(list)
     for job in job_history:
@@ -441,20 +444,40 @@ def slurm_to_cab(slurm_power, occupancy): # MW, [0,1]
     return slurm_power * full_slurm_to_cab + (1 - occupancy) * baseline_power
 
 
-def power_usage(times, job_history, max_nodes):
+def power_usage(times, job_history, max_nodes, data=False):
     power, nodes = np.zeros_like(times, dtype=float), np.zeros_like(times, dtype=int)
     tick = 0
 
-    for job in job_history:
-        while job.end > times[tick]:
-            tick += 1
+    if not data:
+        for job in job_history:
+            while job.end > times[tick]:
+                tick += 1
 
-        prev_tick = tick - 1
+            prev_tick = tick - 1
 
-        while job.start <= times[prev_tick]:
-            power[prev_tick] += job.true_node_power * job.nodes
-            nodes[prev_tick] += job.nodes
-            prev_tick -= 1
+            while job.start <= times[prev_tick]:
+                power[prev_tick] += job.true_node_power * job.nodes
+                nodes[prev_tick] += job.nodes
+                prev_tick -= 1
+
+    else:
+        trueend_sorted_job_history = sorted(
+            job_history, key=lambda job: job.true_job_start + job.runtime
+        )
+
+        for job in trueend_sorted_job_history:
+            if job.true_job_start + job.runtime > times[-1]:
+                continue
+
+            while job.true_job_start + job.runtime > times[tick]:
+                tick += 1
+
+            prev_tick = tick - 1
+
+            while job.true_job_start <= times[prev_tick]:
+                power[prev_tick] += job.true_node_power * job.nodes
+                nodes[prev_tick] += job.nodes
+                prev_tick -= 1
 
     power /= 1e+6 # MW
 
@@ -464,7 +487,10 @@ def power_usage(times, job_history, max_nodes):
     return power
 
 
-def plot_power_diff(hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=True):
+def plot_power_diff(
+    hours, hour_dates, power_baseline, power_exp, slice_l, slice_r,
+    vlines=True, title=None, legend_labels=None
+):
     hour_dates_slice = hour_dates[slice_l:slice_r]
     power_baseline_slice = power_baseline[slice_l:slice_r]
     power_exp_slice = power_exp[slice_l:slice_r]
@@ -489,21 +515,24 @@ def plot_power_diff(hours, hour_dates, power_baseline, power_exp, slice_l, slice
         vsp_peak = ax.axvspan(
             matplotlib.dates.date2num(day + timedelta(hours=11)),
             matplotlib.dates.date2num(day + timedelta(hours=16)),
-            color="gray",
-            alpha=0.3
+            color="gray", alpha=0.3
         )
         if vlines:
             ax.vlines(
                 matplotlib.dates.date2num(day + timedelta(hours=9)),
-                ymin=0, ymax=1.1 * power_baseline_slice.max(),
-                color="b"
+                ymin=0, ymax=1.1 * power_baseline_slice.max(), color="b"
             )
         day += timedelta(days=1)
 
+    if title is None:
+        title = "Difference between power usage for Experiment and Baseline (sampled hourly)"
+    if legend_labels is None:
+        legend_labels = ["Baseline > Experiment", "Experiment > Baseline", "11am - 4pm"]
+
     ax.set_ylim(0.9 * power_baseline_slice.min(), 1.1 * power_baseline_slice.max())
     ax.set_ylabel("Power (MW)")
-    plt.title("Difference between power usage for Experiment and Baseline (sampled hourly)", fontsize=14)
-    plt.legend([fb_baseline_higher, fb_exp_higher, vsp_peak], ["Baseline > Experiment", "Experiment > Baseline", "11am - 4pm"], fontsize=14)
+    plt.title(title, fontsize=14)
+    plt.legend([fb_baseline_higher, fb_exp_higher, vsp_peak], legend_labels, fontsize=14)
 
     fig.tight_layout()
 
@@ -850,7 +879,7 @@ def main(args):
                     (60 * 60)
                 )
             )
-        ]
+        ][48:-48]
         window_hrs = int(args.rolling_window_days * 24)
 
         # Rolling window mean wait time
@@ -874,7 +903,24 @@ def main(args):
             data_mean_wait_times_rolling_window = means
             data_mean_wait_times_rolling_window_err = errs
 
-        hour_dates = matplotlib.dates.date2num([ hour + timedelta(days=7) for hour in hours ])
+        hour_dates = matplotlib.dates.date2num(
+            [ hour + timedelta(hours=int(window_hrs * 2)) for hour in hours ]
+        )
+
+        for label, sim_means in zip(args.labels, sims_mean_wait_times_rolling_window):
+            print(label + ":")
+            mae = np.abs((sim_means - data_mean_wait_times_rolling_window)).sum() / sim_means.size
+            print("MAE for {} day rolling window = {} hr".format(args.rolling_window_days, mae))
+            zero_mask = (data_mean_wait_times_rolling_window != 0)
+            mape = (
+                np.abs(
+                    (sim_means[zero_mask] - data_mean_wait_times_rolling_window[zero_mask]) /
+                    data_mean_wait_times_rolling_window[zero_mask]
+                ).sum() /
+                sim_means[zero_mask].size
+            )
+            mape *= 100
+            print("MAPE for {} day rolling window = {} %".format(args.rolling_window_days, mape))
 
         # The plot with the error band will be horrible for multiple experiments at once
         if len(sims_mean_wait_times_rolling_window) == 1:
@@ -1370,7 +1416,7 @@ def main(args):
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title(
             (
-                r"$\mathrm{metric}_{\mathrm{Baseline}}/$" + 
+                r"$\mathrm{metric}_{\mathrm{Baseline}}/$" +
                 r"$\mathrm{metric}_{\mathrm{Experiment}}$ for all jobs"
             ),
             fontsize=16
@@ -1459,7 +1505,7 @@ def main(args):
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title(
             (
-                r"$\mathrm{mean(waits)}_{\mathrm{Baseline}}/$" + 
+                r"$\mathrm{mean(waits)}_{\mathrm{Baseline}}/$" +
                 r"$\mathrm{mean(waits)}_{\mathrm{Experiment}}$ by job QOS"
             ),
             fontsize=16
@@ -1602,6 +1648,58 @@ def main(args):
 
                 break
 
+    if "power_diff_data" in args.plots:
+        if len(job_histories) != 1:
+            raise NotImplementedError
+
+        hours = [
+            controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
+            for hr in range(
+                int((controller.times[-1] - controller.times[0]).total_seconds() / 60 / 60) + 1
+            )
+        ]
+        hours = np.array(hours)
+
+        power_data = power_usage(hours, job_history, len(controller.partitions.nodes), data=True)
+        power_sim = power_usage(hours, job_history, len(controller.partitions.nodes))
+
+        hour_dates = matplotlib.dates.date2num(hours)
+
+        slice_r = len(hour_dates) - 336
+        while slice_r > 336:
+            slice_l = slice_r - 336
+
+            fig, ax = plot_power_diff(
+                hours, hour_dates, power_data, power_sim, slice_l, slice_r,
+                vlines=False,
+                title=(
+                    "Difference between power usage for Simulation and Experiment"
+                    "(sampled hourly)"
+                ),
+                legend_labels=["Data > Experiment", "Simulation > Data", "11am - 4pm"]
+            )
+            fig.savefig(
+                os.path.join(
+                    PLOT_DIR,
+                    "power_usage_diff_data_2weeks_slicer{}{}.pdf".format(slice_r, args.save_suffix)
+                )
+            )
+            to_plot_or_not_to_plot(args.batch)
+
+            slice_r -= 336
+
+        fig, ax = plot_power_diff(
+            hours, hour_dates, power_data, power_sim, None, None,
+            vlines=False,
+            title=(
+                "Difference between power usage for Simulation and Experiment"
+                "(sampled hourly)"
+            ),
+            legend_labels=["Data > Experiment", "Simulation > Data", "11am - 4pm"]
+        )
+        fig.savefig(os.path.join(PLOT_DIR, "power_usage_diff_data{}.pdf".format(args.save_suffix)))
+        to_plot_or_not_to_plot(args.batch)
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -1622,7 +1720,7 @@ def parse_arguments():
             "(bdslowdowns_hist2d|wait_times_hist2d|top_projs|top_qccounts|top_users|qos_waits|"
             "partition_waits|rolling_window|rolling_window_qos|cumulative_throughput|"
             "total_allocnodes_timeseries|queue_size_timeseries|spider_mean_metrics|"
-            "spider_mean_wait_qos|power|power_diff)\n"
+            "spider_mean_wait_qos|power|power_diff|power_diff_data)\n"
             "Plots that work for multiple experiments:\n"
             "(rolling_window|spider_mean_metrics|spider_mean_wait_qos)"
         )
