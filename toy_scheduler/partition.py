@@ -18,8 +18,10 @@ class Partitions:
         self.partitions_by_name = { partition.name : partition for partition in self.partitions }
 
         self.nodes = set()
-        for nid, data in nid_data.items():
-            node = Node(nid, data["weight"], data["down_schedule"], data["resv_schedule"])
+
+        # Use a reproducible integer id rather than string, might save some time in sorting algos
+        for i_nid, (nid, data) in enumerate(sorted(nid_data.items())):
+            node = Node(nid, i_nid, data["weight"], data["down_schedule"], data["resv_schedule"])
             for p_name in data["partitions"]:
                 self.partitions_by_name[p_name].add_node(node)
             self.nodes.add(node)
@@ -158,8 +160,9 @@ class Partition:
 
 
 class Node:
-    def __init__(self, num, weight, down_schedule, reservation_schedule):
-        self.id = num
+    def __init__(self, name, hash_id, weight, down_schedule, reservation_schedule):
+        self.id = name
+        self.hash_id = hash_id
         self.weight = weight
 
         self.free = True
@@ -188,11 +191,11 @@ class Node:
         self.bf_free_blocks_start = None
 
     def __hash__(self):
-        return hash(self.id)
+        return self.hash_id
 
     def __eq__(self, other):
         if isinstance(other, Node):
-            return self.id == other.id
+            return self.hash_id == other.hash_id
         return False
 
     def set_reserved(self, reservation_name, end_time):

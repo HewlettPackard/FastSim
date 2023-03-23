@@ -1,4 +1,4 @@
-import re
+import re, sys
 from collections import defaultdict
 import datetime; from datetime import timedelta
 from copy import deepcopy
@@ -350,147 +350,30 @@ class SlurmDataReader:
                     ]:
                         hpe_restrictlong_nids[prev_submit_hr].update(blade_nids)
 
-        elif hpe_restrictlong_sliding_res != "": # file path to time - num nodes file
-            # Fill with nodes that go down with certain reasons
-            hpe_restrictlong_nids = defaultdict(set)
-            for nid, data in nid_data.items():
-                if not data["down_schedule"] or nid in hpe_restrictlong_nids:
-                    continue
-
-                for down_schedule in data["down_schedule"]:
-                    if down_schedule[2] == "DOWN":
-                        continue
-
-                    reason_prefix = down_schedule[3].split(" ")[0]
-
-                    if not reason_prefix.isupper():
-                        continue
-
-                    first_submit = (
-                        down_schedule[0].replace(minute=0, second=0) - timedelta(minutes=5)
-                    )
-                    for submit_hr in range(int(down_schedule[1] / timedelta(hours=1)) + 2):
-                        hpe_restrictlong_nids[
-                            first_submit + timedelta(hours=submit_hr)
-                        ].add(nid)
-
+        elif hpe_restrictlong_sliding_res != "": # file path to time - num nodes - node ids file
             # Load and clean actual hpe long num nodes data
-            df_num_hpelong = pd.read_csv(
+            df_hpelong = pd.read_csv(
                 hpe_restrictlong_sliding_res,  delimiter=' ', lineterminator='\n',
-                names=["Time", "NNodes"], encoding="ISO-8859-1"
+                names=["Time", "NNodes", "NodeIDs"], encoding="ISO-8859-1"
             )
 
-            time_nnodes = defaultdict(int)
-            for _, row in df_num_hpelong.iterrows():
+            hpe_restrictlong_nids = defaultdict(set)
+
+            for _, row in df_hpelong.iterrows():
                 t = datetime.datetime.strptime(row.Time, "%Y-%m-%dT%H:%M:%S").replace(
                     minute=0, second=0
                 )
-                time_nnodes[t] = max(int(row.NNodes), time_nnodes[t])
+                hpe_restrictlong_nids[t].update(
+                    convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
+                )
 
-            t_i = min(hpe_restrictlong_nids) + timedelta(minutes=5)
-            t_f = max(hpe_restrictlong_nids) + timedelta(minutes=5)
-            time_nnodes = {
-                time : nnodes
-                for time, nnodes in time_nnodes.items()
-                    if time <= t_f
-            }
+            t_f = max(hpe_restrictlong_nids)
 
-            for time in list(time_nnodes):
+            for time in list(hpe_restrictlong_nids):
                 later_time = time + timedelta(hours=1)
-                while later_time not in time_nnodes and later_time <= t_f:
-                    time_nnodes[later_time] = time_nnodes[time]
+                while later_time not in hpe_restrictlong_nids and later_time <= t_f:
+                    hpe_restrictlong_nids[later_time] = hpe_restrictlong_nids[time]
                     later_time += timedelta(hours=1)
-
-            time_nnodes = {
-                time : nnodes
-                for time, nnodes in time_nnodes.items()
-                    if time >= t_i
-            }
-
-            for submit_hr, nids in hpe_restrictlong_nids.items():
-                nid_num_from_blade = []
-
-                for nid in nids:
-                    print(nid)
-                    blade_nids = { nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
-                    num_from_blade = len(blade_nids.intersection(nids))
-
-                    if any((nid, num_from_blade) in nid_num_from_blade for nid in blade_nids):
-                        continue
-
-                    nid_num_from_blade.append((nid, num_from_blade))
-
-                nid_num_from_blade.sort(key=lambda nid_num: nid_num[1])
-
-                # If needed, add extra nodes to reservation from blades with the most nodes down at
-                # this hour
-                while (
-                    nid_num_from_blade and
-                    len(nids) < time_nnodes[submit_hr + timedelta(minutes=5)]
-                ):
-                    nid, _ = nid_num_from_blade.pop()
-
-                    nids.update({ nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) })
-
-                nid_num_from_blade.sort(key=lambda nid_num: nid_num[1], reverse=True)
-
-                # If needed, remove extra nodes from reservation from blades with the leasts nodes
-                # down at this hour
-                while (
-                    nid_num_from_blade and
-                    len(nids) > time_nnodes[submit_hr + timedelta(minutes=5)]
-                ):
-                    nid, _ = nid_num_from_blade.pop()
-                    nids -= {  nid for nid in range(nid - nid % 4, nid - nid % 4 + 4) }
-
-            # Now put nodes into the reservation at earlier times to make up any remaining
-            # difference
-            rev_submit_hrs = sorted(hpe_restrictlong_nids, reverse=True)
-            for prev_submit_hr, submit_hr in zip(rev_submit_hrs[1:], rev_submit_hrs[:-1]):
-                new_nids = list(
-                    hpe_restrictlong_nids[submit_hr] - hpe_restrictlong_nids[prev_submit_hr]
-                )
-                for new_nid in new_nids[
-                    :max(
-                        (
-                            time_nnodes[prev_submit_hr + timedelta(minutes=5)] -
-                            len(hpe_restrictlong_nids[prev_submit_hr])
-                        ),
-                        0
-                    )
-                ]:
-                    hpe_restrictlong_nids[prev_submit_hr].add(new_nid)
-
-            # Now keep nodes into the reservation until later times to make up any remaining
-            # difference
-            submit_hrs = sorted(hpe_restrictlong_nids)
-            for next_submit_hr, submit_hr in zip(submit_hrs[1:], submit_hrs[:-1]):
-                new_nids = list(
-                    hpe_restrictlong_nids[submit_hr] - hpe_restrictlong_nids[next_submit_hr]
-                )
-                for new_nid in new_nids[
-                    :max(
-                        (
-                            time_nnodes[next_submit_hr + timedelta(minutes=5)] -
-                            len(hpe_restrictlong_nids[next_submit_hr])
-                        ),
-                        0
-                    )
-                ]:
-                    hpe_restrictlong_nids[next_submit_hr].add(new_nid)
-
-            # Fill any remaining differences with nodes from the first hours
-            for submit_hr in submit_hrs:
-                target_nids = time_nnodes[submit_hr + timedelta(minutes=5)]
-                for submit_hr_start in submit_hrs:
-                    if len(hpe_restrictlong_nids[submit_hr]) == target_nids:
-                        break
-
-                    for nid in hpe_restrictlong_nids[submit_hr_start]:
-                        if len(hpe_restrictlong_nids[submit_hr]) == target_nids:
-                            break
-
-                        hpe_restrictlong_nids[submit_hr].add(nid)
 
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point
@@ -743,12 +626,14 @@ class SlurmDataReader:
             "DependencyNeverSatisfied", "JobArrayTaskLimit"
         ]
         df_jobs.loc[(df_jobs.Reason.isin(bad_reasons)), "QOS"] = "standard"
+        max_submit = df_jobs.Submit.max()
         df_jobs.Submit = df_jobs.apply(
             lambda row: (
                 row.Start - timedelta(hours=6) if row.Reason in bad_reasons else row.Submit
             ),
             axis=1
         )
+        df_jobs = df_jobs.loc[(df_jobs.Submit <= max_submit)]
 
         return df_jobs
 

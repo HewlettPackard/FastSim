@@ -159,7 +159,9 @@ class Controller:
                     submitted + timedelta(days=365, hours=1, minutes=5),
                     [ nid_to_node[nid] for nid in hpe_restrictlong[submitted] ],
                     "HPE_RestrictLongJobs"
-                ] for submitted in sorted(hpe_restrictlong)
+                ]
+                for submitted in sorted(hpe_restrictlong)
+                    if submitted >= self.init_time - timedelta(hours=1)
             ]
             self.sliding_reservations.sort(key=lambda res: res[0], reverse=True)
 
