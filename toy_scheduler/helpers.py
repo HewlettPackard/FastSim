@@ -13,22 +13,54 @@ def convert_nodelist_to_node_nums(nid_str):
     if nid_str == "dummy":
         return -1
     node_nums = []
+    
+    # There is surely a thick regex to do this that I can't comprehend
+    entry_slice_points = [-1]
+    in_brackets = False
 
-    nid_str = nid_str.strip("nid").strip("[").strip("]")
-    for nid_str_entry in nid_str.split(","):
-        if "-" not in nid_str_entry:
-            if "[" in nid_str_entry:
-                 nid_str_entry = "".join(nid_str_entry.split("["))
-            node_nums.append(int(nid_str_entry))
+    for i_char, char in enumerate(nid_str):
+        if char == "[":#]
+            in_brackets = True
+        elif char == "]":
+            in_brackets = False
+        elif not in_brackets and char == ",":
+            entry_slice_points.append(i_char)
+
+    entry_slice_points.append(None)
+
+    for slice_l, slice_r in zip(entry_slice_points[:-1], entry_slice_points[1:]):
+        nid_str_entry = nid_str[slice_l+1:slice_r]
+        
+        # name001
+        if "[" not in nid_str_entry:#]
+            node_nums.append(nid_str_entry)
             continue
 
-        nid_str_range = nid_str_entry.split("-")
-        if "[" in nid_str_range[0]:
-             prefix = nid_str_range[0].split("[")[0]
-             nid_str_range[0] = prefix + nid_str_range[0].split("[")[1]
-             nid_str_range[1] = prefix + nid_str_range[1]
-        for node_num in range(int(nid_str_range[0]), int(nid_str_range[1]) + 1):
-            node_nums.append(node_num)
+        if nid_str_entry.count("[") >= 2:#]
+            raise NotImplementedError(
+                "Mulitple numeric ranges like {} not implemented".format(nid_str)
+            )
+
+        # name00[1-4,10,12,13-20]
+        nid_prefix = nid_str_entry.split("[")[0]#]
+        nid_suffix_str = nid_str_entry.strip("]").split("[")[1]#]
+
+        for nid_suffix_entry in nid_suffix_str.split(","):
+            if "-" not in nid_suffix_entry:
+                node_nums.append(nid_prefix + nid_suffix_entry)
+                continue
+
+            nid_suffix_range = nid_suffix_entry.split("-")
+            digits = len(nid_suffix_range[0]) if nid_suffix_range[0].startswith("0") else None
+
+            for node_num in range(int(nid_suffix_range[0]), int(nid_suffix_range[1]) + 1):
+                node_num = str(node_num)
+
+                if digits is not None:
+                    while len(node_num) < digits:
+                        node_num = "0" + node_num
+
+                node_nums.append(nid_prefix + node_num)
 
     return node_nums
 

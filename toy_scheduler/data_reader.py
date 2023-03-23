@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 import datetime; from datetime import timedelta
 from copy import deepcopy
@@ -25,10 +26,7 @@ class SlurmDataReader:
             usecols=["NodeName", "TimeStart", "TimeEnd", "State", "Reason"]
         )
         df_events = df_events.loc[
-            (
-                (df_events.NodeName.notna()) & (df_events.NodeName.str.contains("nid")) &
-                (df_events.TimeStart != "Unknown")
-            )
+            ((df_events.NodeName.notna()) & (df_events.TimeStart != "Unknown"))
         ]
 
         df_events.TimeStart = pd.to_datetime(df_events.TimeStart, format="%Y-%m-%dT%H:%M:%S")
@@ -36,7 +34,7 @@ class SlurmDataReader:
         df_events.TimeEnd = pd.to_datetime(df_events.TimeEnd, format="%Y-%m-%dT%H:%M:%S")
         df_events["Duration"] = df_events.apply(lambda row: (row.TimeEnd - row.TimeStart), axis=1)
         df_events.State = df_events.State.apply(lambda row: "DRAIN" if "DRAIN" in row else "DOWN")
-        df_events["Id"] = df_events.NodeName.apply(lambda row: int(row.split("nid")[1]))
+        df_events["Id"] = df_events.NodeName
 
         # NOTE Not considering any reservation flags
         df_resv = pd.read_csv(
@@ -55,25 +53,28 @@ class SlurmDataReader:
         partition_data = {}
         nid_features, nodesets, nid_partitions, nid_weight = {}, {}, defaultdict(set), {}
 
+        # TODO Could probably look nice with more regex and less split spam
         with open(self.slurm_conf, "r") as f:
             for line in f:
-                if not line.startswith("NodeName"):
+                if not bool(re.match("nodename=", line, flags=re.I)):
                     continue
                 line = line.strip("\n")
 
-                # NOTE Just assuming all node names start with nid since I don't have time to do
-                # this properly. For archer and lumi this is fine.
-                if "nid" not in line.split("NodeName=")[1].split(" ")[0]:
-                    continue
+                nids = convert_nodelist_to_node_nums(
+                    re.split("nodename=", line, flags=re.I)[1].split(" ")[0]
+                )
 
-                nids = convert_nodelist_to_node_nums(line.split("NodeName=")[1].split(" ")[0])
+                if not bool(re.search("feature=", line, flags=re.I)):
+                    features = set()
+                else:
+                    features = set(
+                        re.split("feature=", line, flags=re.I)[1].split(" ")[0].split(",")
+                    )
 
-                features = set(line.split("Feature=")[1].split(" ")[0].split(","))
-
-                if "Weight=" not in line:
+                if not bool(re.search("weight=", line, flags=re.I)):
                     weight = 1
                 else:
-                    weight = int(line.split("Weight=")[1].split(" ")[0])
+                    weight = int(re.split("weight=", line, flags=re.I)[1].split(" ")[0])
 
                 for nid in nids:
                     nid_features[nid] = features
@@ -81,12 +82,18 @@ class SlurmDataReader:
 
             f.seek(0)
             for line in f:
-                if not line.startswith("NodeSet"):
+                if not bool(re.match("nodeset=", line, flags=re.I)):
                     continue
                 line = line.strip("\n")
 
-                name = line.split("NodeSet=")[1].split(" ")[0]
-                nodeset_features = set(line.split("Feature=")[1].split(" ")[0].split(","))
+                name = re.split("nodeset=", line, flags=re.I)[1].split(" ")[0]
+
+                if not bool(re.search("feature=", line, flags=re.I)):
+                    nodeset_features = set()
+                else:
+                    nodeset_features = set(
+                        re.split("feature=", line, flags=re.I)[1].split(" ")[0].split(",")
+                    )
 
                 nodesets[name] = [
                     nid
@@ -96,30 +103,32 @@ class SlurmDataReader:
 
             f.seek(0)
             for line in f:
-                if not line.startswith("PartitionName"):
+                if not bool(re.match("partitionname=", line, flags=re.I)):
                     continue
                 line = line.strip("\n")
 
-                name = line.split("PartitionName=")[1].split(" ")[0]
+                name = re.split("partitionname=", line, flags=re.I)[1].split(" ")[0]
 
                 if name not in considered_partitions:
                     continue
 
-                if "PriorityTier" not in line:
+                if not bool(re.search("prioritytier=", line, flags=re.I)):
                     prio_tier = 1
                 else:
-                    prio_tier = int(line.split("PriorityTier=")[1].split(" ")[0])
+                    prio_tier = int(re.split("prioritytier=", line, flags=re.I)[1].split(" ")[0])
 
-                if "PriorityJobFactor" not in line:
+                if not bool(re.search("priorityjobfactor=", line, flags=re.I)):
                     prio_jobfactor = 1
                 else:
-                    prio_jobfactor = int(line.split("PriorityJobFactor=")[1].split(" ")[0])
+                    prio_jobfactor = int(
+                        re.split("priorityjobfactor=", line, flags=re.I)[1].split(" ")[0]
+                    )
 
                 partition_data[name] = {
                     "prio_tier" : prio_tier, "prio_jobfactor" : prio_jobfactor
                 }
 
-                nodes = line.split(" Nodes=")[1].split(" ")[0]
+                nodes = re.split(" nodes=", line, flags=re.I)[1].split(" ")[0]
 
                 if nodes in nodesets:
                     for nid in nodesets[nodes]:
@@ -602,6 +611,31 @@ class SlurmDataReader:
                 ),
                 axis=1
             )
+
+            df_jobs["Power"] = df_jobs.apply(
+                lambda row: (
+                    float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds()
+                    if row.Elapsed.total_seconds() != 0
+                    else 0.0
+                ),
+                axis=1
+            )
+            num_bad += len(df_jobs.loc[(df_jobs.Power >= 10000000)])
+            for i, anomalous_row in df_jobs.loc[(df_jobs.Power >= 10000000)].iterrows():
+                df_jobs.at[i, "Power"] = def_power_per_node * df_jobs.at[i, "AllocNodes"]
+            if def_power_per_node:
+                print(
+                    "Set {} jobs with bad or missing ConsumedEnergyRaw to mean power per node " \
+                    "{}W".format(num_bad, def_power_per_node)
+                )
+
+            df_jobs["TruePowerPerNode"] = df_jobs.apply(
+                lambda row: (
+                    float(row.Power) / float(row.AllocNodes) if row.AllocNodes != 0 else 0.0
+                ),
+                axis=1
+            )
+
         else:
             print(
                 "!!!More than 25% of jobs do not have a valid ConsumedEnergy,"
@@ -610,54 +644,30 @@ class SlurmDataReader:
             df_jobs = df_jobs.assign(ConsumedEnergyRaw=0.0)
             def_power_per_node = 0.0
 
-        df_jobs["Power"] = df_jobs.apply(
-            lambda row: (
-                float(row.ConsumedEnergyRaw) / row.Elapsed.total_seconds()
-                if row.Elapsed.total_seconds() != 0
-                else 0.0
-            ),
-            axis=1
-        )
-        num_bad += len(df_jobs.loc[(df_jobs.Power >= 10000000)])
-        for i, anomalous_row in df_jobs.loc[(df_jobs.Power >= 10000000)].iterrows():
-            df_jobs.at[i, "Power"] = def_power_per_node * df_jobs.at[i, "AllocNodes"]
-        if def_power_per_node:
-            print(
-                "Set {} jobs with bad or missing ConsumedEnergyRaw to mean power per node {}W" \
-                "".format(num_bad, def_power_per_node)
+            df_jobs["TruePowerPerNode"] = df_jobs.apply(lambda row: 0.0, axis=1)
+
+        if "SubmitLine" in df_jobs:
+            df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(
+                lambda row: get_sbatch_cli_arg(row, long="--dependency", short="-d")
             )
-
-        df_jobs["TruePowerPerNode"] = df_jobs.apply(
-            lambda row: float(row.Power) / float(row.AllocNodes) if row.AllocNodes != 0 else 0.0,
-            axis=1
-        )
-
-        df_jobs["DependencyArg"] = df_jobs.SubmitLine.apply(
-            lambda row: get_sbatch_cli_arg(row, long="--dependency", short="-d")
-        )
-        df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(
-            lambda row: get_sbatch_cli_arg(row, long="--reservation")
-        )
-        df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
-            lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
-        )
-        df_jobs["NodelistArg"] = df_jobs.SubmitLine.apply(
-            lambda row: get_sbatch_cli_arg(row, long="--nodelist", short="-w")
-        )
-        df_jobs["ExcludeArg"] = df_jobs.SubmitLine.apply(
-            lambda row: get_sbatch_cli_arg(row, long="--exclude", short="-x")
-        )
-
-        # Some error in slurm accounting, can correct for case of one other user in account
-        num_broken, num_fixed = len(df_jobs.loc[(df_jobs.User == "00:00:00")]), 0
-        for i, anomalous_row in df_jobs.loc[(df_jobs.User == "00:00:00")].iterrows():
-            acc_users = df_jobs.loc[(df_jobs.Account == anomalous_row.Account)].User.unique()
-            if len(acc_users) == 2:
-                num_fixed += 1
-                df_jobs.at[i, "User"] = (
-                    acc_users[1] if acc_users[0] == "00:00:00" else acc_users[0]
-                )
-        print("Corrected {} of {} users with name 00:00:00".format(num_fixed, num_broken))
+            df_jobs["ReservationArg"] = df_jobs.SubmitLine.apply(
+                lambda row: get_sbatch_cli_arg(row, long="--reservation")
+            )
+            df_jobs["BeginArg"] = df_jobs.SubmitLine.apply(
+                lambda row: get_sbatch_cli_arg(row, long="--begin", short="-b")
+            )
+            df_jobs["NodelistArg"] = df_jobs.SubmitLine.apply(
+                lambda row: get_sbatch_cli_arg(row, long="--nodelist", short="-w")
+            )
+            df_jobs["ExcludeArg"] = df_jobs.SubmitLine.apply(
+                lambda row: get_sbatch_cli_arg(row, long="--exclude", short="-x")
+            )
+        else:
+            df_jobs["DependencyArg"] = df_jobs.apply(lambda row: None, axis=1)
+            df_jobs["ReservationArg"] = df_jobs.apply(lambda row: None, axis=1)
+            df_jobs["BeginArg"] = df_jobs.apply(lambda row: None, axis=1)
+            df_jobs["NodelistArg"] = df_jobs.apply(lambda row: None, axis=1)
+            df_jobs["ExcludeArg"] = df_jobs.apply(lambda row: None, axis=1)
 
         df_jobs["Cancelled"] = df_jobs.apply(
             lambda row: None if row.AllocNodes != 0 else row.End - row.Submit, axis=1
