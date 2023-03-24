@@ -363,9 +363,21 @@ class SlurmDataReader:
                 t = datetime.datetime.strptime(row.Time, "%Y-%m-%dT%H:%M:%S").replace(
                     minute=0, second=0
                 )
+
+                # All nodes
                 hpe_restrictlong_nids[t].update(
                     convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
                 )
+                # Latest nodelist entry
+                # hpe_restrictlong_nids[t] = set(
+                #     convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
+                # )
+                # nodelist with most nodes
+                # hpe_restrictlong_nids[t] = max(
+                #     hpe_restrictlong_nids[t],
+                #     set(convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))),
+                #     key=lambda nids: len(nids)
+                # )
 
             t_f = max(hpe_restrictlong_nids)
 
