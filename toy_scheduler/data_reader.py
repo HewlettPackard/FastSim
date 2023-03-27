@@ -365,9 +365,9 @@ class SlurmDataReader:
                 )
 
                 # All nodes
-                hpe_restrictlong_nids[t].update(
-                    convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
-                )
+                # hpe_restrictlong_nids[t].update(
+                #     convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
+                # )
                 # Latest nodelist entry
                 # hpe_restrictlong_nids[t] = set(
                 #     convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
@@ -378,14 +378,34 @@ class SlurmDataReader:
                 #     set(convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))),
                 #     key=lambda nids: len(nids)
                 # )
+                # First nodelist entry (for filling gaps between entries with the later entry eg.
+                # assume that the entry represents a print of the reservation state just before it
+                # gets changed)
+                # t += timedelta(hours=1)
+                # if t not in hpe_restrictlong_nids:
+                #     hpe_restrictlong_nids[t] = set(
+                #         convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
+                #     )
+                # All nodes but assume moment before change
+                hpe_restrictlong_nids[t + timedelta(hours=1)].update(
+                    convert_nodelist_to_node_nums(row.NodeIDs.strip("\r"))
+                )
 
-            t_f = max(hpe_restrictlong_nids)
+            t_i, t_f = min(hpe_restrictlong_nids), max(hpe_restrictlong_nids)
 
+            # Assume entry is state the moment after changing reservation
+            # for time in list(hpe_restrictlong_nids):
+            #     later_time = time + timedelta(hours=1)
+            #     while later_time not in hpe_restrictlong_nids and later_time <= t_f:
+            #         hpe_restrictlong_nids[later_time] = hpe_restrictlong_nids[time]
+            #         later_time += timedelta(hours=1)
+
+            # Assume entry is state the moment before changing reservation
             for time in list(hpe_restrictlong_nids):
-                later_time = time + timedelta(hours=1)
-                while later_time not in hpe_restrictlong_nids and later_time <= t_f:
-                    hpe_restrictlong_nids[later_time] = hpe_restrictlong_nids[time]
-                    later_time += timedelta(hours=1)
+                earlier_time = time - timedelta(hours=1)
+                while earlier_time not in hpe_restrictlong_nids and earlier_time >= t_i:
+                    hpe_restrictlong_nids[earlier_time] = hpe_restrictlong_nids[time]
+                    earlier_time -= timedelta(hours=1)
 
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point

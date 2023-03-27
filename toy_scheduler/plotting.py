@@ -23,6 +23,7 @@ from helpers import mkdir_p
 global bd_threshold
 bd_threshold = timedelta(minutes=10)
 
+matplotlib.use('Qt5Agg')
 plt.style.use('tableau-colorblind10')
 
 
