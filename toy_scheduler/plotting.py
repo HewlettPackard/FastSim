@@ -1333,6 +1333,56 @@ def main(args):
         )
         to_plot_or_not_to_plot(args.batch)
 
+        sim_hours, sim_alloc_nodes_hour = [], []
+        for i_minute, minute in enumerate(sim_minutes):
+            if minute.minute == 0:
+                sim_hours.append(minute)
+                sim_alloc_nodes_hour.append(
+                    np.mean(
+                        [ alloc_nodes for alloc_nodes in sim_alloc_nodes[i_minute:i_minute+60] ]
+                    )
+                )
+                
+        data_hours, data_alloc_nodes_hour = [], []
+        for i_minute, minute in enumerate(data_minutes):
+            if minute.minute == 0:
+                data_hours.append(minute)
+                data_alloc_nodes_hour.append(
+                    np.mean(
+                        [ alloc_nodes for alloc_nodes in data_alloc_nodes[i_minute:i_minute+60] ]
+                    )
+                )
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        ax.plot_date(
+            sim_hours, sim_alloc_nodes_hour, "C0", label="Sim", linewidth=0.75, alpha=0.8
+        )
+        ax.plot_date(
+            data_hours, data_alloc_nodes_hour, "C1", label="Data", linewidth=0.75, alpha=0.8
+        )
+
+        ax.set_xlabel("Date (hour resolution)", fontsize=18)
+        ax.set_ylabel("Number of allocated nodes hourly average", fontsize=18)
+        ax.set_ylim(
+            max(data_alloc_nodes_hour) * 0.5 if max(data_alloc_nodes_hour) > 2000 else 0,
+            min(
+                len(controller.partitions.nodes),
+                max(max(data_alloc_nodes_hour), max(sim_alloc_nodes_hour)) * 1.2
+            )
+        )
+        ax.grid(axis="y")
+        plt.legend()
+
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                "total_allocnodes_bytime_hourlyavg{}.pdf".format(args.save_suffix)
+            )
+        )
+        to_plot_or_not_to_plot(args.batch)
+
     if "queue_size_timeseries" in args.plots:
         ret = q_size(job_history)
         data_q_length, data_q_length_nodes, data_minutes = ret[0], ret[1], ret[2]
