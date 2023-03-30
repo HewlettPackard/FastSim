@@ -350,6 +350,49 @@ class SlurmDataReader:
                     ]:
                         hpe_restrictlong_nids[prev_submit_hr].update(blade_nids)
 
+        # Reservations split into multiple files representing sequences of maintenance nodes that
+        # were previously all piled together in one file
+        elif hpe_restrictlong_sliding_res != "" and "," in hpe_restrictlong_sliding_res:
+            hpe_restrictlong_nids_streams = []
+
+            for restrictlong_file in hpe_restrictlong_sliding_res.split(","):
+                df_hpelong = pd.read_csv(
+                    restrictlong_file,  delimiter=' ', lineterminator='\n',
+                    names=["Time", "NNodes", "NodeIDs"], encoding="ISO-8859-1"
+                )
+
+                hpe_restrictlong_nids_stream = {}
+                for _, row in df_hpelong.iterrows():
+                    t = (
+                        datetime.datetime.strptime(row.Time, "%Y-%m-%dT%H:%M:%S").replace(
+                            minute=0, second=0
+                        ) -
+                        timedelta(hours=1)
+                    )
+
+                    nids = set(convert_nodelist_to_node_nums(row.NodeIDs.strip("\r")))
+                    hpe_restrictlong_nids_stream[t] = nids
+
+                while hpe_restrictlong_nids_stream and t <= max(hpe_restrictlong_nids_stream):
+                    del hpe_restrictlong_nids_stream[max(hpe_restrictlong_nids_stream)]
+
+                t_i, t_f = min(hpe_restrictlong_nids_stream), max(hpe_restrictlong_nids_stream)
+
+                for time in list(hpe_restrictlong_nids_stream):
+                    later_time = time + timedelta(hours=1)
+                    while later_time not in hpe_restrictlong_nids_stream and later_time <= t_f:
+                        hpe_restrictlong_nids_stream[later_time] = (
+                            hpe_restrictlong_nids_stream[time]
+                        )
+                        later_time += timedelta(hours=1)
+
+                hpe_restrictlong_nids_streams.append(hpe_restrictlong_nids_stream)
+
+            hpe_restrictlong_nids = defaultdict(set)
+            for hpe_restrictlong_nids_stream in hpe_restrictlong_nids_streams:
+                for t, nids in hpe_restrictlong_nids_stream.items():
+                    hpe_restrictlong_nids[t].update(nids)
+
         elif hpe_restrictlong_sliding_res != "": # file path to time - num nodes - node ids file
             # Load and clean actual hpe long num nodes data
             df_hpelong = pd.read_csv(
@@ -373,16 +416,20 @@ class SlurmDataReader:
                 )
 
                 nids = set(convert_nodelist_to_node_nums(row.NodeIDs.strip("\r")))
-                
-                i_nids_stream = None
-                for i_stream, (latest_nids, submit_nids) in enumerate(hpe_restrictlong_nids_streams):
-                    if nids.intersection(latest_nids):
+
+                i_nids_stream, best_match = None, 0
+                for i_stream, (latest_nids, submit_nids) in enumerate(
+                    hpe_restrictlong_nids_streams
+                ):
+                    intersection = nids.intersection(latest_nids)
+                    if len(intersection) > best_match and len(intersection) > int(len(nids) / 4):
                         i_nids_stream = i_stream
+                        best_match = len(intersection)
 
                 if i_nids_stream is None:
                     hpe_restrictlong_nids_streams.append([nids, defaultdict(set, {t : nids})])
                     continue
-                
+
                 _, nids_stream = hpe_restrictlong_nids_streams[i_nids_stream]
                 while nids_stream and t <= max(nids_stream):
                     del nids_stream[max(nids_stream)]
@@ -442,13 +489,18 @@ class SlurmDataReader:
                 for time in list(hpe_restrictlong_nids_stream):
                     later_time = time + timedelta(hours=1)
                     while later_time not in hpe_restrictlong_nids_stream and later_time <= t_f:
-                        hpe_restrictlong_nids_stream[later_time] = hpe_restrictlong_nids_stream[time]
+                        hpe_restrictlong_nids_stream[later_time] = (
+                            hpe_restrictlong_nids_stream[time]
+                        )
                         later_time += timedelta(hours=1)
 
             hpe_restrictlong_nids = defaultdict(set)
             for _, hpe_restrictlong_nids_stream in hpe_restrictlong_nids_streams:
                 for t, nids in hpe_restrictlong_nids_stream.items():
                     hpe_restrictlong_nids[t].update(nids)
+
+        for t, nids in sorted(hpe_restrictlong_nids.items()):
+            print(t, len(nids))
 
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point
