@@ -5,6 +5,7 @@ from collections import defaultdict
 from itertools import cycle
 
 import matplotlib.dates
+from matplotlib.dates import DateFormatter
 from cycler import cycler
 from matplotlib import pyplot as plt
 from matplotlib import colors as mpl_colors
@@ -498,15 +499,15 @@ def plot_power_diff(
 
     fig, ax = plt.subplots(1, 1, figsize=(12, 8))
 
-    ax.plot_date(hour_dates_slice, power_baseline_slice, 'C1', linewidth=.0)
-    ax.plot_date(hour_dates_slice, power_exp_slice, 'C0', linewidth=.0)
+    ax.plot_date(hour_dates_slice, power_baseline_slice, 'C7', linewidth=0.0)
+    ax.plot_date(hour_dates_slice, power_exp_slice, 'C8', linewidth=0.0)
     fb_exp_higher = ax.fill_between(
         hour_dates_slice, power_baseline_slice, power_exp_slice,
-        where=power_baseline_slice<=power_exp_slice, facecolor="C1", interpolate=True
+        where=power_baseline_slice<=power_exp_slice, facecolor="C1", interpolate=True, alpha=0.8
     )
     fb_baseline_higher = ax.fill_between(
         hour_dates_slice, power_baseline_slice, power_exp_slice,
-        where=power_baseline_slice>=power_exp_slice, facecolor="C0", interpolate=True
+        where=power_baseline_slice>=power_exp_slice, facecolor="C0", interpolate=True, alpha=0.8
     )
 
     day = min(hours[slice_l:slice_r]).replace(hour=0)
@@ -531,9 +532,13 @@ def plot_power_diff(
         legend_labels = ["Baseline > Experiment", "Experiment > Baseline", "11am - 4pm"]
 
     ax.set_ylim(0.9 * power_baseline_slice.min(), 1.1 * power_baseline_slice.max())
-    ax.set_ylabel("Power (MW)")
-    plt.title(title, fontsize=14)
-    plt.legend([fb_baseline_higher, fb_exp_higher, vsp_peak], legend_labels, fontsize=14)
+    ax.set_ylabel("Power (MW)", fontsize=20)
+    ax.set_xlabel("Date (hour resolution)", fontsize=20)
+    ax.tick_params(axis='x', which='major', labelsize=16)
+    ax.tick_params(axis='y', which='major', labelsize=12)
+    ax.xaxis.set_major_formatter(DateFormatter('%m-%d'))
+    plt.title(title, fontsize=20)
+    plt.legend([fb_baseline_higher, fb_exp_higher, vsp_peak], legend_labels, fontsize=16)
 
     fig.tight_layout()
 
@@ -1356,18 +1361,18 @@ def main(args):
             ):
                 start_tick_sim = i_minute
             if (
-                end_tick_sim is None and 
+                end_tick_sim is None and
                 minute.month == 12 and minute.day == 10 and minute.hour == 8
             ):
                 end_tick_sim = i_minute
         for i_minute, minute in enumerate(data_minutes):
             if (
-                start_tick_data is None and 
+                start_tick_data is None and
                 minute.month == 12 and minute.day == 9 and minute.hour == 9
             ):
                 start_tick_data = i_minute
             if (
-                end_tick_data is None and 
+                end_tick_data is None and
                 minute.month == 12 and minute.day == 10 and minute.hour == 8
             ):
                 end_tick_data = i_minute
@@ -1387,7 +1392,7 @@ def main(args):
         ax.plot_date(
             data_minutes_crop, data_alloc_nodes_crop, "C3", label="Data", linewidth=0.75, alpha=0.8
         )
-    
+
         ax.set_title("Utilisation sampled each minute", fontsize=22)
         ax.set_xlabel("Date (minute resolution)", fontsize=22)
         ax.set_ylabel("Utilisation (%)", fontsize=22)
@@ -1553,12 +1558,8 @@ def main(args):
 
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
-        category_labels = ["mean(slowdown)", "mean(wait)", "max(wait)", "mean(response)"]
-        # category_labels = [
-        #     r"$(\mathrm{avg\_slowdown})^{-1}$", r"$(\mathrm{avg\_wait})^{-1}$",
-        #     r"$(\mathrm{max\_wait})^{-1}$", r"$(\mathrm{avg\_response})^{-1}$"
-        # ]
-        plt.xticks(angles[:-1], category_labels, size=14)
+        category_labels = ["mean(slowdown)", "mean(wait)", "max(wait)", "mean\n(response)"]
+        plt.xticks(angles[:-1], category_labels, size=18)
         half = len(ax.get_xticklabels()) // 2
         for label in ax.get_xticklabels()[1:half]:
             label.set_horizontalalignment("left")
@@ -1566,8 +1567,14 @@ def main(args):
             label.set_horizontalalignment("right")
         ax.tick_params(axis='x', which='major', pad=10)
         ax.set_rlabel_position(0)
-        plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
-        plt.ylim(0.7,1.3)
+        # plt.yticks([0.75,1,1.25], ["0.75","1","1.25"], color="grey", size=14)
+        # plt.ylim(0.7,1.3)
+        # For highprio experiments
+        plt.yticks([0.9,1,1.1,1.2], ["0.9","1","1.1","1.2"], color="grey", size=18)
+        plt.ylim(0.88,1.25)
+        # For largescale experiments
+        # plt.yticks([0.9,1], ["0.9","1"], color="grey", size=18)
+        # plt.ylim(0.85,1.05)
 
         for label, plot_data in spider_plot_data.items():
             vals = [ 1 / plot_data[metric] for metric in categories ]
@@ -1579,14 +1586,14 @@ def main(args):
             angles, [1] * len(angles), linewidth=3, linestyle='solid', c='k', label="Baseline"
         )
 
-        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.085), fontsize=16, ncol=5, frameon=False)
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.085), fontsize=18, ncol=5, frameon=False)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title(
             (
                 r"$\mathrm{metric}_{\mathrm{Baseline}}/$" +
                 r"$\mathrm{metric}_{\mathrm{Experiment}}$ for all jobs"
             ),
-            fontsize=16
+            fontsize=22, pad=15
         )
 
         fig.savefig(os.path.join(PLOT_DIR, "spider_plot_metrics{}.pdf".format(args.save_suffix)))
@@ -1625,13 +1632,13 @@ def main(args):
             label
             for label in baseline_data
         ]
-        plt.xticks(angles[:-1], category_labels, size=14)
+        plt.xticks(angles[:-1], category_labels, size=18)
         half = len(ax.get_xticklabels()) // 2
         for label in ax.get_xticklabels()[1:half]:
             label.set_horizontalalignment("left")
         for label in ax.get_xticklabels()[-half+1:]:
             label.set_horizontalalignment("right")
-        ax.tick_params(axis='x', which='major', pad=10)
+        ax.tick_params(axis='x', which='major', pad=15)
         ax.set_rlabel_position(0)
 
         log, min_val = False, 1.0
@@ -1657,25 +1664,28 @@ def main(args):
 
         if log:
             ax.set_yscale("symlog", linthresh=0.1)
-            plt.yticks([0.75,1,2,4,8], ["0.75","1","2","4","8"], color="grey", size=14)
-            plt.ylim(0.55,10)
+            # plt.yticks([0.75,1,2,4,8], ["0.75","1","2","4","8"], color="grey", size=14)
+            # plt.ylim(0.55,10)
+            # For highprio experiments
+            plt.yticks([0.5,0.75,1,2,4,8], ["0.5","0.75","1","2","4","8"], color="grey", size=18)
+            plt.ylim(0.45,10)
         else:
             if min_val > 0.5:
-                plt.yticks([0.5,0.75,1], ["0.5","0.75","1"], color="grey", size=14)
+                plt.yticks([0.5,0.75,1], ["0.5","0.75","1"], color="grey", size=18)
                 plt.ylim(0.3,1.2)
             else:
-                plt.yticks([0.25,0.5,0.75,1], ["0.25","0.5","0.75","1"], color="grey", size=14)
+                plt.yticks([0.25,0.5,0.75,1], ["0.25","0.5","0.75","1"], color="grey", size=18)
                 plt.ylim(0.0,1.2)
 
 
-        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.085), fontsize=16, ncol=5, frameon=False)
+        plt.legend(loc='center', bbox_to_anchor=(0.5, -0.085), fontsize=18, ncol=5, frameon=False)
         plt.subplots_adjust(left=0.0, top=0.9, right=1.00, bottom=0.1)
         plt.title(
             (
                 r"$\mathrm{mean(waits)}_{\mathrm{Baseline}}/$" +
                 r"$\mathrm{mean(waits)}_{\mathrm{Experiment}}$ by job QOS"
             ),
-            fontsize=16
+            fontsize=22, pad=15
         )
 
         fig.tight_layout()
@@ -1803,14 +1813,14 @@ def main(args):
             if hour.replace(hour=0, minute=0, second=0) == start_date:
                 slice_r = slice_l + 288
                 fig, ax = plot_power_diff(
-                    hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=False
-                )
+                        hours, hour_dates, power_baseline, power_exp, slice_l, slice_r, vlines=False
+                        )
                 fig.savefig(
-                    os.path.join(
-                        PLOT_DIR,
-                        "power_usage_diff_12days_slicer{}{}.pdf".format(slice_r, args.save_suffix)
-                    )
-                )
+                        os.path.join(
+                            PLOT_DIR,
+                            "power_usage_diff_12days_slicer{}{}.pdf".format(slice_r, args.save_suffix)
+                            )
+                        )
                 to_plot_or_not_to_plot(args.batch)
 
                 break
@@ -1820,11 +1830,11 @@ def main(args):
             raise NotImplementedError
 
         hours = [
-            controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
-            for hr in range(
-                int((controller.times[-1] - controller.times[0]).total_seconds() / 60 / 60) + 1
-            )
-        ]
+                controllers[0].init_time.replace(minute=0, second=0) + timedelta(hours=hr)
+                for hr in range(
+                    int((controller.times[-1] - controller.times[0]).total_seconds() / 60 / 60) + 1
+                    )
+                ]
         hours = np.array(hours)
 
         power_data = power_usage(hours, job_history, len(controller.partitions.nodes), data=True)
