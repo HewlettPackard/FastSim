@@ -702,23 +702,25 @@ def main(args):
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax0 = ax[0].pcolormesh(bins_allocnodes, bins_wait_times, h_data.T, vmin=0.05, vmax=1.0)
-        ax1 = ax[1].pcolormesh(bins_allocnodes, bins_wait_times, h_sim.T, vmin=0.05, vmax=1.0)
+        ax0 = ax[0].pcolormesh(bins_allocnodes, bins_wait_times, h_data.T, vmin=0.01, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_allocnodes, bins_wait_times, h_sim.T, vmin=0.01, vmax=1.0)
 
         ax0.set_edgecolor("face")
         ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
-        ax[0].set_xlabel("Nodes")
-        ax[0].set_ylabel("Wait (mins)")
-        ax[0].set_title("Data")
+        ax[0].set_xlabel("Nodes", fontsize=22)
+        ax[0].set_ylabel("Wait (m)", fontsize=22)
+        ax[0].set_title("Data", fontsize=22)
+        ax[0].tick_params(axis='both', which='major', labelsize=18)
         ax[1].set_yscale("log")
         ax[1].set_xscale("log")
-        ax[1].set_xlabel("Nodes")
-        ax[1].set_ylabel("Wait (mins)")
-        ax[1].set_title("Sim")
-        cax = fig.add_axes([0.92, 0.06, 0.02, 0.82])
-        fig.colorbar(ax0, cax, orientation='vertical', extend="min")
+        ax[1].set_xlabel("Nodes", fontsize=22)
+        ax[1].set_ylabel("Wait (m)", fontsize=22)
+        ax[1].set_title("Sim", fontsize=22)
+        ax[1].tick_params(axis='both', which='major', labelsize=18)
+        cax = fig.add_axes([0.92, 0.10, 0.02, 0.76])
+        fig.colorbar(ax0, cax, orientation="vertical", extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "allocnodes_wait_time_hist2d{}.pdf".format(args.save_suffix)),
@@ -734,24 +736,25 @@ def main(args):
 
         h_min = min(h_data[(h_data != .0)].min(), h_sim[(h_sim != .0)].min())
 
-        ax0 = ax[0].pcolormesh(bins_reqtime, bins_wait_times, h_data.T, vmin=0.05, vmax=1.0)
-        ax1 = ax[1].pcolormesh(bins_reqtime, bins_wait_times, h_sim.T, vmin=0.05, vmax=1.0)
+        ax0 = ax[0].pcolormesh(bins_reqtime, bins_wait_times, h_data.T, vmin=0.01, vmax=1.0)
+        ax1 = ax[1].pcolormesh(bins_reqtime, bins_wait_times, h_sim.T, vmin=0.01, vmax=1.0)
 
         ax0.set_edgecolor("face")
         ax1.set_edgecolor("face")
         ax[0].set_yscale("log")
         ax[0].set_xscale("log")
-        ax[0].set_xlabel("Req Time (mins)")
-        ax[0].set_ylabel("Wait (mins)")
-        ax[0].set_title("Data")
+        ax[0].set_xlabel("Req Time (m)", fontsize=22)
+        ax[0].set_ylabel("Wait (m)", fontsize=22)
+        ax[0].set_title("Data", fontsize=22)
+        ax[0].tick_params(axis='both', which='major', labelsize=18)
         ax[1].set_yscale("log")
         ax[1].set_xscale("log")
-        ax[1].set_xlabel("Req Time (mins)")
-        ax[1].set_ylabel("Wait (mins)")
-        ax[1].set_title("Sim")
-        cax = fig.add_axes([0.92, 0.06, 0.02, 0.84])
-        # fig.colorbar(ax0, cax, orientation='vertical', extend="min")
-        fig.colorbar(ax0, cax, orientation='vertical')
+        ax[1].set_xlabel("Req Time (m)", fontsize=22)
+        ax[1].set_ylabel("Wait (m)", fontsize=22)
+        ax[1].set_title("Sim", fontsize=22)
+        ax[1].tick_params(axis='both', which='major', labelsize=18)
+        cax = fig.add_axes([0.92, 0.10, 0.02, 0.76])
+        fig.colorbar(ax0, cax, orientation="vertical", extend="min")
 
         fig.savefig(
             os.path.join(PLOT_DIR, "reqtime_wait_time_hist2d{}.pdf".format(args.save_suffix)),
@@ -798,14 +801,20 @@ def main(args):
         top_usr, sim_mean_waits, data_mean_waits = top_assoc_waits(job_history, job_to_usr, 15)
         x = np.arange(len(top_usr))
 
+        for i in range(len(top_usr)):
+            top_usr[i] = "User" + str((i + 1))
+
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         sim_bars = ax.bar(x - 2 * 0.2 / 3, sim_mean_waits, 0.2, label="Sim")
         data_bars = ax.bar(x + 2 * 0.2 / 3, data_mean_waits, 0.2, label="Data", color="C3")
-        ax.set_ylabel("Mean Wait Time (hrs)", fontsize=18)
-        ax.set_xticks(x, top_usr)
-        ax.legend(prop={'size': 16})
-        ax.bar_label(sim_bars, padding=3, fmt="%.1f")
-        ax.bar_label(data_bars, padding=3, fmt="%.1f")
+        ax.set_title("Wait times for users with highest usage", fontsize=22)
+        ax.set_ylabel("Mean Wait Time (hrs)", fontsize=22)
+        ax.set_xticks(x, top_usr, fontsize=18, rotation=45)
+        ax.tick_params(axis='both', which='major', labelsize=18)
+        ax.set_ylim(top=max(max(sim_mean_waits), max(data_mean_waits)) * 1.1)
+        ax.legend(prop={'size': 18})
+        ax.bar_label(sim_bars, padding=3, rotation=90 ,fmt="%.1f")
+        ax.bar_label(data_bars, padding=3, rotation=90, fmt="%.1f")
         fig.tight_layout()
         fig.savefig(os.path.join(PLOT_DIR, "top_usr_mean_waits{}.pdf".format(args.save_suffix)))
         to_plot_or_not_to_plot(args.batch)
@@ -938,7 +947,7 @@ def main(args):
                 hour_dates, data_mean_wait_times_rolling_window, 'C3', label="Data", linewidth=1.2
             )
 
-            plt.legend()
+            plt.legend(prop={'size' : 12})
 
             ax_small = fig.add_axes((.1, .1, .8, .2))
             ax_small.plot_date(
@@ -949,11 +958,11 @@ def main(args):
                 'C3', label="_", linewidth=1.2
             )
 
-            ax_big.set_ylabel("Mean Wait Time")
+            ax_big.set_ylabel("Moving averge wait time (h)", fontsize=14)
             ax_big.set_xticklabels([])
             ax_big.set_ylim(bottom=0.0)
-            ax_small.set_xlabel("Middle Hour of Rolling Window")
-            ax_small.set_ylabel("Std dev Wait Time")
+            ax_small.set_xlabel("Middle hour of window", fontsize=14)
+            ax_small.set_ylabel("Moving std dev wait time (h)", fontsize=14)
             ax_small.set_ylim(bottom=0.0)
 
             fig.savefig(
@@ -1194,13 +1203,19 @@ def main(args):
         max_wait = max(max_wait_sim, max_wait_data)
 
         for qos, a in zip(qos_sim_mean_wait_times_rolling_window_6, ax.flatten()):
-            a.plot_date(hour_dates, qos_sim_mean_wait_times_rolling_window_6[qos], fmt='-C0')
-            a.plot_date(hour_dates, qos_data_mean_wait_times_rolling_window_6[qos], fmt='-C3')
+            a.plot_date(
+                hour_dates, qos_sim_mean_wait_times_rolling_window_6[qos], fmt='-C0', label="Sim"
+            )
+            a.plot_date(
+                hour_dates, qos_data_mean_wait_times_rolling_window_6[qos], fmt='-C3', label="Data"
+            )
 
             a.set_ylim(0.9 * min_wait, 1.1 * max_wait)
-            a.set_xticklabels([])
-            a.set_title(qos)
+            a.set_xticks([])
+            a.set_title(qos, fontsize=14)
             a.set_yscale("log")
+
+        ax[0][2].legend(prop={"size" : 12})
 
         fig.tight_layout()
         fig.savefig(
@@ -1333,6 +1348,61 @@ def main(args):
         )
         to_plot_or_not_to_plot(args.batch)
 
+        start_tick_sim, end_tick_sim, start_tick_data, end_tick_data = None, None, None, None
+        for i_minute, minute in enumerate(sim_minutes):
+            if (
+                start_tick_sim is None and
+                minute.month == 12 and minute.day == 9 and minute.hour == 9
+            ):
+                start_tick_sim = i_minute
+            if (
+                end_tick_sim is None and 
+                minute.month == 12 and minute.day == 10 and minute.hour == 8
+            ):
+                end_tick_sim = i_minute
+        for i_minute, minute in enumerate(data_minutes):
+            if (
+                start_tick_data is None and 
+                minute.month == 12 and minute.day == 9 and minute.hour == 9
+            ):
+                start_tick_data = i_minute
+            if (
+                end_tick_data is None and 
+                minute.month == 12 and minute.day == 10 and minute.hour == 8
+            ):
+                end_tick_data = i_minute
+        sim_alloc_nodes_crop = sim_alloc_nodes[start_tick_sim:end_tick_sim]
+        sim_minutes_crop = sim_minutes[start_tick_sim:end_tick_sim]
+        data_alloc_nodes_crop = data_alloc_nodes[start_tick_data:end_tick_data]
+        data_minutes_crop = data_minutes[start_tick_data:end_tick_data]
+
+        sim_alloc_nodes_crop *= 100 / 5860
+        data_alloc_nodes_crop *= 100 / 5860
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        ax.plot_date(
+            sim_minutes_crop, sim_alloc_nodes_crop, "C0", label="Sim", linewidth=0.75, alpha=0.8
+        )
+        ax.plot_date(
+            data_minutes_crop, data_alloc_nodes_crop, "C3", label="Data", linewidth=0.75, alpha=0.8
+        )
+    
+        ax.set_title("Utilisation sampled each minute", fontsize=22)
+        ax.set_xlabel("Date (minute resolution)", fontsize=22)
+        ax.set_ylabel("Utilisation (%)", fontsize=22)
+        ax.tick_params(axis='both', which='major', labelsize=18)
+        ax.set_ylim(bottom=55, top=100)
+        ax.set_yticks([60,70,80,90,100])
+        ax.grid(axis="both")
+        plt.legend(prop={'size': 18})
+
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(PLOT_DIR, "total_allocnodes_bytime_crop{}.pdf".format(args.save_suffix))
+        )
+        to_plot_or_not_to_plot(args.batch)
+
         sim_hours, sim_alloc_nodes_hour = [], []
         for i_minute, minute in enumerate(sim_minutes):
             if minute.minute == 0:
@@ -1342,7 +1412,7 @@ def main(args):
                         [ alloc_nodes for alloc_nodes in sim_alloc_nodes[i_minute:i_minute+60] ]
                     )
                 )
-                
+
         data_hours, data_alloc_nodes_hour = [], []
         for i_minute, minute in enumerate(data_minutes):
             if minute.minute == 0:
@@ -1379,6 +1449,52 @@ def main(args):
             os.path.join(
                 PLOT_DIR,
                 "total_allocnodes_bytime_hourlyavg{}.pdf".format(args.save_suffix)
+            )
+        )
+        to_plot_or_not_to_plot(args.batch)
+
+        start_tick_sim, end_tick_sim, start_tick_data, end_tick_data = None, None, None, None
+        for i_hour, hour in enumerate(sim_hours):
+            if start_tick_sim is None and (hour.month == 12 and hour.day == 9 and hour.hour == 9):
+                start_tick_sim = i_hour
+            if end_tick_sim is None and (hour.month == 12 and hour.day == 10 and hour.hour == 8):
+                end_tick_sim = i_hour
+        for i_hour, hour in enumerate(data_hours):
+            if start_tick_data is None and (hour.month == 12 and hour.day == 9 and hour.hour == 9):
+                start_tick_data = i_hour
+            if end_tick_data is None and (hour.month == 12 and hour.day == 10 and hour.hour == 8):
+                end_tick_data = i_hour
+        sim_alloc_nodes_hour_crop = np.array(sim_alloc_nodes_hour[start_tick_sim:end_tick_data])
+        sim_hours_crop = np.array(sim_hours[start_tick_sim:end_tick_sim])
+        data_alloc_nodes_hour_crop = np.array(data_alloc_nodes_hour[start_tick_data:end_tick_data])
+        data_hours_crop = np.array(data_hours[start_tick_data:end_tick_data])
+
+        sim_alloc_nodes_hour_crop *= 100 / 5860
+        data_alloc_nodes_hour_crop *= 100 / 5860
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        ax.plot_date(
+            sim_hours_crop, sim_alloc_nodes_hour_crop, "C0",
+            label="Sim", linewidth=0.75, alpha=0.8
+        )
+        ax.plot_date(
+            data_hours_crop, data_alloc_nodes_hour_crop, "C3",
+            label="Data", linewidth=0.75, alpha=0.8
+        )
+
+        ax.set_xlabel("Date (hourly resolution)", fontsize=16)
+        ax.set_ylabel("Utilisation (%)", fontsize=16)
+        ax.set_ylim(bottom=55, top=100)
+        ax.set_yticks([60,70,80,90,100])
+        ax.grid(axis="both")
+        plt.legend()
+
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(
+                PLOT_DIR,
+                "total_allocnodes_bytime_hourlyaverage_crop{}.pdf".format(args.save_suffix)
             )
         )
         to_plot_or_not_to_plot(args.batch)
