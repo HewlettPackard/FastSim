@@ -499,9 +499,6 @@ class SlurmDataReader:
                 for t, nids in hpe_restrictlong_nids_stream.items():
                     hpe_restrictlong_nids[t].update(nids)
 
-        for t, nids in sorted(hpe_restrictlong_nids.items()):
-            print(t, len(nids))
-
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point
         if len(df_resv.loc[(df_resv.RESV_NAME == "shortqos")]):
