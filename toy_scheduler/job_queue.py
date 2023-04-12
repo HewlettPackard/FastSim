@@ -57,17 +57,17 @@ class Queue:
         self.time = df_jobs.Start.min()
         self.all_jobs = [
             Job(
-                job_row.JobID, job_row.Submit, job_row.Nodes, job_row.Elapsed,
+                i_job, job_row.JobID, job_row.Submit, job_row.Nodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
                 job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
                 partitions_by_name[job_row.Partition], job_row.DependencyArg, job_row.JobName,
                 job_row.Reason, job_row.ReservationArg, job_row.BeginArg, job_row.Cancelled,
                 job_row.NodelistArg, job_row.ExcludeArg
-            ) for _, job_row in df_jobs.iterrows()
+            ) for i_job, (_, job_row) in enumerate(df_jobs.iterrows())
         ]
-        self.all_jobs.sort(key=lambda job: (job.submit, job.id), reverse=True)
-        # NOTE verify with jid first to ensure all jids have a Job in the data
+        self.all_jobs.sort(key=lambda job: (job.submit, job.hash_id), reverse=True)
 
+        # NOTE verify with jid first to ensure all jids have a Job in the data
         self._verify_dependencies()
         jid_to_job = {}
         for job in self.all_jobs:
@@ -570,10 +570,11 @@ class AssocLimit:
 
 class Job:
     def __init__(
-        self, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
+        self, hash_id, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
         reason, reservation_arg, begin_arg, cancelled, nodelist_arg, exclude_arg
     ):
+        self.hash_id = hash_id
         self.id = id
         self.nodes = nodes
         self.runtime = runtime
@@ -602,6 +603,7 @@ class Job:
             self.dependency = None
         else:
             self.dependency =  Dependency(dependency_arg, user, name)
+
         self.reservation = reservation_arg
 
         self.assoc = (self.user, self.partition, self.account)
@@ -636,7 +638,8 @@ class Job:
         self.cancel = None
 
     def __hash__(self):
-        return hash((self.id, self.true_submit))
+        return self.hash_id
+        # return hash((self.id, self.true_submit))
 
     def __eq__(self, other):
         if isinstance(other, Job):

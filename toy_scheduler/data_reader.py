@@ -400,7 +400,6 @@ class SlurmDataReader:
                 names=["Time", "NNodes", "NodeIDs"], encoding="ISO-8859-1"
             )
 
-
             # NOTE: I think in the earlier months there are multiple difference reservations
             # with their own node lists being recorded simultaneously, this is why the timestamps
             # are mixed. Will need to try and disentangle these separate lists and combine them.
@@ -502,19 +501,19 @@ class SlurmDataReader:
         # XXX ARCHER2 specific - can't be bothered to implement REPLACE_DOWN on reservations so
         # just fill with nodes that don't go down at any point
         if len(df_resv.loc[(df_resv.RESV_NAME == "shortqos")]):
-            shortqos_nids_to_replace = {
+            shortqos_nids_to_replace = [
                 nid
-                for nid, data in nid_data.items()
+                for nid, data in sorted(nid_data.items())
                     if (
                         any(resv[2] == "shortqos" for resv in data["resv_schedule"]) and
                         not data["down_schedule"]
                     )
-            }
-            never_down_nids = {
+            ]
+            never_down_nids = [
                 nid
-                for nid, data in nid_data.items()
+                for nid, data in sorted(nid_data.items())
                     if not data["down_schedule"] and not data["resv_schedule"]
-            }
+            ]
             for i_shortqos_nid, shortqos_nid in enumerate(shortqos_nids_to_replace):
                 found_nid = False
 

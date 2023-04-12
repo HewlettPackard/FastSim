@@ -36,7 +36,7 @@ class MFPrioritySorter:
                 key=lambda job: (
                     sum(priority_calc(job) for priority_calc in self.priority_factors),
                     self.time - job.submit,
-                    job.id
+                    job.hash_id
                 )
             )
             return
@@ -46,7 +46,7 @@ class MFPrioritySorter:
                 self._partition_priority_tier(job),
                 sum(priority_calc(job) for priority_calc in self.priority_factors),
                 self.time - job.submit,
-                job.id
+                job.hash_id
             )
         )
         return

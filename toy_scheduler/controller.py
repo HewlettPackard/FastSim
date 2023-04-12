@@ -77,7 +77,7 @@ class Controller:
 
         self.sched_start = self.init_time
         nodes, init_phase_jobs = len(self.partitions.nodes), set()
-        for job in sorted(self.queue.all_jobs, key=lambda job: job.true_job_start):
+        for job in sorted(self.queue.all_jobs, key=lambda job: (job.true_job_start, job.hash_id)):
             nodes -= job.nodes
             init_phase_jobs.add(job)
             if nodes <= 0:
@@ -105,13 +105,13 @@ class Controller:
         self.down_nodes = []
         self.node_down_order = sorted(
             [ node for node in self.partitions.nodes if node.down_schedule ],
-            key=lambda node: node.down_schedule[-1][0],
+            key=lambda node: (node.down_schedule[-1][0], node.hash_id),
             reverse=True
         )
         self.reserved_nodes = []
         self.node_reservation_order = sorted(
             [ node for node in self.partitions.nodes if node.reservation_schedule ],
-            key=lambda node: node.reservation_schedule[-1][0],
+            key=lambda node: (node.reservation_schedule[-1][0], node.hash_id),
             reverse=True
         )
 
@@ -420,24 +420,32 @@ class Controller:
 
                 n_nodes, valid_nodes = 0, set()
 
-                for node in free_nodes_ready_now:
+                # for node in free_nodes_ready_now:
+                #     if job_end > node.interval_times[-1]:
+                #         continue
+
+                #     if not n_nodes:
+                #         valid_nodes.add(node)
+                #         n_nodes += 1
+                #         max_node_weight = node, (node.weight, node.hash_id)
+                #         continue
+                #     # Have enough nodes now, so only accept more favourable nodes
+                #     if n_nodes >= job.nodes:
+                #         node_weight = (node.weight, node.hash_id)
+                #         if node_weight > max_node_weight[1]:
+                #             continue
+                #         valid_nodes.remove(max_node_weight[0])
+                #         max_node_weight = (node, node_weight)
+                #     valid_nodes.add(node)
+                #     n_nodes += 1
+
+                for node in sorted(free_nodes_ready_now, key=lambda node: (node.weight, node.hash_id)):
                     if job_end > node.interval_times[-1]:
                         continue
 
-                    if not n_nodes:
-                        valid_nodes.add(node)
-                        n_nodes += 1
-                        max_node_weight = node, (node.weight, node.id)
-                        continue
-                    # Have enough nodes now, so only accept more favourable nodes
-                    if n_nodes >= job.nodes:
-                        node_weight = (node.weight, node.id)
-                        if node_weight > max_node_weight[1]:
-                            continue
-                        valid_nodes.remove(max_node_weight[0])
-                        max_node_weight = (node, node_weight)
                     valid_nodes.add(node)
-                    n_nodes += 1
+                    if len(valid_nodes) >= job.nodes:
+                        break
 
                 if len(valid_nodes) == job.nodes:
                     if job.cancel is not None:
@@ -498,27 +506,38 @@ class Controller:
 
             n_nodes, valid_nodes = 0, set()
 
-            for node in free_nodes_ready_now:
+            # for node in free_nodes_ready_now:
+            #     if job.partition not in node.partitions:
+            #         continue
+
+            #     if job_end > node.interval_times[-1]:
+            #         continue
+
+            #     if not n_nodes:
+            #         valid_nodes.add(node)
+            #         n_nodes += 1
+            #         max_node_weight = node, (node.weight, node.hash_id)
+            #         continue
+            #     # Have enough nodes now, so only accept more favourable nodes
+            #     if n_nodes >= job.nodes:
+            #         node_weight = (node.weight, node.hash_id)
+            #         if node_weight > max_node_weight[1]:
+            #             continue
+            #         valid_nodes.remove(max_node_weight[0])
+            #         max_node_weight = (node, node_weight)
+            #     valid_nodes.add(node)
+            #     n_nodes += 1
+
+            for node in sorted(free_nodes_ready_now, key=lambda node: (node.weight, node.hash_id)):
                 if job.partition not in node.partitions:
                     continue
 
                 if job_end > node.interval_times[-1]:
                     continue
 
-                if not n_nodes:
-                    valid_nodes.add(node)
-                    n_nodes += 1
-                    max_node_weight = node, (node.weight, node.id)
-                    continue
-                # Have enough nodes now, so only accept more favourable nodes
-                if n_nodes >= job.nodes:
-                    node_weight = (node.weight, node.id)
-                    if node_weight > max_node_weight[1]:
-                        continue
-                    valid_nodes.remove(max_node_weight[0])
-                    max_node_weight = (node, node_weight)
                 valid_nodes.add(node)
-                n_nodes += 1
+                if len(valid_nodes) >= job.nodes:
+                    break
 
             if len(valid_nodes) == job.nodes:
                 # Cancel early if set to be cancelled in queue at later time
@@ -781,11 +800,13 @@ class Controller:
                     # Prioritise nodes that are available if job might be able to start now
                     if usage_block_start <= self.bf_secs_past:
                         selected_nodes.sort(
-                            key=lambda node: (node.running_job is not None, node.weight, node.id),
+                            key=lambda node: (
+                                node.running_job is not None, node.weight, node.hash_id
+                            ),
                             reverse=True
                         )
                     else:
-                        selected_nodes.sort(key=lambda node: (node.weight, node.id), reverse=True)
+                        selected_nodes.sort(key=lambda node: (node.weight, node.hash_id), reverse=True)
 
                     selected_nodes = selected_nodes[num_free_nodes - job.nodes:]
 
@@ -943,7 +964,7 @@ class Controller:
         if still_has_down_schedule:
             for node in still_has_down_schedule:
                 self.node_down_order.append(node)
-            self.node_down_order.sort(key=lambda node: node.down_schedule[-1][0], reverse=True)
+            self.node_down_order.sort(key=lambda node: (node.down_schedule[-1][0], node.hash_id), reverse=True)
 
     def _check_reservations(self):
         resv_update = False
@@ -1044,7 +1065,7 @@ class Controller:
                 self.node_reservation_order.pop()
             else:
                 self.node_reservation_order.sort(
-                    key=lambda node: node.reservation_schedule[-1][0], reverse=True
+                    key=lambda node: (node.reservation_schedule[-1][0], node.hash_id), reverse=True
                 )
 
             # if len(node.interval_times) > 2:
@@ -1264,4 +1285,23 @@ class Controller:
         #     )
         # print("sched", sched, "bf", bf, "sched_steps", self.num_sched_test_step)
         # print()
+
+        # n = 0
+        # for node in sorted(self.partitions.nodes, key=lambda node: (node.weight, node.hash_id)):
+        #     if not node.free:
+        #         continue
+        #     n += 1
+        #     print(node.id, end=" - ")
+        #     if n >= 5:
+        #         break
+        # print()
+
+        # n = 0
+        # for job in reversed(self.queue.queue):
+        #     n += 1
+        #     print(job.id, end=" - ")
+        #     if n >= 5:
+        #         break
+        # print()
+
 
