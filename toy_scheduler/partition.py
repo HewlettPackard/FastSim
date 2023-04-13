@@ -3,7 +3,7 @@ import datetime; from datetime import timedelta
 
 import pandas as pd
 
-from helpers import convert_nodelist_to_node_nums
+from aux_funcs import convert_nodelist_to_node_nums
 
 from job_queue import Job
 

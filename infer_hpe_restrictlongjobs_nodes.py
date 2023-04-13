@@ -7,7 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 
 sys.path.append("./toy_scheduler")
-from helpers import convert_nodelist_to_node_nums, timelimit_str_to_timedelta
+from aux_funcs import convert_nodelist_to_node_nums, timelimit_str_to_timedelta
 
 
 def main(args):

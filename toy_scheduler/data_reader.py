@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pandas as pd
 
-from helpers import (
+from aux_funcs import (
     convert_nodelist_to_node_nums, timelimit_str_to_timedelta, convert_to_raw, get_sbatch_cli_arg
 )
 

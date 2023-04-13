@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import pandas as pd
 
-from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_raw
+from aux_funcs import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_raw
 
 
 class Queue:

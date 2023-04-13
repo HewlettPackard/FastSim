@@ -12,11 +12,10 @@ from matplotlib import colors as mpl_colors
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes, mark_inset
 import numpy as np
 from tqdm import tqdm
-# import pandas # Needed for its converter for fill_between with datetimes
 
 from controller import Controller
 from fairshare import FairTree
-from helpers import mkdir_p
+from aux_funcs import mkdir_p
 
 # TODO
 # - Total power usage plots
