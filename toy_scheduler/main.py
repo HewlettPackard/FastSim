@@ -23,7 +23,7 @@ def print_sim_result(controller):
     max_submit = max(controller.job_history, key=lambda job: job.true_submit).true_submit
     job_history = [
         job
-        for job in controller.job_history 
+        for job in controller.job_history
             if (
                 (
                     controller.init_time + timedelta(days=2) < job.true_submit <
@@ -52,7 +52,7 @@ def print_sim_result(controller):
     ]
     sim_wait_times = [
         (job.start - job.submit).total_seconds() / 60 / 60
-        for job in job_history 
+        for job in job_history
     ]
     print(
         "True starts mean bd slowdown={}+-{} (total = {})\n".format(

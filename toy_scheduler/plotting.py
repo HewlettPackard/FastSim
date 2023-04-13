@@ -838,7 +838,7 @@ def main(args):
 
             if job.qos.name == "largescale":
                 print(
-                    job.id, job.nodes, job.true_submit,
+                    job.jid, job.nodes, job.true_submit,
                     job.runtime, job.reqtime, (job.start - job.submit).round(freq="S"),
                     job.true_job_start - job.true_submit, job.user, job.account,
                     sep=" - "

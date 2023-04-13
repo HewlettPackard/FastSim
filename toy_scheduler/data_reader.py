@@ -53,7 +53,6 @@ class SlurmDataReader:
         partition_data = {}
         nid_features, nodesets, nid_partitions, nid_weight = {}, {}, defaultdict(set), {}
 
-        # TODO Could probably look nice with more regex and less split spam
         with open(self.slurm_conf, "r") as f:
             for line in f:
                 if not bool(re.match("nodename=", line, flags=re.I)):
@@ -142,6 +141,7 @@ class SlurmDataReader:
             for data in partition_data.values():
                 data["prio_jobfactor"] /= max_partition_prio
 
+        # XXX All the hpe_restrictlong_nids stuff is ARCHER2 specific
         nid_data, hpe_restrictlong_nids = {}, []
 
         for nid in nid_partitions:
@@ -235,15 +235,8 @@ class SlurmDataReader:
                         key=lambda schedule: schedule[0], reverse=True
                     )
 
-        # TODO Hide all the below away, loads of mess just to do one fairly simple thing
-
-        # For ARCHER2 it looks like nodes that go down with a reason like
-        # "LFP: ..." "RML: ..." "KT: ..." are nodes that were in the maintenance reservation while
-        # something like "Not responding" are unplanned down states. Fill hpe_restriclong resv
-        # with nodes that go down for these reasons, extend the time they are in the resv such that
-        # the resv has at least the same number of nodes as the in the current resv dump
-
-        # Submit some hrs before first down time, add a -num to the end to overrride 8 hrs
+        # This is a big mess of pain trying different implementations of the HPE sliding
+        # maintenance reservation
         if "-" in hpe_restrictlong_sliding_res:
             hpe_restrictlong_sliding_res, submit_hrs_before = (
                 hpe_restrictlong_sliding_res.split("-")

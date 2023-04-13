@@ -8,16 +8,8 @@ import pandas as pd
 from helpers import get_sbatch_cli_arg, timelimit_str_to_timedelta, convert_to_raw
 
 
-# TODO Rework the resource limits implementation, there is a lot of overlap that could be removed
-
-# TODO Interaction between queue, priority sorter, and resource limits has become a bit of mess,
-# clean
-
-
 class Queue:
-    def __init__(
-        self, df_jobs, partitions_by_name, qos_data, valid_resv, priority_sorter
-    ):
+    def __init__(self, df_jobs, partitions_by_name, qos_data, valid_resv, priority_sorter):
         self.priority_sorter = priority_sorter
 
         self.qoss = {
@@ -57,25 +49,24 @@ class Queue:
         self.time = df_jobs.Start.min()
         self.all_jobs = [
             Job(
-                i_job, job_row.JobID, job_row.Submit, job_row.Nodes, job_row.Elapsed,
+                job_row.JobID, job_row.Submit, job_row.Nodes, job_row.Elapsed,
                 job_row.Timelimit, job_row.TruePowerPerNode, job_row.TruePowerPerNode,
                 job_row.Start, job_row.User, job_row.Account, self.qoss[job_row.QOS],
                 partitions_by_name[job_row.Partition], job_row.DependencyArg, job_row.JobName,
                 job_row.Reason, job_row.ReservationArg, job_row.BeginArg, job_row.Cancelled,
                 job_row.NodelistArg, job_row.ExcludeArg
-            ) for i_job, (_, job_row) in enumerate(df_jobs.iterrows())
+            ) for _, job_row in df_jobs.iterrows()
         ]
-        self.all_jobs.sort(key=lambda job: (job.submit, job.hash_id), reverse=True)
+        self.all_jobs.sort(key=lambda job: (job.submit, job.uniq_id), reverse=True)
 
-        # NOTE verify with jid first to ensure all jids have a Job in the data
         self._verify_dependencies()
         jid_to_job = {}
         for job in self.all_jobs:
-            if job.id not in jid_to_job:
-                jid_to_job[job.id] = job
+            if job.jid not in jid_to_job:
+                jid_to_job[job.jid] = job
             else:
-                if job.true_submit < jid_to_job[job.id].true_submit:
-                    jid_to_job[job.id] = job
+                if job.true_submit < jid_to_job[job.jid].true_submit:
+                    jid_to_job[job.jid] = job
         for job in self.all_jobs:
             job.init_dependency(jid_to_job)
 
@@ -115,13 +106,13 @@ class Queue:
             return
 
         try:
-            # resubmit = defaultdict(list)
             while self.all_jobs[-1].submit <= self.time:
                 new_job = self.all_jobs.pop()
 
-                # NOTE This association is no longer allowed to run jobs. This was not true in the
-                # past since the job is in the workload trace. For now just skip these jobs and
-                # keep this in mind. Could also give assoc a default allocation in this case.
+                # This association is no longer allowed to run jobs. This was not true in the
+                # past since the job is in the workload trace. For now just skip these jobs.
+                # Could also give assoc a default allocation in this case. This was relevant for
+                # LUMI
                 if (
                     (
                         ResourceLimit.ASSOC_JOBS in new_job.qos.controlled_by_assoc and
@@ -133,23 +124,13 @@ class Queue:
                     )
                 ):
                     continue
-
-                # NOTE commit 6b6482b has alternate implementation where submit jobs are held until
-                # the user's next submission. This works slightly better as entire sustem
-                # metrics but makes the wait times by qos an project worse
+                
+                # If MaxSubmit is reached hold the job until the earliest time it can be submitted
+                # then resubmit in the same order as the data
                 # NOTE Don't want mess up any dependency chains
                 if not new_job.is_dependency_target and new_job.qos.hold_job_submit(new_job):
                     self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
                     continue
-
-                # if new_job.qos.hold_job_submit(new_job):
-                #     if new_job.is_dependency_target:
-                #         self.qos_submit_held[new_job.qos].append(new_job.qos_submit_hold())
-                #         continue
-
-                #     resubmit[new_job.user].append(new_job)
-
-                #     continue
 
                 new_job.submit_job()
 
@@ -169,20 +150,6 @@ class Queue:
 
         except IndexError: # No more new jobs
             pass
-
-        # earliest_resubmit = self.time + timedelta(hours=1)
-        # for usr, resubmit_jobs in resubmit.items():
-        #     for i_job_rev, job in enumerate(reversed(self.all_jobs)):
-        #         if job.user != usr or job.submit < earliest_resubmit:
-        #             continue
-        #         for job_resubmit in resubmit_jobs:
-        #             job_resubmit.submit = job.submit
-        #         self.all_jobs[-i_job_rev:-i_job_rev] = reversed(resubmit_jobs)
-        #         break
-        #     if resubmit_jobs[0].submit == self.time:
-        #         for job_resubmit in resubmit_jobs:
-        #             job.ignore_in_eval = True
-        #             self.qos_submit_held[job_resubmit.qos].append(job_resubmit.qos_submit_hold())
 
         if len(self.queue) != pre_step_priority_len:
             self.priority_sorter.sort(self.queue, self.time)
@@ -274,7 +241,7 @@ class Queue:
         removed_res, removed_res_cnt = set(), 0
         for job in self.all_jobs:
             if not job.reservation:
-                # short qos is reservation required XXX This is only for ARCHER2
+                # XXX ARCHER2 specifig, short qos is automically has short resv
                 if job.qos.name == "short":
                     job.reservation = "shortqos"
                 else:
@@ -294,7 +261,7 @@ class Queue:
 
     def _verify_dependencies(self):
         removed_dep_cnt, ignored_dep_cnt = 0, 0
-        all_ids = { job.id for job in self.all_jobs }
+        all_ids = { job.jid for job in self.all_jobs }
         for job in self.all_jobs:
             if not job.dependency:
                 # Dependency hidden in batch file or just removed
@@ -570,12 +537,12 @@ class AssocLimit:
 
 class Job:
     def __init__(
-        self, hash_id, id, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
+        self, jid, submit : datetime, nodes, runtime : timedelta, reqtime: timedelta, node_power,
         true_node_power, true_job_start, user, account, qos, partition, dependency_arg, name,
         reason, reservation_arg, begin_arg, cancelled, nodelist_arg, exclude_arg
     ):
-        self.hash_id = hash_id
-        self.id = id
+        self.uniq_id = hash((jid, submit))
+        self.jid = jid
         self.nodes = nodes
         self.runtime = runtime
         self.reqtime = reqtime
@@ -615,7 +582,6 @@ class Job:
         # and some I cant implemented with available data (JobArrayTaskLimit is usually specified
         # in batch script). Want to have these jobs in simulation but don't want to include them in
         # evaluation stage
-
         self.reason = reason
         self.ignore_in_eval = (
             reason in [
@@ -638,12 +604,11 @@ class Job:
         self.cancel = None
 
     def __hash__(self):
-        return self.hash_id
-        # return hash((self.id, self.true_submit))
+        return self.uniq_id
 
     def __eq__(self, other):
         if isinstance(other, Job):
-            return self.id == other.id and self.true_submit == other.true_submit
+            return self.uniq_id == other.uniq_id
         return False
 
     def init_dependency(self, jid_to_job):

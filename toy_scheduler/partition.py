@@ -8,7 +8,6 @@ from helpers import convert_nodelist_to_node_nums
 from job_queue import Job
 
 
-# NOTE Do I really need this partitions class, not doing anything but hiding the data prep atm
 class Partitions:
     def __init__(self, nid_data, partition_data):
         self.partitions = {
@@ -19,9 +18,8 @@ class Partitions:
 
         self.nodes = set()
 
-        # Use a reproducible integer id rather than string, might save some time in sorting algos
-        for i_nid, (nid, data) in enumerate(sorted(nid_data.items())):
-            node = Node(nid, i_nid, data["weight"], data["down_schedule"], data["resv_schedule"])
+        for nid, data in sorted(nid_data.items()):
+            node = Node(nid, data["weight"], data["down_schedule"], data["resv_schedule"])
             for p_name in data["partitions"]:
                 self.partitions_by_name[p_name].add_node(node)
             self.nodes.add(node)
@@ -54,84 +52,6 @@ class Partitions:
         interval = (node.interval_times[0], node.interval_times[-1])
         self.free_blocks[node.reservation][interval].add(node)
 
-    def clean_free_blocks(self, time, bf_resolution):
-        # Give all overrunning jobs some extra time and set all intervals with a start time in the
-        # past to a start time now
-
-        for res, free_blocks in self.free_blocks.items():
-            for interval in list(free_blocks):
-                if interval[0] > time:
-                    continue
-
-                for node in list(free_blocks[interval]):
-                    if node.running_job:
-                        node.interval_times[0] = time + bf_resolution
-                    elif interval[0] != time:
-                        node.interval_times[0] = time
-                    else:
-                        continue
-
-                    free_blocks[interval].remove(node)
-
-                    # Guard against reservations overlapping with eachother. Remove if this shift
-                    # causes the earliest reservation to fall entirely behind current time.
-                    while (
-                        len(node.interval_times) > 2 and
-                        node.interval_times[0] >= node.interval_times[2]
-                    ):
-                        plnd_job = None
-                        for job in node.jobs_plnd:
-                            if job.planned_block[0][0] == node.interval_times[1]:
-                                plnd_job = job
-                                break
-                        plnd_job.planned_block[1].remove(node)
-                        if not plnd_job.planned_block[1]:
-                            plnd_job.planned_block = None
-                        node.jobs_plnd.remove(plnd_job)
-
-                        node.interval_times.pop(2)
-                        node.interval_times.pop(1)
-
-                    free_blocks[(node.interval_times[0], node.interval_times[-1])].add(node)
-
-                if not free_blocks[interval]:
-                    free_blocks.pop(interval)
-
-    def clear_planned_blocks(self, target=None):
-        if isinstance(target, Job):
-            job = target
-
-            if job.planned_block is None:
-                return
-
-            free_blocks = self.free_blocks[job.reservation]
-
-            for node in job.planned_block[1]:
-                i_start = node.interval_times.index(job.planned_block[0][0])
-                if node.interval_times[i_start] != node.interval_times[i_start + 1]:
-                    i_start -= 1
-                node.interval_times.pop(i_start + 2)
-                node.interval_times.pop(i_start + 1)
-                node.jobs_plnd.remove(job)
-
-            job.planned_block = None
-
-        # Clears all free blocks related to this node, will need to be readded to free_blocks
-        # afrterwards if node not doing down
-        elif isinstance(target, Node):
-            node = target
-
-            while node.jobs_plnd:
-                job = node.jobs_plnd.pop()
-                job.planned_block[1].remove(node)
-                if not job.planned_block[1]:
-                    job.planned_block = None
-
-            node.interval_times = [node.interval_times[0], node.interval_times[-1]]
-
-        else:
-            raise NotImplementedError("Something's gone wrong")
-
     def get_partition_by_name(self, name):
         return self.partitions_by_name[name]
 
@@ -155,14 +75,14 @@ class Partition:
     def add_node(self, node):
         node.partitions.append(self)
         self.nodes.append(node)
-        # TODO does this still need to be sorted? can it just be a set
-        self.nodes.sort(key=lambda node: (node.weight, node.id)) # Small weights get priority
+        # does this still need to be sorted? can it just be a set
+        self.nodes.sort(key=lambda node: (node.weight, node.nid)) # Small weights get priority
 
 
 class Node:
-    def __init__(self, name, hash_id, weight, down_schedule, reservation_schedule):
-        self.id = name
-        self.hash_id = hash_id
+    def __init__(self, nid, weight, down_schedule, reservation_schedule):
+        self.nid = nid
+        self.nid_hash = hash(nid)
         self.weight = weight
 
         self.free = True
@@ -186,16 +106,15 @@ class Node:
             datetime.datetime.min,
             datetime.datetime.max if not reservation_schedule else reservation_schedule[-1][0]
         ]
-        self.jobs_plnd = set()
 
         self.bf_free_blocks_start = None
 
     def __hash__(self):
-        return self.hash_id
+        return self.nid_hash
 
     def __eq__(self, other):
         if isinstance(other, Node):
-            return self.hash_id == other.hash_id
+            return self.nid == other.nid
         return False
 
     def set_reserved(self, reservation_name, end_time):

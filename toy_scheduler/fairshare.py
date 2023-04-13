@@ -3,9 +3,6 @@ import os
 import pandas as pd
 import numpy as np
 
-
-# TODO define a base class and make this neater, _ infront of add_parent to indicate private
-
 # NOTE Assuming that users appear on the at levels where there are only other users (other leaf
 # nodes). This is relevant to tie breakers on mixed account user levels
 
@@ -111,7 +108,7 @@ class FairTree:
         self.root_node, flat_tree = self._load_tree_slurm(
             assoc_file, active_usrs, excess_usr_assocs, partitions
         )
-        self.levels = [[self.root_node]] # NOTE Don't think I actually need this
+        self.levels = [[self.root_node]]
 
         current_level = 0
         while(len(self.levels) > current_level):
@@ -184,10 +181,8 @@ class FairTree:
             for node in nodes:
                 node.usage *= decay_constant
 
-    # NOTE Ties between sibling users handled properly by not implemented ties between accounts
-    # (merge children and sort). This merging is only relevant when ties are caused by exact
-    # same usages rather than two accounts both having zero usage so ok to not bother implementing
-    # (tired)
+    # NOTE Ties between sibling users handled properly but not implemented ties between accounts
+    # (merge children and sort)
     def _tree_traversal(self, current_node, rank=-1, last_leaf_levelfs=None, tie_cnt=0):
         if current_node.is_leaf:
             if current_node.levelfs == last_leaf_levelfs:
@@ -208,7 +203,6 @@ class FairTree:
                 else:
                     child_node.levelfs = np.inf if child_node.shares else 0
             current_node.new_child_usage = False
-            # NOTE Need this for reproducibility when accounts have same levelfs
             current_node.children.sort(key=lambda node: (node.levelfs, node.name), reverse=True)
 
         for child_node in current_node.children:
