@@ -22,7 +22,11 @@ hope is somewhat readable. Also sorry about the lack of docstrings.
 ## Running the Simulation
 
 I have been using a Python 3.8.5 virtual environment. There is a requirements.txt for pip or just
-do: ``` pip install pandas numpy pyyaml dill matplotlib pyqt5 ```
+do:
+
+```
+pip install pandas numpy pyyaml dill matplotlib pyqt5
+```
 
 The simulator uses dumps from Slurm accounting which can be made using the `slurm_dump.sh` script.
 It can take quite a long time for a large number of jobs since it is anonymising all users and
@@ -33,8 +37,11 @@ specific parameters, and explicitly override any desired Slurm parameters. An ex
 [here](configs/4monthdata_baseline_conf.yaml).
 
 The simulation is started by initialising `Controller` with a config file path and calling
-`run_sim()`. This can be done with `main.py` like: ``` python main.py --dump_sim_to
-/path/to/save/results /path/to/config ```
+`run_sim()`. This can be done with `main.py` like:
+
+```
+python main.py --dump_sim_to /path/to/save/results /path/to/config
+```
 
 ## Limitations
 
