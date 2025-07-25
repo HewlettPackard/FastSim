@@ -1,11 +1,11 @@
-# Slurm Simulator
+# FastSim
 
-Code for a Slurm simulator form work done during the 2022-2023 MODA internship. Accompanies
-[paper](slurm_sim_paper.pdf). Contact me at `alexander.wilkinson.20@ucl.ac.uk` with any questions.
+FastSim is a lightweight SLURM simulator tool, originally developed by Alexander Wilkinson as part of an internship program in the HPE HPC/AI EMEA Research Lab. This tool simulates SLURM scheduling using historical workload accounting data, providing a fast mechanism for evaluation and comparison of scheduling strategies incorporating external factors such as energy awareness. 
+
 
 ## Overview
 
-![image](slurm_sim_diagram.png)
+![image](docs/slurm_sim_diagram.png)
 
 The simulator is designed to include the features of Slurm most relevant to scheduling so that the
 aggregate performance of a system over its historical job data can be simulated accurately. It was
@@ -14,10 +14,14 @@ simulation of ARCHER2 was possible. The simulator is general enough to read in a
 Slurm and at least run. Accurate simulation will might require examining the Slurm configuration
 and implementing features that were not relevant for ARCHER2.
 
-I see this project as a proof of principle that something in between some generic FIFO+Backfilling
+This project is proof of principle that something in between some generic FIFO+Backfilling
 code and full Slurm simulation is valuable for HPC scheduling research. It is not a finished
-product and the design could probably use some rethinking in places. It does at least run and I
-hope is somewhat readable. Also sorry about the lack of docstrings.
+product, and is undergoing further development.
+
+
+## References
+
+[Wilkinson, Alex & Jones, Jessica & Richardson, Harvey & Dykes, T. & Haus, Utz-Uwe. (2023). A Fast Simulator to Enable HPC Scheduling Strategy Comparisons. 10.1007/978-3-031-40843-4_24.](docs/slurm_sim_paper.pdf).
 
 ## Running the Simulation
 
@@ -28,7 +32,7 @@ do:
 pip install pandas numpy pyyaml dill matplotlib pyqt5
 ```
 
-The simulator uses dumps from Slurm accounting which can be made using the `slurm_dump.sh` script.
+The simulator uses dumps from Slurm accounting which can be made using the [`slurm_dump.sh`](scripts/slurm_dump.sh) script.
 It can take quite a long time for a large number of jobs since it is anonymising all users and
 accounts.
 
@@ -112,3 +116,13 @@ are ties. This is important for comparing simulations and maintaining sanity whe
 Swapping lists for heaps would be a good performance optimisation since often only need the know
 the highest priority object at each step.
 
+
+## Contributors
+
+The following people have contributed to this project, either via direct code contributions, or via design and/or supervisory input. 
+
+- Alexander Wilkinson `alexander.wilkinson.20@ucl.ac.uk`
+- Tim Dykes `tim.dykes@hpe.com`
+- Jess Jones
+- Harvey Richardson
+- Utz-Uwe Haus
