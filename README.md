@@ -29,7 +29,7 @@ I have been using a Python 3.8.5 virtual environment. There is a requirements.tx
 do:
 
 ```
-pip install pandas numpy pyyaml dill matplotlib pyqt5
+pip install pandas numpy pyyaml dill matplotlib
 ```
 
 The simulator uses dumps from Slurm accounting which can be made using the [`slurm_dump.sh`](scripts/slurm_dump.sh) script.

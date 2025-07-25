@@ -45,7 +45,7 @@ from aux_funcs import mkdir_p
 global bd_threshold
 bd_threshold = timedelta(minutes=10)
 
-matplotlib.use('Qt5Agg')
+matplotlib.use('TkAgg')
 plt.style.use('tableau-colorblind10')
 
 
