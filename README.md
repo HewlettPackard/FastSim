@@ -121,8 +121,8 @@ the highest priority object at each step.
 
 The following people have contributed to this project, either via direct code contributions, or via design and/or supervisory input. 
 
-- Alexander Wilkinson `alexander.wilkinson.20@ucl.ac.uk`
-- Tim Dykes `tim.dykes@hpe.com`
+- Alexander Wilkinson
+- Tim Dykes 
 - Jess Jones
 - Harvey Richardson
 - Utz-Uwe Haus
