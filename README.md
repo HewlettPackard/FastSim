@@ -116,6 +116,23 @@ are ties. This is important for comparing simulations and maintaining sanity whe
 Swapping lists for heaps would be a good performance optimisation since often only need the know
 the highest priority object at each step.
 
+## Contributing
+
+We require all commits to be signed off in compliance with the [Developer Certificate of Origin (DCO)](./DCO).
+
+To sign off a commit, add a line like this at the end of your commit message:
+
+````
+Signed-off-by: Your Name your.email@example.com
+````
+
+Git can do this automatically with the `-s` flag, if `user.name` and `user.email` are configured:
+
+````
+git commit -s -m "Your commit message"
+````
+
+Pull requests with unsigned commits will not be merged.
 
 ## Contributors
 
