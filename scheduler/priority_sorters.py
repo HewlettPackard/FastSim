@@ -43,7 +43,7 @@ class MFPrioritySorter:
         qos_weight, no_partition_priority_tiers, fairtree, total_nodes,
         # Energy-aware parameters:
         power_weight=0,           # PriorityWeightEnergy (if 0, energy factor is disabled)
-        re_csv_path=None,         # Path to CSV file with columns "time" and "re_availability"
+        re_fp=None,         # Path to CSV file with columns "time" and "re_availability"
         P_min=None,               # Minimum expected power usage (Watts)
         P_max=None,               # Maximum expected power usage (Watts)
         power_alpha=None,         # Energy-Aware Scheduling configurable parameter
@@ -68,7 +68,7 @@ class MFPrioritySorter:
             total_nodes: Total number of nodes (used to normalize the job size weight).
             
             power_weight: Weight for the energy-based priority boost.
-            re_csv_path: Path to CSV file with columns "time" (seconds) and "re_availability" ([0,1]).
+            re_fp: Path to CSV file with columns "time" (seconds) and "re_availability" ([0,1]).
             P_min: Minimum expected job power (Watts).
             P_max:  Maximum expected job power (Watts).
             alpha, beta, gamma, time_boost_start, time_boost_end: configurable energy-aware sched params
@@ -116,8 +116,8 @@ class MFPrioritySorter:
             self.power_gamma = power_gamma
 
             # Create a lookup dictionary for RE availability if CSV path is provided.
-            if re_csv_path != "":
-                self._initialize_re_map(re_csv_path)
+            if re_fp != "":
+                self._initialize_re_map(re_fp)
             else:
                 self.re_map = None
 
@@ -226,12 +226,12 @@ class MFPrioritySorter:
 
     # Energy-Aware Scheduling
     
-    def _initialize_re_map(self, re_csv_path):
+    def _initialize_re_map(self, re_fp):
         """
         Load RE availability data from CSV and create a dictionary mapping integer timestamps
         to RE availability values. Also store the minimum and maximum timestamps.
         """
-        df = pd.read_csv(re_csv_path)
+        df = pd.read_csv(re_fp)
         # Convert the "time" column to datetime objects
         df["time"] = pd.to_datetime(df["time"])
         # Convert the datetime to integer seconds (Unix timestamp)

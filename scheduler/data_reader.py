@@ -847,7 +847,7 @@ class SlurmDataReader:
         # df_jobs = df_jobs.loc[(df_jobs.Submit <= max_submit)]
 
         # Merging predicted power and runtime data, if available
-        if predicted_power != '' and predicted_runtime != '':
+        if predicted_power and predicted_runtime:
             # The predicted power and runtime files must contain columns job_array_id and predicted_power/runtime
             # job_array_id is of the form JJJJJJJ or JJJJJJJ_A, where 'J' is the Job ID, and 'A' is the array position
             # for array jobs. This format matches the format used in the df_jobs dataframe.

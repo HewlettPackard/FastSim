@@ -31,7 +31,7 @@ import yaml
 # happend because to capture all assocs they need to be dumped "withDeleted" so you end up with
 # some assocs that never existed at any given time.
 defaults = {
-    "defer" : False, # Setting this option will avoid attempting to schedule each job individually 
+    "defer" : True, # Setting this option will avoid attempting to schedule each job individually 
                      # at job submit time, but defer it until a later time when scheduling multiple jobs 
                      # simultaneously may be possible.
     "default_queue_depth" : 100, # The default number of jobs to attempt scheduling (i.e. the queue depth) 
@@ -53,7 +53,7 @@ defaults = {
                                    # This specifies the times when the locks are relinquished in microseconds.
     "bf_yield_sleep" : 500000, # The backfill scheduler will periodically relinquish locks in order for other pending operations to take place. 
                                # This specifies the length of time for which the locks are relinquished in microseconds.
-    "bf_continue" : False, # Setting this option will cause the backfill scheduler to continue processing pending jobs from its original job list 
+    "bf_continue" : True, # Setting this option will cause the backfill scheduler to continue processing pending jobs from its original job list 
                            # after releasing locks even if job or node state changes.
     
     "PriorityCalcPeriod" : 5, # The period of time in minutes in which the half-life decay will be re-calculated.

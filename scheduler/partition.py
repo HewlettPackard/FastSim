@@ -212,7 +212,9 @@ class Node:
 
         self.rack = nid[:5]
         """
-        The node rack is declared in the first 5 characters, e.g. x1008 from node ID x1008c0s0b0n0
+        The node rack is declared in the first 5 characters, e.g. x1008 from node ID x1008c0s0b0n0.
+
+        TODO: This is specific to that naming convention, and needs to be generalized via configuration.
         """
 
         self._stable_hash = int.from_bytes(

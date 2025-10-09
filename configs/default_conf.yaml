@@ -1,0 +1,64 @@
+assocs_dump: "../slurm_dump/sacctmgr_assocs.csv"
+qos_dump: "../slurm_dump/sacctmgr_qos.csv"
+node_events_dump: "../slurm_dump/sacctmgr_events.csv"
+resv_dump_current: "../slurm_dump/sinfo_resv.csv"
+resv_dump_historic: "../slurm_dump/sreport_resv.csv"
+job_dump: "../slurm_dump/sacct_jobs.csv"
+slurm_conf: "../slurm_dump/slurm.conf"
+
+# This parameter is used to specificy the system being studied, which is necessary
+# to handle system-specific properties such as node-naming conventions.
+system: "default"
+
+# The partitions considered by the simulator. Jobs submitted to other partitions will be ignored.
+considered_partitions: ["debug", "short", "standard", "long", "standby"]
+
+# Slurm config parameters
+default_queue_depth: 100    # The default number of jobs to attempt scheduling (i.e. the queue depth) 
+                            # when a running job completes or other routine actions occur
+sched_interval: 60          # How frequently, in seconds, the main scheduling loop will execute and test all pending jobs
+sched_min_interval: 2000000 # How frequently, in microseconds, the main scheduling loop will execute and test any pending jobs.
+                            # The scheduler runs in a limited fashion every time that any event happens which could enable a job 
+                            # to start (e.g. job submit, job terminate, etc.). If these events happen at a high frequency, the 
+                            # scheduler can run very frequently and consume significant resources if not throttled by this option. 
+                            # This option specifies the minimum time between the end of one scheduling cycle and the beginning of 
+                            # the next scheduling cycle.
+bf_resolution: 60           # The number of seconds in the resolution of data maintained about when jobs begin and end.
+bf_max_job_test: 500        # The maximum number of jobs to attempt backfill scheduling for (i.e. the queue depth).
+bf_window: 1440             # The number of minutes into the future to look when considering jobs to schedule.
+bf_interval: 30             # The number of seconds between backfill iterations.
+bf_max_time: 30             # The maximum time in seconds the backfill scheduler can spend (including time spent sleeping when locks are released) 
+                            # before discontinuing, even if maximum job counts have not been reached.
+bf_yield_interval: 2000000  # The backfill scheduler will periodically relinquish locks in order for other pending operations to take place.
+                            # This specifies the times when the locks are relinquished in microseconds.
+bf_yield_sleep: 500000      # The backfill scheduler will periodically relinquish locks in order for other pending operations to take place. 
+                            # This specifies the length of time for which the locks are relinquished in microseconds.
+max_switch_wait: 0          # Specifies the maximum time a job can wait for desired number of leaf switches. Setting to zero bypasses this wait.
+
+# Simulator-specific config parameters
+approx_excess_assocs: 0
+approx_bf_try_per_sec : 3
+hpe_restrictlong_sliding_reservations: ""
+nodes_down_in_blades: False
+max_switch_nodes: 256       # This is maximum size of a job that might be constrained by max_switch_wait
+
+# This is the list of reservation names reactively put in place by sysadmins, for instances where 
+# nodes should be held out of the set available for job scheduling such as when a node goes down 
+# and needs to be repaired. These do not cause the nodes to be drained in advance of the reservation time.
+impromptu_reservation_names: [
+                              "multijob",
+                              "systemtime-gpu",
+                              "systemtime-cpu",
+                              "noderepair"
+                              ] 
+
+initialize: True # Whether to start the simulator with an intial state at sim_start
+sim_start: '2025-01-01T00:00:00'
+sim_end: '2025-02-01T00:00:00'
+
+
+# Default power-per-node
+Pdefault: 600
+
+# How many steps elapsed between saving intermediate results
+save_interval_steps: 50000

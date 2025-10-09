@@ -75,9 +75,7 @@ class Controller:
     _check_reservations
     _print_stats
     """
-    def __init__(self, config_file, results_filepath, 
-                 power_weight=0, power_alpha=None, power_beta=None, power_gamma=None, 
-                 power_time_boost_start=None, power_time_boost_end=None):
+    def __init__(self, config_file, results_filepath):
         """
         Initialize the controller.
         """
@@ -146,9 +144,9 @@ class Controller:
                                                       self.config.sim_start, 
                                                       self.config.sim_end, 
                                                       self.config.initialize,
-                                                      self.config.supplementary_resv,
-                                                      self.config.predicted_power,
-                                                      self.config.predicted_runtime
+                                                      supplementary_resv=getattr(self.config, "supplementary_resv", None),
+                                                      predicted_power=getattr(self.config, "predicted_power", None),
+                                                      predicted_runtime=getattr(self.config, "predicted_runtime", None),
                                                       )
         """
         Get a cleaned dataframe of jobs from the job trace in sacct_jobs.csv
@@ -249,21 +247,6 @@ class Controller:
         """
         
 
-        self.power_weight = power_weight
-        """
-        Power Priority Weight
-        """
-
-        self.power_alpha = power_alpha
-        self.power_beta = power_beta
-        self.power_gamma = power_gamma
-        """
-        Exponent used when calculating closeness to optimal job.
-        """
-
-        self.power_time_boost_start = power_time_boost_start
-        self.power_time_boost_end = power_time_boost_end
-
         self.print_and_log('Initializing Multifactor Priority sorter'.rjust(100,'.'))
         priority_sorter = MFPrioritySorter(
             self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
@@ -271,10 +254,13 @@ class Controller:
             self.config.PriorityWeightPartition, self.config.PriorityWeightQOS,
             len({ partition.priority_tier for partition in self.partitions.partitions }) == 1,
             self.fairtree, len(self.partitions.nodes),
-            self.power_weight, # Use the power priority weight from the command line
-            self.config.re_fp, self.config.Pmin, self.config.Pmax, 
-            self.power_alpha, self.power_beta, self.power_gamma, 
-            self.power_time_boost_start, self.power_time_boost_end
+            power_weight=getattr(self.config, "power_weight", 0),
+            re_fp=getattr(self.config, "re_fp", None),
+            power_alpha=getattr(self.config, "power_alpha", None),
+            power_beta=getattr(self.config, "power_beta", None),
+            power_gamma=getattr(self.config, "power_gamma", None),
+            power_time_boost_start=getattr(self.config, "power_time_boost_start", None),
+            power_time_boost_end=getattr(self.config, "power_time_boost_end", None)
         )
         """
         Initialize the Multifactor Priority sorter we will use to sort the queue.

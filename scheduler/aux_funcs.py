@@ -77,7 +77,6 @@ def convert_nodelist_to_node_nums(nid_str, system="kestrel"):
         # Return the entire list of all Node IDs for all matches
         return all_node_ids
     else:
-        # This was the previous implementation, I assume for Lumi
         if nid_str == "dummy":
             return -1
         node_nums = []
