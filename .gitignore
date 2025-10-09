@@ -7,6 +7,8 @@
 /profiling/
 /slurm_dump/
 /results/
+/processed_results/
+/figures/
 
 __pycache__
 
