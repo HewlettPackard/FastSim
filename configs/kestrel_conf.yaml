@@ -1,0 +1,47 @@
+assocs_dump: "../slurm_dump/sacctmgr_assocs.csv"
+qos_dump: "../slurm_dump/sacctmgr_qos.csv"
+node_events_dump: "../slurm_dump/sacctmgr_events.csv"
+resv_dump_current: "../slurm_dump/sinfo_resv.csv"
+resv_dump_historic: "../slurm_dump/sreport_resv.csv"
+job_dump: "../slurm_dump/sacct_jobs.csv"
+slurm_conf: "../slurm_dump/slurm.conf"
+
+system: "kestrel"
+
+considered_partitions: ["debug", "debug-stdby", "short", "short-stdby", "standard", "standard-stdby", "long", "long-stdby"]
+
+approx_excess_assocs: 0
+
+hpe_restrictlong_sliding_reservations: ""
+nodes_down_in_blades: False
+
+#bf_max_job_test: 1000
+#bf_window: 5760
+#bf_continue: True
+#defer: True
+#default_queue_depth: 256
+
+#sched_min_interval : 12000000 
+approx_bf_try_per_sec : 3
+
+sim_start: '2024-09-01T00:00:00'
+sim_end: '2024-09-15T00:00:00'
+initialize: True # Whether to start the simulator with an intial state at sim_start
+
+# Energy-Aware Scheduling Parameters
+re_fp: ""
+Pmin: 0
+Pmax: 800
+Pdefault: 600
+
+save_interval_steps: 50000
+max_switch_nodes: 256
+impromptu_reservation_names: [
+                              "multijob",
+                              "systemtime-gpu",
+                              "systemtime-cpu",
+                              ]
+
+supplementary_resv: "../slurm_dump/kestrel_jobs_w_reservations.csv" 
+predicted_power: "../power_data/predicted_power.pkl"
+predicted_runtime: "../power_data/predicted_runtime.pkl"

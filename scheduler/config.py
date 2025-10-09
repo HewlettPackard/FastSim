@@ -1,26 +1,3 @@
-# MIT License
-#
-# Copyright (c) 2023-2025 Hewlett Packard Enterprise Development LP 
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-import os
 from datetime import timedelta
 from collections import namedtuple
 
@@ -32,19 +9,73 @@ import yaml
 # happend because to capture all assocs they need to be dumped "withDeleted" so you end up with
 # some assocs that never existed at any given time.
 defaults = {
-    "bd_threshold" : 60, "defer" : False, "default_queue_depth" : 100, "sched_interval" : 60,
-    "sched_min_interval" : 2000000, "PriorityCalcPeriod" : 5, "bf_resolution" : 60,
-    "bf_max_job_test" : 500, "bf_window" : 1440, "bf_interval" : 30, "bf_max_time" : 30,
-    "bf_yield_interval" : 2000000, "bf_yield_sleep" : 500000, "bf_continue" : False,
-    "hpe_restrictlong_sliding_reservations" : "const", "PriorityMaxAge" : 7,
-    "PriorityDecayHalfLife" : 7, "PriorityWeightAge" : 0, "PriorityWeightFairshare" : 0,
-    "PriorityWeightJobSize" : 0, "PriorityWeightPartition" : 0, "PriorityWeightQOS" : 0,
-    "approx_excess_assocs" : 0, "JobRequeue" : 1, "approx_bf_try_per_sec" : 10, "KillWait" : 30,
-    "OverTimeLimit" : 0, "nodes_down_in_blades" : False
+    "defer" : False, # Setting this option will avoid attempting to schedule each job individually 
+                     # at job submit time, but defer it until a later time when scheduling multiple jobs 
+                     # simultaneously may be possible.
+    "default_queue_depth" : 100, # The default number of jobs to attempt scheduling (i.e. the queue depth) 
+                                 # when a running job completes or other routine actions occur
+    "sched_interval" : 60, # How frequently, in seconds, the main scheduling loop will execute and test all pending jobs
+    "sched_min_interval" : 2000000, # How frequently, in microseconds, the main scheduling loop will execute and test any pending jobs.
+                                    # The scheduler runs in a limited fashion every time that any event happens which could enable a job 
+                                    # to start (e.g. job submit, job terminate, etc.). If these events happen at a high frequency, the 
+                                    # scheduler can run very frequently and consume significant resources if not throttled by this option. 
+                                    # This option specifies the minimum time between the end of one scheduling cycle and the beginning of 
+                                    # the next scheduling cycle.
+    "bf_resolution" : 60, # The number of seconds in the resolution of data maintained about when jobs begin and end.
+    "bf_max_job_test" : 500, # The maximum number of jobs to attempt backfill scheduling for (i.e. the queue depth).
+    "bf_window" : 1440, # The number of minutes into the future to look when considering jobs to schedule.
+    "bf_interval" : 30, # The number of seconds between backfill iterations.
+    "bf_max_time" : 30, # The maximum time in seconds the backfill scheduler can spend (including time spent sleeping when locks are released) 
+                        # before discontinuing, even if maximum job counts have not been reached.
+    "bf_yield_interval" : 2000000, # The backfill scheduler will periodically relinquish locks in order for other pending operations to take place.
+                                   # This specifies the times when the locks are relinquished in microseconds.
+    "bf_yield_sleep" : 500000, # The backfill scheduler will periodically relinquish locks in order for other pending operations to take place. 
+                               # This specifies the length of time for which the locks are relinquished in microseconds.
+    "bf_continue" : False, # Setting this option will cause the backfill scheduler to continue processing pending jobs from its original job list 
+                           # after releasing locks even if job or node state changes.
+    
+    "PriorityCalcPeriod" : 5, # The period of time in minutes in which the half-life decay will be re-calculated.
+    "PriorityMaxAge" : 7, # Specifies the job age which will be given the maximum age factor in computing priority. 
+                          # For example, a value of 30 minutes would result in all jobs over 30 minutes old would 
+                          # get the same age-based priority.
+    "PriorityDecayHalfLife" : 7, # This controls how long prior resource use is considered in determining how over- 
+                                 # or under-serviced an association is (user, bank account and cluster) in determining 
+                                 # job priority. The default value is 7 days.
+    "PriorityWeightAge" : 0, # An integer value that sets the degree to which the queue wait time component contributes to the job's priority.
+    "PriorityWeightFairshare" : 0, # An integer value that sets the degree to which the fair-share component contributes to the job's priority.
+    "PriorityWeightJobSize" : 0, # An integer value that sets the degree to which the job size component contributes to the job's priority.
+    "PriorityWeightPartition" : 0, # Partition factor used by priority/multifactor plugin in calculating job priority.
+    "PriorityWeightQOS" : 0, # An integer value that sets the degree to which the Quality Of Service component contributes to the job's priority.
+    "PriorityWeightPower" : 0, # An integer value that sets the degree to which the Power component contributes to the job's priority.
+
+    "JobRequeue" : 1, # This option controls the default ability for batch jobs to be requeued. Jobs may be requeued explicitly by a system 
+                      # administrator, after node failure, or upon preemption by a higher priority job. If JobRequeue is set to a value of 1, 
+                      # then batch jobs may be requeued unless explicitly disabled by the user. If JobRequeue is set to a value of 0, then batch 
+                      # jobs will not be requeued unless explicitly enabled by the user.
+    "KillWait" : 30, # The interval, in seconds, given to a job's processes between the SIGTERM and SIGKILL signals upon reaching its time limit.
+    "OverTimeLimit" : 0, # Number of minutes by which a job can exceed its time limit before being canceled.
+    "max_switch_wait": 172800, # Max number of seconds to wait for nodes on the same rack, before scheduling a job with nodes on different racks
+
+    # Simulator-specific parameters (not specific to Slurm)
+    "approx_bf_try_per_sec" : 10, # This is simulator specific (limiting backfilling to approximate CPU limitations)
+    "approx_excess_assocs" : 0, # This is simulator specific (see above)
+    "bd_threshold" : 60, # This is the threshold used when calculating bounded slowdown
+    "hpe_restrictlong_sliding_reservations" : "const", # This is cluster (Lumi?) specific
+    "nodes_down_in_blades" : False, # This is cluster (Lumi?) specific (when a node is down, all nodes in the blade are placed in down state)
 }
 
+
+# These are Slurm configurable parameters, but not yet implemented.
+# max_rpc_cnt               # If the number of active threads in the slurmctld daemon is equal to or larger than this value, defer scheduling of jobs.
+# max_sched_time            # How long, in seconds, that the main scheduling loop will execute for before exiting.
+# partition_job_depth       # The default number of jobs to attempt scheduling (i.e. the queue depth) 
+                            # from each partition/queue in Slurm's main scheduling logic.
+# sched_max_job_start       # The maximum number of jobs that the main scheduling logic will start in any single execution.
+# batch_sched_delay         # How long, in seconds, the scheduling of batch jobs can be delayed.
+# bf_max_job_user_part      # The maximum number of jobs per user per partition to attempt starting with the backfill scheduler for any single partition.
+
 vals_us = ["sched_min_interval", "bf_yield_interval", "bf_yield_sleep"]
-vals_s = ["sched_interval", "bf_resolution", "bf_interval", "bf_max_time", "KillWait"]
+vals_s = ["sched_interval", "bf_resolution", "bf_interval", "bf_max_time", "KillWait", "max_switch_wait"]
 vals_min = ["bd_threshold", "PriorityCalcPeriod", "bf_window", "OverTimeLimit"]
 vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
 vals_bool = ["JobRequeue"]
@@ -52,31 +83,38 @@ vals_bool = ["JobRequeue"]
 # TODO Include node/partition information dump once setup to read this
 mandatory_fields = set(
     (
-        "assocs_dump", "node_events_dump", "resv_dump", "job_dump", "slurm_conf",
+        "assocs_dump", "node_events_dump", 
+        "resv_dump_current", "resv_dump_historic", 
+        "job_dump", "slurm_conf",
         "considered_partitions", "qos_dump"
     )
 )
 
-
 def get_config(config_file):
     print("Reading config from {}".format(config_file))
 
+    # Read the config file chosen from ../configs directory
     with open(config_file) as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
+    # Read the slurm.conf file in slurm_dump
     with open(config_dict["slurm_conf"], "r") as f:
         for line in f:
-            if line[0] == "#":
+            if line[0] == "#": # Skip lines that are commented out
                 continue
 
             line = line.strip("\n")
+            # Paramaters are set in each line, get the parameter being set in this line
             param = line.split("=")[0].strip(" ")
 
+            # Handle the scheduler parameters
             if param == "SchedulerParameters":
                 line = line.replace(" ", "")
+                # Each subparam_entry is in the form 'subparam=value'
                 subparam_entries = line.lstrip(param + "=").split(",")
                 for subparam_entry in subparam_entries:
-                    if "=" not in subparam_entry:
+                    # Handle boolean suparameters (their existence in this list designates them as True)
+                    if "=" not in subparam_entry: 
                         defaults[subparam_entry] = True
                         continue
                     subparam, val = subparam_entry.split("=")
@@ -91,7 +129,7 @@ def get_config(config_file):
                     # the defaults for this system
                     defaults[subparam] = val
 
-            elif param in defaults:
+            elif param in defaults: # Handle lines with only one parameter
                 val = line.split("=")[1].strip(" ")
                 if "-" in val:
                     val = int(val.split("-")[0]) + (int(val.split("-")[1]) / 24)
@@ -105,9 +143,11 @@ def get_config(config_file):
             "Missing mandatory fields {} in config file at {}".format(missing_fields, config_file)
         )
 
+    # Transfer "default" options (including those set by slurm.conf) to config_dict from YAML sim configuration
     for option in set(defaults.keys()) - set(config_dict.keys()):
         config_dict[option] = defaults[option]
 
+    # Convert integers to timedelta/boolean objects
     for option in vals_us:
         config_dict[option] = timedelta(microseconds=config_dict[option])
     for option in vals_s:
@@ -119,6 +159,7 @@ def get_config(config_file):
     for option in vals_bool:
         config_dict[option] = bool(config_dict[option])
 
+    # Create a namedtuple from the config dictionary
     config_namedtuple = namedtuple("config", config_dict)
     config = config_namedtuple(**config_dict)
 

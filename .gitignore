@@ -1,11 +1,18 @@
 .venv*
 *.swp
+*.DS_Store
 
-/plots/
-/models/
-/hparams/
-/cpu_freq_tests/
-/hpe_restrictlongjobs_schedule/
 /experiments/
+/logs/
+/profiling/
+/slurm_dump/
+/results/
 
 __pycache__
+
+*.ipynb_checkpoints*
+
+.vscode/
+
+*.csv
+*.pkl
