@@ -631,9 +631,19 @@ class FairTree:
         """
 
         # Read association data from sacctmgr_assocs.csv
-        # Columns: User|Account|ParentName|Partition|MaxJobs|MaxSubmit
+        # Old Columns: User|Account|ParentName|Partition|MaxJobs|MaxSubmit
+        # New Columns: Account|User|ParentName|Partition|Shares
         assoc_df = pd.read_csv(assoc_file, delimiter='|', lineterminator='\n', header=0)
         assoc_df = assoc_df.drop([ col for col in assoc_df.columns if "Unnamed" in col ], axis=1)
+
+        if "Shares" not in assoc_df.columns:
+            msg = (
+                f"[WARN] 'Shares' column not found in {assoc_file}. "
+                "Defaulting Shares=1 for all associations."
+            )
+            print(msg)
+
+            assoc_df["Shares"] = 1
 
         # Initialize the Root node with 0 initial usage, with name 'root'
         root_node = Root(0.0)
