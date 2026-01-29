@@ -8,7 +8,7 @@ FastSim is intentionally not a full SLURM emulator. It targets the subset of SLU
 
 ## Overview
 
-FastSim diagram: docs/slurm_sim_diagram.png
+![image](docs/slurm_sim_diagram.png)
 
 At a high level FastSim:
 
