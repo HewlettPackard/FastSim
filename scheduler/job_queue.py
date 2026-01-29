@@ -1036,19 +1036,24 @@ class Job:
         self.name = name
         
         # Dependency may be submitted incorrectly (typo or wrong format)
+        # Note: pandas may give NaN (a float) for missing values, so normalize first.
+        dep_str = "" if dependency_arg is None else str(dependency_arg)
+        if dep_str.lower() in ("nan", "none"):
+            dep_str = ""
+
         if (
-            dependency_arg is None or
+            dep_str == "" or
             all(
-                dep_type not in dependency_arg
-                    for dep_type in [
-                        "after:", "afterany:", "afterburstbuffer", "aftercorr", "afternotok",
-                        "afterok", "singleton"
-                    ]
+                dep_type not in dep_str
+                for dep_type in [
+                    "after:", "afterany:", "afterburstbuffer", "aftercorr", "afternotok",
+                    "afterok", "singleton"
+                ]
             )
         ):
             self.dependency = None
         else:
-            self.dependency =  Dependency(dependency_arg, user, name)
+            self.dependency = Dependency(dep_str, user, name)
             """
             Create a Dependency object for this job, if relevant.
             """

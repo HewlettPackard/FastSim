@@ -25,8 +25,6 @@ import csv
 import datetime; from datetime import timedelta
 from collections import defaultdict, OrderedDict
 
-from pathlib import Path
-
 import pandas as pd
 
 from config import get_config
@@ -44,7 +42,7 @@ import bisect
 
 import signal
 
-from aux_funcs import mark_skip
+from aux_funcs import print_and_log, mark_skip
 
 from rich.console import Console
 from rich.table import Table
@@ -75,7 +73,7 @@ class Controller:
     _check_reservations
     _print_stats
     """
-    def __init__(self, config_file, results_filepath):
+    def __init__(self, config_file, results_filepath, run_logs=None):
         """
         Initialize the controller.
         """
@@ -93,35 +91,27 @@ class Controller:
 
         signal.signal(signal.SIGINT, _sigint_handler)
 
-        base_name = Path(results_filepath).stem  # gets the filename without directory or extension
+        self.run_logs = run_logs
+        """
+        Logging utility.
+        """
 
-        # Log all simulator output
-        self.print_log_filename = Path("../logs") / f"logfile_{base_name}.log"
-        print_handler = logging.FileHandler(self.print_log_filename)
-        print_formatter = logging.Formatter('%(message)s')
-        print_handler.setFormatter(print_formatter)
-        self.print_log = logging.getLogger('print_log')
-        self.print_log.setLevel(logging.INFO)
-        self.print_log.addHandler(print_handler)
-        self.print_log.propagate = False
-        
-        # Log simulator state in the format of Slurm sreport
-        sreport_log_filename = Path("../logs") / f"sreport_{base_name}.log"
-        sreport_handler = logging.FileHandler(sreport_log_filename)
-        sreport_formatter = logging.Formatter('%(message)s')
-        sreport_handler.setFormatter(sreport_formatter)
-        self.sreport_log = logging.getLogger('sreport_log')
-        self.sreport_log.setLevel(logging.INFO)
-        self.sreport_log.addHandler(sreport_handler)
-        self.sreport_log.propagate = False
-        self.sreport_log.info(f"time,running_nodes,down_nodes,planned_nodes,idle_nodes")
+        self.print_log = run_logs.print_log if run_logs else logging.getLogger("fastsim.null")
+        """
+        Debug and status update logging, optionally prints to terminal.
+        """
 
-        self.power_log_fp = Path("../logs") / f"{base_name}_power_log.csv"
+        self.sreport_log = run_logs.sreport_log if run_logs else logging.getLogger("fastsim.null")
+        """
+        sreport-style logging
+        """
+
+        self.power_log_fp = run_logs.power_log_fp if run_logs else None
         """
         Where to log the power usage at each time step.
         """
 
-        self.print_and_log('Initializing Slurm configuration.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing Slurm configuration.'.rjust(100,'.'))
         self.config = get_config(config_file)
         """
         Get the configuration parameters from the:
@@ -132,13 +122,13 @@ class Controller:
         self.config is a namedtuple
         """
 
-        self.print_and_log('Initializing Data Reader.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing Data Reader.'.rjust(100,'.'))
         self.data_reader = SlurmDataReader(self.config)
         """
         Initialize the data reader
         """
 
-        self.print_and_log('Initializing jobs data.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing jobs data.'.rjust(100,'.'))
         df_jobs = self.data_reader.get_cleaned_job_df(self.config.considered_partitions, 
                                                       self.config.Pdefault, 
                                                       self.config.sim_start, 
@@ -154,7 +144,7 @@ class Controller:
         which is used when calculating the consumed energy of the cluster
         """
 
-        self.print_and_log('Initializing node and partition data.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing node and partition data.'.rjust(100,'.'))
         nid_data, partition_data, valid_resv, resv_end_times, hpe_restrictlong = self.data_reader.get_nodes_partitions(
             self.config.considered_partitions, self.config.hpe_restrictlong_sliding_reservations,
             df_jobs.End.max(), self.config.nodes_down_in_blades, self.config.sim_start, self.config.sim_end
@@ -204,7 +194,7 @@ class Controller:
         Initialize the time as the init time (this time is incremented at each step)
         """
         
-        self.print_and_log('Getting QOS data.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Getting QOS data.'.rjust(100,'.'))
         qos_data = self.data_reader.get_qos()
         """
         Get the QOS data from sacctmgr_qos
@@ -222,7 +212,7 @@ class Controller:
            }
         """
 
-        self.print_and_log('Initializing Partitions.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing Partitions.'.rjust(100,'.'))
         self.partitions = Partitions(nid_data, partition_data)
         """
         - Create all Partition and Node objects from nid_data and partition_data
@@ -232,9 +222,9 @@ class Controller:
         - Initialize free_blocks with the empty string reservation with all nodes.
         """
 
-        self.print_and_log('Populating the set of all Users from all jobs in the job trace.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Populating the set of all Users from all jobs in the job trace.'.rjust(100,'.'))
         active_usrs = sorted({ row.User for _, row in df_jobs.iterrows() })
-        self.print_and_log('Initializing FairTree.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing FairTree.'.rjust(100,'.'))
         self.fairtree = FairTree(
             self.config.assocs_dump, self.config.PriorityCalcPeriod,
             self.config.PriorityDecayHalfLife, self.init_time, active_usrs,
@@ -247,7 +237,7 @@ class Controller:
         """
         
 
-        self.print_and_log('Initializing Multifactor Priority sorter'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing Multifactor Priority sorter'.rjust(100,'.'))
         priority_sorter = MFPrioritySorter(
             self.init_time, self.config.PriorityWeightJobSize, self.config.PriorityWeightAge,
             self.config.PriorityWeightFairshare, self.config.PriorityMaxAge,
@@ -266,7 +256,7 @@ class Controller:
         Initialize the Multifactor Priority sorter we will use to sort the queue.
         """
 
-        self.print_and_log('Initializing queue.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing queue.'.rjust(100,'.'))
         self.queue = Queue(
             df_jobs, self.partitions.partitions_by_name, qos_data, valid_resv, priority_sorter, self.config.max_switch_wait
         )
@@ -306,7 +296,7 @@ class Controller:
         This is the list of Nodes that are currently in the planned state.
         """
 
-        self.print_and_log('Initializing node down events/reservation data.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing node down events/reservation data.'.rjust(100,'.'))
         self.nodes_that_will_go_down = sorted(
             [ node for node in self.partitions.nodes if node.down_schedule ],
             key=lambda node: (node.down_schedule[-1][0], node.nid),
@@ -385,7 +375,7 @@ class Controller:
         # TODO Refactor
         # These are all backfilling parameters. Should put backfiller into its own class since
         # it needs its own state.
-        self.print_and_log('Initializing backfilling parameters.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Initializing backfilling parameters.'.rjust(100,'.'))
         self.bf_free_blocks = None
         """
         Backfill Free Blocks are similar to Main Scheduler free blocks. They both provide sets of nodes
@@ -578,7 +568,7 @@ class Controller:
         """
 
 
-        self.print_and_log('Finished Controller initialization.'.rjust(100,'.'))
+        print_and_log(self.print_log, 'Finished Controller initialization.'.rjust(100,'.'))
 
     def _next_job_finish(self):
         """
@@ -2202,18 +2192,6 @@ class Controller:
             writer.writerow(row)
 
 
-    def print_and_log(self, message, sep=None):
-        if sep: # message is a list of strings
-            message_string = ''
-            for msg in message:
-                message_string += msg + '|'
-            self.print_log.info(message_string)
-            print(message_string)
-        else:
-            print(message)
-            self.print_log.info(message)
-
-
     def _print_stats(self):
         # Print once per hour
         if getattr(self, "previous_print_hour", None) == self.time.hour:
@@ -2270,19 +2248,40 @@ class Controller:
             )
         )
         console.print(Panel(header, border_style="cyan"))
+        # ------------------------------------------------------------------
+        # Shared column spec (fixed widths) so Cluster Summary and Per-Partition
+        # align perfectly column-for-column.
+        # ------------------------------------------------------------------
+        COLS = [
+            # (header, justify, width, style)
+            ("Partition",   "left",  18, "bold"),   # adjust width if you have long partition names
+            ("Run Jobs",    "right",  9, None),
+            ("Q Jobs",      "right",  7, None),
+            ("Run Nodes",   "right", 10, None),
+            ("Q Nodes",     "right",  9, None),
+            ("Idle",        "right",  6, None),
+            ("Down",        "right",  6, None),
+            ("Resvd",       "right",  6, None),
+            ("Idle Resvd",  "right", 10, None),
+            ("Down Resvd",  "right", 10, None),
+        ]
 
-        # Cluster Summary
+        def add_fixed_cols(t: Table, header_style: str):
+            for name, just, w, style in COLS:
+                # no_wrap=True prevents Rich from resizing due to wrapping
+                t.add_column(name, justify=just, width=w, no_wrap=True, style=style, header_style=header_style)
+
+
+        # Cluster Summary (aligned with Per-Partition via fixed column widths)
         cluster = Table(
             title="Cluster Summary",
-            header_style="bold magenta",
             box=box.SIMPLE_HEAVY,
-            expand=True
+            expand=True,
         )
-        for col in ("Running Jobs","Queued Jobs","Running Nodes","Queued Nodes",
-                    "Idle Nodes","Down Nodes","Reserved","Idle Reserved","Down Reserved"):
-            cluster.add_column(col, justify="right")
+        add_fixed_cols(cluster, header_style="bold magenta")
 
         cluster.add_row(
+            "Cluster",
             f"{cluster_running_jobs:,}",
             f"{cluster_queued_jobs:,}",
             f"{cluster_running_nodes:,}",
@@ -2295,16 +2294,16 @@ class Controller:
         )
         console.print(cluster)
 
+
         # Per-Partition
         parts_table = Table(
             title="Per-Partition",
             header_style="bold cyan",
-            box=box.SIMPLE,
+            box=box.SIMPLE_HEAVY,
             expand=True
         )
-        parts_table.add_column("Partition", justify="left", style="bold")
-        for col in ("Run Jobs","Q Jobs","Run Nodes","Q Nodes","Idle","Down","Resvd","Idle Resvd","Down Resvd"):
-            parts_table.add_column(col, justify="right")
+        add_fixed_cols(parts_table, header_style="bold cyan")
+
 
         for p in sorted(parts, key=lambda p: p.name):
             rj, qj, rn, qn, idle, down, res, ires, dres = part_metrics(p)
@@ -2359,5 +2358,5 @@ class Controller:
             )
 
         # Log output
-        with self.print_log_filename.open("a") as f:
+        with self.run_logs.print_log_fp.open("a") as f:
             f.write(console.export_text(clear=True))

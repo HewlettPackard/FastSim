@@ -32,7 +32,7 @@ import pandas as pd
 import zmq
 
 from controller import Controller
-
+from logging_setup import setup_run_logs
 
 class SliceBuffer:
     """
@@ -243,8 +243,10 @@ def main(args):
         return
 
     # Offline mode
+    run_logs = setup_run_logs(args.output, '../')
+
     controller = Controller(
-        args.config_file, args.output,
+        args.config_file, args.output, run_logs=run_logs
     )
 
     controller.run_sim(max_steps=args.max_steps)

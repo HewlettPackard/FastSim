@@ -111,10 +111,6 @@ class SlurmDataReader:
         ]
 
         df_events.TimeStart = pd.to_datetime(df_events.TimeStart, format="%Y-%m-%dT%H:%M:%S")
-        
-        # If TimeEnd is Unknown, assume node was down/drained until the end of the simulation
-        df_events.loc[(df_events.TimeEnd == "Unknown"), "TimeEnd"] = max_sim_t
-        
         df_events.TimeEnd = pd.to_datetime(df_events.TimeEnd, format="%Y-%m-%dT%H:%M:%S")
         df_events["Duration"] = df_events.apply(lambda row: (row.TimeEnd - row.TimeStart), axis=1)
         df_events.State = df_events.State.apply(lambda state: "DRAIN" if "DRAIN" in state else "DOWN")

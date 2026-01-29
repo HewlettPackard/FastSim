@@ -25,16 +25,30 @@ from datetime import timedelta
 import re # Needed for parsing node IDs
 import itertools # Needed for parsing node IDs
 
-def print_and_log(logger, message, sep=None):
-    if sep: # message is a list of strings
-        message_string = ''
-        for msg in message:
-            message_string += msg + sep
-        logger.info(message_string)
-        print(message_string)
+def print_and_log(logger, message, sep: str | None = None, *, also_print: bool = True):
+    """
+    Log a message and optionally print it.
+
+    - If sep is provided, `message` is treated as an iterable of parts and joined with sep.
+    - Avoids trailing separators.
+    - Safe if logger is None (print-only).
+    """
+    if sep is not None:
+        # message is expected to be a sequence/iterable of parts
+        msg = sep.join(str(x) for x in message)
     else:
-        print(message)
-        logger.info(message)
+        msg = str(message)
+
+    if also_print:
+        print(msg)
+
+    if logger is not None:
+        try:
+            logger.info(msg)
+        except Exception:
+            # If a weird logger is passed, fail gracefully
+            pass
+
 
 def convert_nodelist_to_node_nums(nid_str, system="kestrel"):
     """

@@ -2,10 +2,9 @@
 *.swp
 *.DS_Store
 
-/experiments/
 /logs/
-/profiling/
 /slurm_dump/
+/power_data/
 /results/
 /processed_results/
 /figures/
