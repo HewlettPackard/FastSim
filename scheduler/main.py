@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 import zmq
 
+from aux_funcs import job_history_to_df
 from controller import Controller
 from logging_setup import setup_run_logs
 
@@ -243,7 +244,7 @@ def main(args):
         return
 
     # Offline mode
-    run_logs = setup_run_logs(args.output, '../')
+    run_logs = setup_run_logs(args.output)
 
     controller = Controller(
         args.config_file, args.output, run_logs=run_logs
@@ -253,29 +254,7 @@ def main(args):
     print_sim_result(controller)
 
     print('Saving Job History at End of Simulation.')
-    jobs = []
-    for i, job in enumerate(controller.job_history):
-        print(f'Adding job {str(i).rjust(6)} of {len(controller.job_history)}', end='\r')
-        try:
-            job_dict = {}
-            for key, value in job.__dict__.items():
-                if key == 'assoc':
-                    continue
-                elif key in ['qos', 'partition', 'partition_qos']:
-                    job_dict[key] = value.name
-                elif key == 'assigned_nodes':
-                    job_dict[key] = set(node.nid for node in value)
-                elif key == 'node_timeline':
-                    job_dict[key] = [(str(ts), cnt) for ts, cnt in value]
-                elif key == 'wait_history':
-                    job_dict[key] = [(str(ts), reason) for ts, reason in value]
-                else:
-                    job_dict[key] = value
-            jobs.append(job_dict)
-        except Exception:
-            print(f'Error while adding job {i} of {len(controller.job_history)}')
-            traceback.print_exc()
-    pd.DataFrame(jobs).to_pickle(args.output)
+    job_history_to_df(controller.job_history).to_pickle(args.output)
 
 
 def parse_arguments():

@@ -24,6 +24,42 @@ from datetime import timedelta
 
 import re # Needed for parsing node IDs
 import itertools # Needed for parsing node IDs
+import traceback
+
+import pandas as pd
+
+
+def job_history_to_df(job_history):
+    """
+    Convert a list of finished Job objects to a plain DataFrame for saving.
+
+    Object-valued fields are converted to plain values (names, node IDs,
+    stringified timestamps); the assoc reference is dropped. Used by both the
+    periodic checkpoint and the final save so the two cannot drift.
+    """
+    jobs = []
+    for i, job in enumerate(job_history):
+        print(f'Adding job {str(i).rjust(6)} of {len(job_history)}', end='\r')
+        try:
+            job_dict = {}
+            for key, value in job.__dict__.items():
+                if key == 'assoc':
+                    continue
+                elif key in ['qos', 'partition', 'partition_qos']:
+                    job_dict[key] = value.name
+                elif key == 'assigned_nodes':
+                    job_dict[key] = set(node.nid for node in value)
+                elif key == 'node_timeline':
+                    job_dict[key] = [(str(ts), cnt) for ts, cnt in value]
+                elif key == 'wait_history':
+                    job_dict[key] = [(str(ts), reason) for ts, reason in value]
+                else:
+                    job_dict[key] = value
+            jobs.append(job_dict)
+        except Exception:
+            print(f'Error while adding job {i} of {len(job_history)}')
+            traceback.print_exc()
+    return pd.DataFrame(jobs)
 
 def print_and_log(logger, message, sep: str | None = None, *, also_print: bool = True):
     """

@@ -84,6 +84,7 @@ defaults = {
     "bd_threshold" : 60, # This is the threshold used when calculating bounded slowdown
     "hpe_restrictlong_sliding_reservations" : "const", # This is cluster (Lumi?) specific
     "nodes_down_in_blades" : False, # This is cluster (Lumi?) specific (when a node is down, all nodes in the blade are placed in down state)
+    "save_interval_steps" : 50000, # Checkpoint the job history to the output pickle every N simulation steps
 }
 
 

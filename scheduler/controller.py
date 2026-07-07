@@ -42,7 +42,7 @@ import bisect
 
 import signal
 
-from aux_funcs import print_and_log, mark_skip
+from aux_funcs import print_and_log, mark_skip, job_history_to_df
 
 from rich.console import Console
 from rich.table import Table
@@ -110,6 +110,19 @@ class Controller:
         """
         Where to log the power usage at each time step.
         """
+
+        # Open the power log once; log_simulation_step_power appends every
+        # step, so per-step open/close is wasteful. No log in server mode
+        # (run_logs is None).
+        if self.power_log_fp:
+            write_header = not os.path.isfile(self.power_log_fp)
+            self._power_log_file = open(self.power_log_fp, mode='a', newline='')
+            self._power_log_writer = csv.writer(self._power_log_file)
+            if write_header:
+                self._power_log_writer.writerow(["time", "power_usage", "predicted_power_usage"])
+        else:
+            self._power_log_file = None
+            self._power_log_writer = None
 
         print_and_log(self.print_log, 'Initializing Slurm configuration.'.rjust(100,'.'))
         self.config = get_config(config_file)
@@ -749,30 +762,7 @@ class Controller:
             # Checkpoint every interval
             if self.step_cnt % self.config.save_interval_steps == 0:
                 print(f'Saving Job History at Step: {self.step_cnt}'.rjust(50, '.'))
-                jobs = list()
-                for i, job in enumerate(self.job_history):
-                    print(f'Adding job {str(i).rjust(6)} of {len(self.job_history)}', end='\r')
-                    try:
-                        job_dict = dict()
-                        for key, value in job.__dict__.items():
-                            if key == 'assoc':
-                                continue
-                            elif key in ['qos','partition','partition_qos']:
-                                job_dict[key] = value.name
-                            elif key == 'assigned_nodes':
-                                job_dict[key] = set(node.nid for node in value)
-                            elif key == 'node_timeline':
-                                job_dict[key] = [(str(ts), cnt) for ts, cnt in value]
-                            elif key == 'wait_history':
-                                job_dict[key] = [(str(ts), reason) for ts, reason in value]
-                            else:
-                                job_dict[key] = value
-                        jobs.append(job_dict)
-                    except:
-                        print(f'Error while adding job {i} of {len(self.job_history)}')
-                        logging.info(f'Error while adding job {i} of {len(self.job_history)}')
-                        traceback.print_exc()
-                pd.DataFrame(jobs).to_pickle(self.results_filepath)
+                job_history_to_df(self.job_history).to_pickle(self.results_filepath)
 
             if self.paused:
                 InteractiveShell(self).cmdloop()   # blocks until shell exits
@@ -885,8 +875,8 @@ class Controller:
 
         try:
             self.predicted_power_usage += job.predicted_power * job.nodes / 1e+6
-        except:
-            pass
+        except TypeError:
+            pass  # no predicted power for this job
         # self.total_energy += (
         #     job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
         # )
@@ -934,8 +924,8 @@ class Controller:
 
         try:
             self.predicted_power_usage -= job.predicted_power * job.nodes / 1e+6
-        except:
-            pass
+        except TypeError:
+            pass  # no predicted power for this job
 
         # Add this job's energy usage to the total energy used by the cluster
         self.total_energy += (
@@ -1209,7 +1199,7 @@ class Controller:
                     free_nodes_ready_now.remove(node)
 
             else:
-                mark_skip(job, self.time, "NOT-ENOUGH-NODES‐NOW")
+                mark_skip(job, self.time, "NOT-ENOUGH-NODES-NOW")
                 # There aren't enough nodes available for this partition to accomodate the job
                 partitions_failed.add(job.partition)
                 # break if all partitions have 'failed' (there aren't enough nodes to accomodate 
@@ -1414,7 +1404,7 @@ class Controller:
                 )
                 for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items()
             }
-        except:
+        except KeyError:
             for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items():
                 if resv not in self.bf_max_reqtime.keys():
                     logging.info(f'Error: resv {resv} not in bf_max_reqtime.')
@@ -1485,7 +1475,7 @@ class Controller:
             try:
                 if self.bf_done[resv]:
                     continue
-            except:
+            except KeyError:
                 logging.info(f'resv {resv} not found in bf_done')
                 continue
 
@@ -1527,7 +1517,7 @@ class Controller:
                 # starting and ending at the optimal times to maximize the number of nodes available,
                 # then you can see how many nodes are available for the entirety of that usage block.
                 usage_block_end = usage_block_start + reqtime
-            except:
+            except IndexError:
                 # It looks like this is happening because all of the nodes
                 # in the interval associated with this reservation were used
                 # and there were no more intervals with available nodes left.
@@ -1708,7 +1698,7 @@ class Controller:
                             for node in nodes:
                                 try:
                                     self.bf_nodes_free_now_max_reqtimes[resv][node]
-                                except:
+                                except KeyError:
                                     logging.info(f'Node not found in bf_nodes_free_now_max_reqtimes for resv: {resv}')
                                     logging.info(f'Node ID: {node.nid}')
                                     logging.info(f'Node Partitions: {node.partition_names}')
@@ -2174,22 +2164,16 @@ class Controller:
         If self.time is a datetime, it uses its timestamp; if it's already a float,
         it assumes it's in seconds.
         """
+        if self._power_log_writer is None:
+            return
+
         # Convert self.time to an ISO string
         # Keep tz info if it exists; otherwise it will be tz-naive
         t_str = self.time.isoformat()
-        
-        # Prepare the row to log: [time, power_usage, predicted_power_usage]
-        row = [t_str, self.power_usage, self.predicted_power_usage]
-        
-        # Check if file exists to decide whether to write the header.
-        file_exists = os.path.isfile(self.power_log_fp)
-        
-        with open(self.power_log_fp, mode='a', newline='') as f:
-            writer = csv.writer(f)
-            # Write header if file did not exist before.
-            if not file_exists:
-                writer.writerow(["time", "power_usage", "predicted_power_usage"])
-            writer.writerow(row)
+
+        self._power_log_writer.writerow([t_str, self.power_usage, self.predicted_power_usage])
+        # Flush so the log survives a crash and stays tail-able mid-run
+        self._power_log_file.flush()
 
 
     def _print_stats(self):

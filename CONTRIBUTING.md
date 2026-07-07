@@ -112,15 +112,32 @@ A change is "finished" (ready for PR) when **all** of the following hold:
 
 - All issue subtasks are complete.
 - Behavioral changes update the relevant docs (README, config comments).
-- The simulator runs cleanly end-to-end on a reference config:
+
+There is no automated test suite yet (planned). Running a simulation is
+expensive, so it is **not** a per-change requirement — reserve the baseline
+comparison below for changes that plausibly affect simulation behavior
+(scheduler/backfill logic, data cleaning, priority calculation), and rely on
+review for everything else.
+
+### Baseline comparison (for behavior-sensitive changes)
+
+FastSim is deterministic — identical inputs must produce identical job
+histories — so a refactor can be checked against a baseline run. The
+reference config is `configs/kestrel_baseline_conf.yaml` — a **local,
+untracked** file (gitignored): it references site-specific data (reservation
+names, dump paths), so it is not committed. Keep your own copy — a short
+sim window (a few days, a few minutes of runtime) works well:
 
   ```bash
-  python scheduler/main.py <config.yaml> --output results.pkl
+  # once, at any known-good commit:
+  python scheduler/main.py configs/kestrel_baseline_conf.yaml --output results/baseline.pkl
+  # after your changes:
+  python scheduler/main.py configs/kestrel_baseline_conf.yaml --output results/candidate.pkl
+  python scripts/compare_results.py results/baseline.pkl results/candidate.pkl
   ```
 
-- For refactors, simulated results are unchanged against a baseline run
-  (FastSim is deterministic — identical inputs must produce identical
-  job histories).
+  `compare_results.py` canonicalizes process-specific noise (set order,
+  object identity), so any reported diff is a real behavioral change.
 
 ---
 

@@ -37,7 +37,7 @@ initialize: True # Whether to start the simulator with an intial state at sim_st
 
 # Energy-Aware Scheduling Parameters
 power_model: "regression"
-re_fp: "../power_data/re_availability.csv"
+#re_fp: "power_data/re_availability.csv" # renewable-energy availability; disabled
 re_fp: ""
 Pmin: 0
 Pmax: 800
