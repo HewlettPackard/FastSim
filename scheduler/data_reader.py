@@ -643,6 +643,33 @@ class SlurmDataReader:
                            ):
         df_jobs = pd.read_csv(self.job_dump, sep='|', encoding='ISO-8859-1')
 
+        # A trace pulled from a job-history database often lacks columns that a
+        # full sacct dump has. Validate the columns the simulator cannot run
+        # without, and default the rest.
+        required_columns = [
+            "JobID", "Submit", "Start", "End", "State", "Partition",
+            "User", "Account", "ReqNodes", "AllocNodes", "Timelimit",
+        ]
+        missing_columns = [ col for col in required_columns if col not in df_jobs.columns ]
+        if missing_columns:
+            raise ValueError(
+                f"Job trace {self.job_dump} is missing required columns {missing_columns}. "
+                f"Required columns: {required_columns}"
+            )
+
+        # Optional columns (SubmitLine is handled separately below):
+        # QOS falls back to 'normal', ConsumedEnergyRaw to missing (which
+        # triggers the zero-power fallback), JobName/Reason to None.
+        if "QOS" not in df_jobs.columns:
+            df_jobs["QOS"] = "normal"
+        df_jobs["QOS"] = df_jobs["QOS"].fillna("normal")
+        if "ConsumedEnergyRaw" not in df_jobs.columns:
+            df_jobs["ConsumedEnergyRaw"] = float("nan")
+        if "JobName" not in df_jobs.columns:
+            df_jobs["JobName"] = None
+        if "Reason" not in df_jobs.columns:
+            df_jobs["Reason"] = None
+
         # Clean jobs data
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "None") & (df_jobs.Start.notna()) & (df_jobs.End != "None") & (df_jobs.End != "Unknown") &
@@ -658,7 +685,9 @@ class SlurmDataReader:
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.Start = pd.to_datetime(df_jobs.Start, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.End = pd.to_datetime(df_jobs.End, format="%Y-%m-%dT%H:%M:%S")
-        df_jobs.Elapsed = df_jobs.End - df_jobs.Start
+        # Bracket assignment: Elapsed may not pre-exist as a column (attribute
+        # assignment cannot create it, only overwrite)
+        df_jobs["Elapsed"] = df_jobs.End - df_jobs.Start
         df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
         
         if initialize:
