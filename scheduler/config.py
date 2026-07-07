@@ -82,9 +82,28 @@ defaults = {
     "approx_bf_try_per_sec" : 10, # This is simulator specific (limiting backfilling to approximate CPU limitations)
     "approx_excess_assocs" : 0, # This is simulator specific (see above)
     "bd_threshold" : 60, # This is the threshold used when calculating bounded slowdown
-    "hpe_restrictlong_sliding_reservations" : "const", # This is cluster (Lumi?) specific
+    "hpe_restrictlong_sliding_reservations" : "", # ARCHER2/HPE-specific sliding maintenance reservation; "" disables.
+                                                  # Values other than ""/"dynamic..." are read as a file path, so the
+                                                  # default must be "" for configs that don't set it.
     "nodes_down_in_blades" : False, # This is cluster (Lumi?) specific (when a node is down, all nodes in the blade are placed in down state)
     "save_interval_steps" : 50000, # Checkpoint the job history to the output pickle every N simulation steps
+    "system" : "default", # System identifier for node-naming conventions (e.g. default, kestrel)
+    "impromptu_reservation_names" : [], # Reservation names treated as reactive holds (no advance draining)
+    "initialize" : True, # Build an initial running/queued state at sim_start
+    "max_switch_nodes" : 256, # Jobs larger than this skip the same-rack (switch) wait
+    "Pdefault" : 600, # Default power per node in watts (used when energy data is absent)
+
+    # Optional input dumps. Only the job trace (job_dump) and slurm.conf are required to run;
+    # each of these is used when provided and synthesized or treated as empty when not:
+    # - assocs_dump: fairshare tree synthesized from the job trace with identical shares
+    # - qos_dump: QOS synthesized with equal priority and no limits
+    # - node_events_dump: no down/drain node events
+    # - resv_dump_current / resv_dump_historic: no reservations (job reservation args ignored)
+    "assocs_dump" : None,
+    "qos_dump" : None,
+    "node_events_dump" : None,
+    "resv_dump_current" : None,
+    "resv_dump_historic" : None,
 }
 
 
@@ -104,12 +123,13 @@ vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
 vals_bool = ["JobRequeue"]
 
 # TODO Include node/partition information dump once setup to read this
+# Only the job trace and slurm.conf are required inputs; all other dumps are
+# optional (see the "Optional input dumps" section of defaults above).
 mandatory_fields = set(
     (
-        "assocs_dump", "node_events_dump", 
-        "resv_dump_current", "resv_dump_historic", 
         "job_dump", "slurm_conf",
-        "considered_partitions", "qos_dump"
+        "considered_partitions",
+        "sim_start", "sim_end"
     )
 )
 
