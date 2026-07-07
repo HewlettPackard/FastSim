@@ -85,6 +85,20 @@ defaults = {
     "hpe_restrictlong_sliding_reservations" : "const", # This is cluster (Lumi?) specific
     "nodes_down_in_blades" : False, # This is cluster (Lumi?) specific (when a node is down, all nodes in the blade are placed in down state)
     "save_interval_steps" : 50000, # Checkpoint the job history to the output pickle every N simulation steps
+    "system" : "default", # System identifier for node-naming conventions (e.g. default, kestrel)
+    "impromptu_reservation_names" : [], # Reservation names treated as reactive holds (no advance draining)
+
+    # Optional input dumps. Only the job trace (job_dump) and slurm.conf are required to run;
+    # each of these is used when provided and synthesized or treated as empty when not:
+    # - assocs_dump: fairshare tree synthesized from the job trace with identical shares
+    # - qos_dump: QOS synthesized with equal priority and no limits
+    # - node_events_dump: no down/drain node events
+    # - resv_dump_current / resv_dump_historic: no reservations (job reservation args ignored)
+    "assocs_dump" : None,
+    "qos_dump" : None,
+    "node_events_dump" : None,
+    "resv_dump_current" : None,
+    "resv_dump_historic" : None,
 }
 
 
@@ -104,12 +118,13 @@ vals_days = ["PriorityMaxAge", "PriorityDecayHalfLife"]
 vals_bool = ["JobRequeue"]
 
 # TODO Include node/partition information dump once setup to read this
+# Only the job trace and slurm.conf are required inputs; all other dumps are
+# optional (see the "Optional input dumps" section of defaults above).
 mandatory_fields = set(
     (
-        "assocs_dump", "node_events_dump", 
-        "resv_dump_current", "resv_dump_historic", 
         "job_dump", "slurm_conf",
-        "considered_partitions", "qos_dump"
+        "considered_partitions",
+        "sim_start", "sim_end"
     )
 )
 
