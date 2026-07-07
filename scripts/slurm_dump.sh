@@ -1,7 +1,7 @@
 #!/bin/bash
 
-STARTTIME="2025-01-01"
-ENDTIME="2025-10-01"
+STARTTIME="2025-10-01"
+ENDTIME="2026-01-01"
 
 mkdir slurm_dump || exit
 

@@ -1,34 +1,43 @@
-assocs_dump: "../slurm_dump/sacctmgr_assocs.csv"
-qos_dump: "../slurm_dump/sacctmgr_qos.csv"
-node_events_dump: "../slurm_dump/sacctmgr_events.csv"
-resv_dump_current: "../slurm_dump/sinfo_resv.csv"
-resv_dump_historic: "../slurm_dump/sreport_resv.csv"
-job_dump: "../slurm_dump/sacct_jobs.csv"
-slurm_conf: "../slurm_dump/slurm.conf"
+assocs_dump: "slurm_dump/sacctmgr_assocs.csv"
+qos_dump: "slurm_dump/sacctmgr_qos.csv"
+node_events_dump: "slurm_dump/sacctmgr_events.csv"
+resv_dump_current: "slurm_dump/sinfo_resv.csv"
+resv_dump_historic: "slurm_dump/sreport_resv.csv"
+job_dump: "slurm_dump/sacct_jobs.csv"
+slurm_conf: "slurm_dump/slurm.conf"
+# Pre-June 2024 config partitions
+#considered_partitions: ["standard", "bigmem", "short", "csc", "long", "long-stdby", "debug", "standard-stdby", "short-stdby", "bigmem-stdby", "debug-stdby", "shared", "shared-stdby", "bigmeml", "sharedl", "gpu-a100", "gpu-h100", "bigmeml-stdby", "gpu-hpe"]
+
+# No shared
+#considered_partitions: ["bigmem", "bigmem-stdby", "bigmeml", "bigmeml-stdby", "csc", "debug", "debug-stdby", "debug-gpu", "debug-gpu-stdby", "gpu-a100", "gpu-h100", "gpu-h100-stdby", "gpu-h100s", "gpu-h100l", "gpu-hpe", "short", "short-stdby", "standard", "standard-stdby", "long", "long-stdby"]
 
 system: "kestrel"
 
-considered_partitions: ["debug", "debug-stdby", "short", "short-stdby", "standard", "standard-stdby", "long", "long-stdby"]
+# No GPU
+considered_partitions: ["bigmem", "bigmem-stdby", "bigmeml", "bigmeml-stdby", "csc", "debug", "debug-stdby", "short", "short-stdby", "standard", "standard-stdby", "long", "long-stdby"]
 
+#approx_excess_assocs: 1200 # normalization factor that is dependent on the total number of associations for fair tree (how many excess associations do we have)
 approx_excess_assocs: 0
 
 hpe_restrictlong_sliding_reservations: ""
 nodes_down_in_blades: False
 
-#bf_max_job_test: 1000
-#bf_window: 5760
-#bf_continue: True
-#defer: True
-#default_queue_depth: 256
+#bf_max_job_test: 1000 # slurm config parameter
+#bf_window: 5760 # slurm config parameter
+#bf_continue: True # slurm config parameter
+#defer: True # slurm config parameter - 
+#default_queue_depth: 256 # slurm config parameter
 
-#sched_min_interval : 12000000 
-approx_bf_try_per_sec : 3
+#sched_min_interval : 12000000 # 
+approx_bf_try_per_sec : 3 # limiting backfilling to approximate CPU limitations
 
 sim_start: '2024-09-01T00:00:00'
 sim_end: '2024-09-15T00:00:00'
 initialize: True # Whether to start the simulator with an intial state at sim_start
 
 # Energy-Aware Scheduling Parameters
+power_model: "regression"
+re_fp: "../power_data/re_availability.csv"
 re_fp: ""
 Pmin: 0
 Pmax: 800
@@ -36,12 +45,41 @@ Pdefault: 600
 
 save_interval_steps: 50000
 max_switch_nodes: 256
-impromptu_reservation_names: [
+impromptu_reservation_names: ["april18-hold", 
+                              "april-maintenance",
+                              "lustre-outage",
                               "multijob",
+                              "multijob-running",
+                              "node-repair",
+                              "stop-scheduling",
+                              "wind-event",
+                              "storage-outage",
+                              "phase2-maintenance",
+                              "kestrel-downtime-cpu", # It looks like these three were scheduled in advance because 
+                              "kestrel-downtime",     # the system clearly gets drained starting 2 days before the 
+                              "kestrel-downtime-gpu", # resv time, which aligns with 48-hour standard job wc requested.
+                              "weto-debug",
+                              "fabric-issue",
+                              "lustre_issue",
+                              "FY_cutover",
+                              "gpu-all",
                               "systemtime-gpu",
+                              "systemtime-gpu-a100",
                               "systemtime-cpu",
+                              "cdu5-outage",
+                              "cabling",
+                              "cabling-ext",
+                              "cluster-expansion",
+                              "cabling-benchmark",
+                              "hfm",
+                              "gpu-acceptance",
+                              "maint-gpu",
+                              "maint-cpu",
+                              "hsn-reseat",
+                              "apps-hbw",
+                              "july-fake-resv" # I made this reservation to deal with a scheduling issue -KM
                               ]
 
-supplementary_resv: "../slurm_dump/kestrel_jobs_w_reservations.csv" 
-predicted_power: "../power_data/predicted_power.pkl"
-predicted_runtime: "../power_data/predicted_runtime.pkl"
+supplementary_resv: "slurm_dump/kestrel_jobs_w_reservations.csv" 
+predicted_power: "power_data/predicted_power.pkl"
+predicted_runtime: "power_data/predicted_runtime.pkl"
