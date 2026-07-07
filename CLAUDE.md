@@ -47,6 +47,24 @@ Determinism matters: identical inputs must produce identical job histories
 (tie-breaking uses stable unique IDs). Refactors are verified by comparing
 results against a baseline run.
 
+## Development Notes Convention
+
+Development notes live in `dev/` and are named with a datetime tag:
+`YYYYMMDDHHMM-descriptor.md` (e.g., `202603101739-project-inception.md`).
+
+When the user says "add this to development notes", "make a dev note", or
+similar:
+
+1. Get the current time by running `date '+%Y%m%d%H%M'` — do NOT guess or
+   invent timestamps
+2. Create a new file in `dev/` with that datetime tag and a descriptive slug
+3. The note should provide **comprehensive detail** — not a summary, but a
+   thorough record that gives full context to anyone reading it later
+4. Include relevant background, rationale, technical details, decisions made,
+   alternatives considered, and next steps
+5. Reference related dev notes, code, or external resources where applicable
+6. Use the standard header format: title, date, status, scope
+
 ## Rules
 
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) — workflow (issue → branch →
