@@ -1199,7 +1199,7 @@ class Controller:
                     free_nodes_ready_now.remove(node)
 
             else:
-                mark_skip(job, self.time, "NOT-ENOUGH-NODES‐NOW")
+                mark_skip(job, self.time, "NOT-ENOUGH-NODES-NOW")
                 # There aren't enough nodes available for this partition to accomodate the job
                 partitions_failed.add(job.partition)
                 # break if all partitions have 'failed' (there aren't enough nodes to accomodate 
