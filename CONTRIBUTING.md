@@ -120,7 +120,19 @@ A change is "finished" (ready for PR) when **all** of the following hold:
 
 - For refactors, simulated results are unchanged against a baseline run
   (FastSim is deterministic — identical inputs must produce identical
-  job histories).
+  job histories). The reference config is
+  `configs/kestrel_baseline_conf.yaml` (3-day window, ~3 min runtime):
+
+  ```bash
+  # once, before your changes (or at any known-good commit):
+  python scheduler/main.py configs/kestrel_baseline_conf.yaml --output results/baseline.pkl
+  # after your changes:
+  python scheduler/main.py configs/kestrel_baseline_conf.yaml --output results/candidate.pkl
+  python scripts/compare_results.py results/baseline.pkl results/candidate.pkl
+  ```
+
+  `compare_results.py` canonicalizes process-specific noise (set order,
+  object identity), so any reported diff is a real behavioral change.
 
 ---
 
