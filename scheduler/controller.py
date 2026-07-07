@@ -208,7 +208,16 @@ class Controller:
         """
         
         print_and_log(self.print_log, 'Getting QOS data.'.rjust(100,'.'))
-        qos_data = self.data_reader.get_qos()
+        # The QOS names the simulation must know about: those referenced by jobs
+        # in the trace, those attached to partitions in slurm.conf, and 'normal'
+        # (the partition default). Only used to synthesize QOS data when no QOS
+        # dump is provided.
+        referenced_qos_names = (
+            { qos for qos in df_jobs.QOS.unique() if isinstance(qos, str) } |
+            { data["qos_name"] for data in partition_data.values() } |
+            { "normal" }
+        )
+        qos_data = self.data_reader.get_qos(referenced_qos_names=referenced_qos_names)
         """
         Get the QOS data from sacctmgr_qos
         qos_data[row.Name] = { row.Name is the QOS name (e.g. 'normal', 'high')

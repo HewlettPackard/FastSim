@@ -517,10 +517,30 @@ class SlurmDataReader:
         return merged
             
 
-    def get_qos(self):
+    def get_qos(self, referenced_qos_names=None):
         """
         Preprocess QOS data into a dictionary.
+
+        If no QOS dump was provided, synthesize a QOS entry for every name in
+        referenced_qos_names (the QOS names referenced by the job trace and by
+        partitions in slurm.conf) with equal priority and no limits — QOS then
+        has no effect on priority ordering and imposes no holds.
         """
+        if not self.qos_dump:
+            print_and_log(logger,
+                "No QOS dump provided; synthesizing QOS with equal priority and no limits for: "
+                f"{sorted(referenced_qos_names)}"
+            )
+            return {
+                name : {
+                    "name" : name, "prio" : 1,
+                    "GrpTRES" : None, "GrpJobs" : None, "GrpSubmit" : None,
+                    "MaxTRESPU" : None, "MaxJobsPU" : None, "MaxJobs" : None,
+                    "MaxSubmitPU" : None, "MaxSubmit" : None,
+                }
+                for name in sorted(referenced_qos_names)
+            }
+
         # Read the data from sacctmgr_qos.csv
         df_qos = pd.read_csv(
             self.qos_dump,  delimiter='|', lineterminator='\n', header=0, encoding="ISO-8859-1"
