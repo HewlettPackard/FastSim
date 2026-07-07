@@ -295,14 +295,15 @@ class FairTree:
     This is the FairTree used by the FairShare algorithm.
     """
     def __init__(
-        self, assoc_file, calc_period, decay_halflife, init_time, active_usrs, excess_usr_assocs,
+        self, assoc_source, calc_period, decay_halflife, init_time, active_usrs, excess_usr_assocs,
         partitions
     ):
         """
         Initialize the FairTree.
 
         Arguments:
-        - assoc_file: sacctmgr_assocs.csv
+        - assoc_source: path to sacctmgr_assocs.csv, or a prepared DataFrame with
+                        the same columns (e.g. synthesized from the job trace)
         - calc_period: PriorityCalcPeriod from the Slurm configuration.
         - decay_halflife: PriorityDecayHalfLife from the Slurm configuration.
         - init_time: Minimum job start time
@@ -351,7 +352,7 @@ class FairTree:
         """
 
         self.root_node, flat_tree = self._load_tree_slurm(
-            assoc_file, active_usrs, excess_usr_assocs, partitions
+            assoc_source, active_usrs, excess_usr_assocs, partitions
         )
         """
         Get the root node and a list of all nodes (users and accounts) in the tree.
@@ -617,13 +618,14 @@ class FairTree:
             # The children of this node have updated usage.
             node.new_child_usage = True
 
-    def _load_tree_slurm(self, assoc_file, active_usrs, excess_usr_assocs, partitions):
+    def _load_tree_slurm(self, assoc_source, active_usrs, excess_usr_assocs, partitions):
         """
         Load the tree from the Slurm dump data.
         This function starts at the root node, then adds nodes level by level.
 
         Arguments:
-        - assoc_file: sacctmgr_assocs.csv
+        - assoc_source: path to sacctmgr_assocs.csv, or a prepared DataFrame with
+                        the same columns (e.g. synthesized from the job trace)
         - active_usrs: the set of all users that submitted jobs
         - excess_usr_assocs: a simulator-specific parameter that approximates the number of excess
                              associations. (See above for more thorough explanation)
@@ -633,12 +635,15 @@ class FairTree:
         # Read association data from sacctmgr_assocs.csv
         # Old Columns: User|Account|ParentName|Partition|MaxJobs|MaxSubmit
         # New Columns: Account|User|ParentName|Partition|Shares
-        assoc_df = pd.read_csv(assoc_file, delimiter='|', lineterminator='\n', header=0)
+        if isinstance(assoc_source, pd.DataFrame):
+            assoc_df = assoc_source
+        else:
+            assoc_df = pd.read_csv(assoc_source, delimiter='|', lineterminator='\n', header=0)
         assoc_df = assoc_df.drop([ col for col in assoc_df.columns if "Unnamed" in col ], axis=1)
 
         if "Shares" not in assoc_df.columns:
             msg = (
-                f"[WARN] 'Shares' column not found in {assoc_file}. "
+                f"[WARN] 'Shares' column not found in {assoc_source}. "
                 "Defaulting Shares=1 for all associations."
             )
             print(msg)

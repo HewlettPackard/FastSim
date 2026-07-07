@@ -247,15 +247,23 @@ class Controller:
         print_and_log(self.print_log, 'Populating the set of all Users from all jobs in the job trace.'.rjust(100,'.'))
         active_usrs = sorted({ row.User for _, row in df_jobs.iterrows() })
         print_and_log(self.print_log, 'Initializing FairTree.'.rjust(100,'.'))
+        # With no assocs dump, build the tree from the trace itself with
+        # identical shares for every account and user (real allocation awards
+        # are generally not visible without privileged access).
+        assoc_source = (
+            self.config.assocs_dump
+            if self.config.assocs_dump
+            else self.data_reader.synthesize_assocs(df_jobs)
+        )
         self.fairtree = FairTree(
-            self.config.assocs_dump, self.config.PriorityCalcPeriod,
+            assoc_source, self.config.PriorityCalcPeriod,
             self.config.PriorityDecayHalfLife, self.init_time, active_usrs,
             self.config.approx_excess_assocs, self.partitions
         )
         """
         Initialize the FairTree for the FairShare algorithm.
         This will create the entire tree with all the associations
-        in sacctmgr_assocs.csv
+        in sacctmgr_assocs.csv (or synthesized from the job trace).
         """
         
 

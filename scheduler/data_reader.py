@@ -517,6 +517,43 @@ class SlurmDataReader:
         return merged
             
 
+    def synthesize_assocs(self, df_jobs):
+        """
+        Build association data from the job trace when no assocs dump is available.
+
+        Users generally cannot see real allocation awards, so every project
+        (account) and user is given an identical share (Shares=1). The result is
+        a flat tree: root -> one account per unique Account -> one user per
+        unique (User, Account) pair. Partition is left unset so each user
+        association applies to all partitions (matching how FairTree expands
+        partitionless associations). No MaxJobs/MaxSubmit columns are produced,
+        so no association limits are imposed.
+
+        Returns a DataFrame with the same columns FairTree reads from
+        sacctmgr_assocs.csv: User|Account|ParentName|Partition|Shares.
+        """
+        user_accounts = (
+            df_jobs[["User", "Account"]].dropna().drop_duplicates()
+            .sort_values(["Account", "User"])
+        )
+        accounts = user_accounts.Account.unique()
+
+        print_and_log(logger,
+            "No assocs dump provided; synthesizing a flat fairshare tree with identical shares: "
+            f"{len(accounts)} accounts, {len(user_accounts)} user associations."
+        )
+
+        account_rows = pd.DataFrame({
+            "User": None, "Account": accounts, "ParentName": "root",
+            "Partition": None, "Shares": 1,
+        })
+        user_rows = pd.DataFrame({
+            "User": user_accounts.User.values, "Account": user_accounts.Account.values,
+            "ParentName": None, "Partition": None, "Shares": 1,
+        })
+
+        return pd.concat([account_rows, user_rows], ignore_index=True)
+
     def get_qos(self, referenced_qos_names=None):
         """
         Preprocess QOS data into a dictionary.
