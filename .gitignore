@@ -18,3 +18,4 @@ __pycache__
 *.csv
 *.pkl
 *.zip
+configs/kestrel_baseline_conf.yaml

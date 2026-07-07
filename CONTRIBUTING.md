@@ -123,8 +123,10 @@ review for everything else.
 
 FastSim is deterministic — identical inputs must produce identical job
 histories — so a refactor can be checked against a baseline run. The
-reference config is `configs/kestrel_baseline_conf.yaml` (3-day window,
-~3 min runtime):
+reference config is `configs/kestrel_baseline_conf.yaml` — a **local,
+untracked** file (gitignored): it references site-specific data (reservation
+names, dump paths), so it is not committed. Keep your own copy — a short
+sim window (a few days, a few minutes of runtime) works well:
 
   ```bash
   # once, at any known-good commit:
