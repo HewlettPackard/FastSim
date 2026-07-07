@@ -111,6 +111,19 @@ class Controller:
         Where to log the power usage at each time step.
         """
 
+        # Open the power log once; log_simulation_step_power appends every
+        # step, so per-step open/close is wasteful. No log in server mode
+        # (run_logs is None).
+        if self.power_log_fp:
+            write_header = not os.path.isfile(self.power_log_fp)
+            self._power_log_file = open(self.power_log_fp, mode='a', newline='')
+            self._power_log_writer = csv.writer(self._power_log_file)
+            if write_header:
+                self._power_log_writer.writerow(["time", "power_usage", "predicted_power_usage"])
+        else:
+            self._power_log_file = None
+            self._power_log_writer = None
+
         print_and_log(self.print_log, 'Initializing Slurm configuration.'.rjust(100,'.'))
         self.config = get_config(config_file)
         """
@@ -2151,22 +2164,16 @@ class Controller:
         If self.time is a datetime, it uses its timestamp; if it's already a float,
         it assumes it's in seconds.
         """
+        if self._power_log_writer is None:
+            return
+
         # Convert self.time to an ISO string
         # Keep tz info if it exists; otherwise it will be tz-naive
         t_str = self.time.isoformat()
-        
-        # Prepare the row to log: [time, power_usage, predicted_power_usage]
-        row = [t_str, self.power_usage, self.predicted_power_usage]
-        
-        # Check if file exists to decide whether to write the header.
-        file_exists = os.path.isfile(self.power_log_fp)
-        
-        with open(self.power_log_fp, mode='a', newline='') as f:
-            writer = csv.writer(f)
-            # Write header if file did not exist before.
-            if not file_exists:
-                writer.writerow(["time", "power_usage", "predicted_power_usage"])
-            writer.writerow(row)
+
+        self._power_log_writer.writerow([t_str, self.power_usage, self.predicted_power_usage])
+        # Flush so the log survives a crash and stays tail-able mid-run
+        self._power_log_file.flush()
 
 
     def _print_stats(self):
