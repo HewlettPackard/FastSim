@@ -885,8 +885,8 @@ class Controller:
 
         try:
             self.predicted_power_usage += job.predicted_power * job.nodes / 1e+6
-        except:
-            pass
+        except TypeError:
+            pass  # no predicted power for this job
         # self.total_energy += (
         #     job.true_node_power * job.nodes * job.runtime.total_seconds() / 1e+9
         # )
@@ -934,8 +934,8 @@ class Controller:
 
         try:
             self.predicted_power_usage -= job.predicted_power * job.nodes / 1e+6
-        except:
-            pass
+        except TypeError:
+            pass  # no predicted power for this job
 
         # Add this job's energy usage to the total energy used by the cluster
         self.total_energy += (
@@ -1414,7 +1414,7 @@ class Controller:
                 )
                 for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items()
             }
-        except:
+        except KeyError:
             for resv, job_ordered_reqtimes in self.bf_job_ordered_reqtimes.items():
                 if resv not in self.bf_max_reqtime.keys():
                     logging.info(f'Error: resv {resv} not in bf_max_reqtime.')
@@ -1485,7 +1485,7 @@ class Controller:
             try:
                 if self.bf_done[resv]:
                     continue
-            except:
+            except KeyError:
                 logging.info(f'resv {resv} not found in bf_done')
                 continue
 
@@ -1527,7 +1527,7 @@ class Controller:
                 # starting and ending at the optimal times to maximize the number of nodes available,
                 # then you can see how many nodes are available for the entirety of that usage block.
                 usage_block_end = usage_block_start + reqtime
-            except:
+            except IndexError:
                 # It looks like this is happening because all of the nodes
                 # in the interval associated with this reservation were used
                 # and there were no more intervals with available nodes left.
@@ -1708,7 +1708,7 @@ class Controller:
                             for node in nodes:
                                 try:
                                     self.bf_nodes_free_now_max_reqtimes[resv][node]
-                                except:
+                                except KeyError:
                                     logging.info(f'Node not found in bf_nodes_free_now_max_reqtimes for resv: {resv}')
                                     logging.info(f'Node ID: {node.nid}')
                                     logging.info(f'Node Partitions: {node.partition_names}')
