@@ -42,7 +42,7 @@ import bisect
 
 import signal
 
-from aux_funcs import print_and_log, mark_skip
+from aux_funcs import print_and_log, mark_skip, job_history_to_df
 
 from rich.console import Console
 from rich.table import Table
@@ -749,30 +749,7 @@ class Controller:
             # Checkpoint every interval
             if self.step_cnt % self.config.save_interval_steps == 0:
                 print(f'Saving Job History at Step: {self.step_cnt}'.rjust(50, '.'))
-                jobs = list()
-                for i, job in enumerate(self.job_history):
-                    print(f'Adding job {str(i).rjust(6)} of {len(self.job_history)}', end='\r')
-                    try:
-                        job_dict = dict()
-                        for key, value in job.__dict__.items():
-                            if key == 'assoc':
-                                continue
-                            elif key in ['qos','partition','partition_qos']:
-                                job_dict[key] = value.name
-                            elif key == 'assigned_nodes':
-                                job_dict[key] = set(node.nid for node in value)
-                            elif key == 'node_timeline':
-                                job_dict[key] = [(str(ts), cnt) for ts, cnt in value]
-                            elif key == 'wait_history':
-                                job_dict[key] = [(str(ts), reason) for ts, reason in value]
-                            else:
-                                job_dict[key] = value
-                        jobs.append(job_dict)
-                    except:
-                        print(f'Error while adding job {i} of {len(self.job_history)}')
-                        logging.info(f'Error while adding job {i} of {len(self.job_history)}')
-                        traceback.print_exc()
-                pd.DataFrame(jobs).to_pickle(self.results_filepath)
+                job_history_to_df(self.job_history).to_pickle(self.results_filepath)
 
             if self.paused:
                 InteractiveShell(self).cmdloop()   # blocks until shell exits
