@@ -95,7 +95,16 @@ class SlurmDataReader:
     def get_node_events(self, max_sim_t, sim_start):
         """
         Preprocess data from node events file into a Pandas DataFrame.
+
+        If no node events dump was provided, returns an empty DataFrame
+        (no down/drain events are simulated).
         """
+        if not self.node_events_dump:
+            print_and_log(logger, "No node events dump provided; simulating without node down/drain events.")
+            return pd.DataFrame(
+                columns=["NodeName", "TimeStart", "TimeEnd", "State", "Reason", "Duration", "Id"]
+            )
+
         # Read the sacctmgr_events.csv file
         df_events = pd.read_csv(
             self.node_events_dump, delimiter='|', lineterminator='\n', header=0,
@@ -122,23 +131,39 @@ class SlurmDataReader:
     def get_reservations(self, sim_start, sim_end):
         """
         Preprocess data from node reservations file into a Pandas DataFrame.
+
+        The current (sinfo) and historic (sreport) reservation dumps are each
+        optional. With neither provided, returns empty structures: no
+        reservations are simulated and job reservation requests are ignored
+        (Queue._clean_reservations clears reservation args not found here).
         """
+        resv_frames = []
+
         # Read the sacctmgr_resv.csv file
         # NOTE Not considering any reservation flags
         # These are the reservations as currently available from Slurm via sinfo
-        df_resv_current = pd.read_csv(
-            self.resv_dump_current, delimiter='|', lineterminator='\n', header=0,
-            usecols=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST"]
-        )
+        if self.resv_dump_current:
+            resv_frames.append(pd.read_csv(
+                self.resv_dump_current, delimiter='|', lineterminator='\n', header=0,
+                usecols=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST"]
+            ))
 
         # These are the historic reservations available from Slurm via sreport
-        df_resv_historic = pd.read_csv(
-            self.resv_dump_historic, delimiter='|', lineterminator='\n', header=0,
-            usecols=["Name","Start","End","Nodes"]
-        ).rename(columns={"Name": "RESV_NAME","Start": "START_TIME","End": "END_TIME","Nodes": "NODELIST"})
+        if self.resv_dump_historic:
+            resv_frames.append(pd.read_csv(
+                self.resv_dump_historic, delimiter='|', lineterminator='\n', header=0,
+                usecols=["Name","Start","End","Nodes"]
+            ).rename(columns={"Name": "RESV_NAME","Start": "START_TIME","End": "END_TIME","Nodes": "NODELIST"}))
+
+        if not resv_frames:
+            print_and_log(logger, "No reservation dumps provided; simulating without reservations.")
+            df_resv = pd.DataFrame(
+                columns=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST", "IMPROMPTU"]
+            )
+            return df_resv, set(), {}
 
         # Join the current and historic reservation data
-        df_resv = pd.concat([df_resv_current, df_resv_historic], ignore_index=True)
+        df_resv = pd.concat(resv_frames, ignore_index=True)
         df_resv.dropna(inplace=True)
 
         # Convert to datetime
