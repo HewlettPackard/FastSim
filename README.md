@@ -133,10 +133,16 @@ Optional columns used when present: `QOS` (default `normal`),
 
 ## Collecting Input Data (SLURM Dumps)
 
-FastSim expects a directory of SLURM accounting/configuration dumps. Two scripts are provided:
+FastSim expects a directory of SLURM accounting/configuration dumps. Three scripts are provided:
 
-- `scripts/slurm_dump.sh` — straightforward dump
+- `scripts/slurm_dump.sh` — straightforward dump (needs access to all users' accounting data)
 - `scripts/slurm_dump_anon.sh` — anonymizes users/accounts (can be slow on large systems)
+- `scripts/slurm_dump_user.sh` — **normal-user privileges only**: collects QOS,
+  node events, reservations, slurm.conf, and reconstructs associations with
+  real shares from `sshare -aP` (the full fairshare tree is usually visible
+  even when `sacctmgr show association` is restricted). Does not collect the
+  job trace — supply that from a job-history database. Run
+  `scripts/check_dump_access.sh` first to see what your account can access.
 
 ### Output files expected
 
