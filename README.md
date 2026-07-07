@@ -98,6 +98,39 @@ FastSim is Python-based. It has been used primarily with Python 3.8+, and should
 
 ---
 
+## Input Data
+
+FastSim can run from two levels of input:
+
+1. **Job trace + slurm.conf only (minimal mode)** — no privileged SLURM access
+   required. Suitable when job history comes from a database rather than a live
+   cluster.
+2. **Full SLURM dumps** — collected from a live cluster with the provided
+   scripts; enables real associations, QOS limits, node events, and
+   reservations.
+
+Any optional dump can be added independently on top of minimal mode; each is
+used when provided and synthesized (or treated as empty) when not:
+
+| Missing input | Behavior |
+|---|---|
+| `assocs_dump` | Fairshare tree synthesized from the trace: every account and user gets **identical shares** (allocation awards are generally not visible without privileged access). No association limits. |
+| `qos_dump` | QOS synthesized for all names referenced by the trace and slurm.conf, with equal priority and no limits. |
+| `node_events_dump` | No node down/drain events simulated. |
+| `resv_dump_current` / `resv_dump_historic` | Each independently optional. Absent reservations are ignored; jobs that requested them run as normal jobs (marked `ignore_in_eval`). |
+
+A minimal example is `configs/trace_only_conf.yaml`.
+
+### Job trace format (minimal mode)
+
+A pipe-delimited CSV. Required columns:
+
+    JobID|Submit|Start|End|State|Partition|User|Account|ReqNodes|AllocNodes|Timelimit
+
+Optional columns used when present: `QOS` (default `normal`),
+`ConsumedEnergyRaw` (default: zero-power fallback), `JobName`, `Reason`,
+`SubmitLine` (dependencies/reservations/etc. are parsed from it).
+
 ## Collecting Input Data (SLURM Dumps)
 
 FastSim expects a directory of SLURM accounting/configuration dumps. Two scripts are provided:
@@ -145,16 +178,16 @@ FastSim also reads slurm.conf and uses it as a source of defaults for known para
 
 These keys must be present:
 
-- `assocs_dump`
-- `qos_dump`
-- `node_events_dump`
-- `resv_dump_current`
-- `resv_dump_historic`
 - `job_dump`
 - `slurm_conf`
 - `considered_partitions`
+- `sim_start`, `sim_end`
 
-A minimal example is `configs/default_conf.yaml`.
+Optional input dumps (see Input Data above): `assocs_dump`, `qos_dump`,
+`node_events_dump`, `resv_dump_current`, `resv_dump_historic`.
+
+Examples: `configs/trace_only_conf.yaml` (minimal), `configs/default_conf.yaml`
+(full dumps).
 
 ### Common simulation keys
 

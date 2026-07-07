@@ -1,0 +1,31 @@
+# Minimal FastSim configuration: run from a historical job trace + slurm.conf only.
+#
+# No privileged SLURM access required. Associations are synthesized from the
+# trace with identical shares for every account and user; QOS is synthesized
+# with equal priority and no limits; no node down events or reservations are
+# simulated. Provide any of the optional dumps below to use real data instead.
+#
+# The job trace is a pipe-delimited CSV requiring only these columns:
+#   JobID|Submit|Start|End|State|Partition|User|Account|ReqNodes|AllocNodes|Timelimit
+# Optional columns used when present:
+#   QOS, ConsumedEnergyRaw, JobName, Reason, SubmitLine
+
+job_dump: "slurm_dump/sacct_jobs.csv"
+slurm_conf: "slurm_dump/slurm.conf"
+
+system: "default" # node-naming convention (e.g. default, kestrel)
+considered_partitions: ["standard"]
+
+sim_start: '2025-01-01T00:00:00'
+sim_end: '2025-01-04T00:00:00'
+initialize: True # build an initial running/queued state at sim_start
+
+Pdefault: 600 # default power per node in watts (used when energy data is absent)
+
+# ---- Optional inputs (uncomment to use real data when available) ----
+#assocs_dump: "slurm_dump/sacctmgr_assocs.csv"        # real fairshare associations/shares
+#qos_dump: "slurm_dump/sacctmgr_qos.csv"              # real QOS priorities and limits
+#node_events_dump: "slurm_dump/sacctmgr_events.csv"   # node down/drain events
+#resv_dump_current: "slurm_dump/sinfo_resv.csv"       # current reservations
+#resv_dump_historic: "slurm_dump/sreport_resv.csv"    # historic reservations
+#impromptu_reservation_names: []                      # reservations that should not pre-drain nodes

@@ -25,7 +25,10 @@ All source lives in `scheduler/`:
   reservation scheduling → main scheduling → backfill.
 - `config.py` — config loading. Precedence: YAML > `slurm.conf` > built-in
   defaults. Returns an immutable namedtuple.
-- `data_reader.py` — loads/cleans the SLURM dump CSVs and `slurm.conf`.
+- `data_reader.py` — loads/cleans the SLURM dump CSVs and `slurm.conf`. Only
+  the job trace and `slurm.conf` are required; assocs (identical-shares
+  fairshare tree), QOS (equal priority, no limits), node events (none), and
+  reservations (none) are synthesized when their dumps are absent.
 - `job_queue.py` — `Queue`, `Job`, `QOS`/`AssocLimit` (limits and holds),
   `Dependency` (after/afterok/singleton).
 - `partition.py` — `Partitions`/`Partition`/`Node`; free-block tracking
