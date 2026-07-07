@@ -89,6 +89,9 @@ defaults = {
     "save_interval_steps" : 50000, # Checkpoint the job history to the output pickle every N simulation steps
     "system" : "default", # System identifier for node-naming conventions (e.g. default, kestrel)
     "impromptu_reservation_names" : [], # Reservation names treated as reactive holds (no advance draining)
+    "initialize" : True, # Build an initial running/queued state at sim_start
+    "max_switch_nodes" : 256, # Jobs larger than this skip the same-rack (switch) wait
+    "Pdefault" : 600, # Default power per node in watts (used when energy data is absent)
 
     # Optional input dumps. Only the job trace (job_dump) and slurm.conf are required to run;
     # each of these is used when provided and synthesized or treated as empty when not:
