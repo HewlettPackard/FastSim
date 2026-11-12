@@ -55,6 +55,27 @@ results against a baseline run.
 Development notes live in `dev/` and are named with a datetime tag:
 `YYYYMMDDHHMM-descriptor.md` (e.g., `202603101739-project-inception.md`).
 
+### Notes vs. issues
+
+Issues track what we're doing and whether it's done; dev notes record what we
+learned and why we decided it. Dev notes live in the repo, so the full
+development record is searchable locally by anyone with a clone.
+
+- **Issue** — a work item that gets closed: what/why plus a subtask
+  checklist, decisions needing input or sign-off, blockers, status, bug
+  reports and requests. Keep it high-level. Test: does it get closed, or
+  does someone need to be notified?
+- **Dev note** — the lab notebook: investigations and findings (including
+  dead ends), design reasoning and rejected alternatives, verification
+  records (what was run, config/environment, results), non-obvious "how it
+  works" knowledge, and anything worth finding again later, issue or not.
+  Test: will someone grep for this to learn why or how?
+- **Both** — substantial work usually gets an issue for the plan and a dev
+  note for the full story. Cross-reference them: the note cites the issue
+  number; the issue or PR names the note's file.
+- Both are public: describe results in aggregate and never include user or
+  account names or internal reservation names (CONTRIBUTING.md §5).
+
 When the user says "add this to development notes", "make a dev note", or
 similar:
 
