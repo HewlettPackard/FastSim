@@ -95,7 +95,16 @@ class SlurmDataReader:
     def get_node_events(self, max_sim_t, sim_start):
         """
         Preprocess data from node events file into a Pandas DataFrame.
+
+        If no node events dump was provided, returns an empty DataFrame
+        (no down/drain events are simulated).
         """
+        if not self.node_events_dump:
+            print_and_log(logger, "No node events dump provided; simulating without node down/drain events.")
+            return pd.DataFrame(
+                columns=["NodeName", "TimeStart", "TimeEnd", "State", "Reason", "Duration", "Id"]
+            )
+
         # Read the sacctmgr_events.csv file
         df_events = pd.read_csv(
             self.node_events_dump, delimiter='|', lineterminator='\n', header=0,
@@ -122,23 +131,39 @@ class SlurmDataReader:
     def get_reservations(self, sim_start, sim_end):
         """
         Preprocess data from node reservations file into a Pandas DataFrame.
+
+        The current (sinfo) and historic (sreport) reservation dumps are each
+        optional. With neither provided, returns empty structures: no
+        reservations are simulated and job reservation requests are ignored
+        (Queue._clean_reservations clears reservation args not found here).
         """
+        resv_frames = []
+
         # Read the sacctmgr_resv.csv file
         # NOTE Not considering any reservation flags
         # These are the reservations as currently available from Slurm via sinfo
-        df_resv_current = pd.read_csv(
-            self.resv_dump_current, delimiter='|', lineterminator='\n', header=0,
-            usecols=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST"]
-        )
+        if self.resv_dump_current:
+            resv_frames.append(pd.read_csv(
+                self.resv_dump_current, delimiter='|', lineterminator='\n', header=0,
+                usecols=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST"]
+            ))
 
         # These are the historic reservations available from Slurm via sreport
-        df_resv_historic = pd.read_csv(
-            self.resv_dump_historic, delimiter='|', lineterminator='\n', header=0,
-            usecols=["Name","Start","End","Nodes"]
-        ).rename(columns={"Name": "RESV_NAME","Start": "START_TIME","End": "END_TIME","Nodes": "NODELIST"})
+        if self.resv_dump_historic:
+            resv_frames.append(pd.read_csv(
+                self.resv_dump_historic, delimiter='|', lineterminator='\n', header=0,
+                usecols=["Name","Start","End","Nodes"]
+            ).rename(columns={"Name": "RESV_NAME","Start": "START_TIME","End": "END_TIME","Nodes": "NODELIST"}))
+
+        if not resv_frames:
+            print_and_log(logger, "No reservation dumps provided; simulating without reservations.")
+            df_resv = pd.DataFrame(
+                columns=["RESV_NAME", "START_TIME", "END_TIME", "NODELIST", "IMPROMPTU"]
+            )
+            return df_resv, set(), {}
 
         # Join the current and historic reservation data
-        df_resv = pd.concat([df_resv_current, df_resv_historic], ignore_index=True)
+        df_resv = pd.concat(resv_frames, ignore_index=True)
         df_resv.dropna(inplace=True)
 
         # Convert to datetime
@@ -492,10 +517,67 @@ class SlurmDataReader:
         return merged
             
 
-    def get_qos(self):
+    def synthesize_assocs(self, df_jobs):
+        """
+        Build association data from the job trace when no assocs dump is available.
+
+        Users generally cannot see real allocation awards, so every project
+        (account) and user is given an identical share (Shares=1). The result is
+        a flat tree: root -> one account per unique Account -> one user per
+        unique (User, Account) pair. Partition is left unset so each user
+        association applies to all partitions (matching how FairTree expands
+        partitionless associations). No MaxJobs/MaxSubmit columns are produced,
+        so no association limits are imposed.
+
+        Returns a DataFrame with the same columns FairTree reads from
+        sacctmgr_assocs.csv: User|Account|ParentName|Partition|Shares.
+        """
+        user_accounts = (
+            df_jobs[["User", "Account"]].dropna().drop_duplicates()
+            .sort_values(["Account", "User"])
+        )
+        accounts = user_accounts.Account.unique()
+
+        print_and_log(logger,
+            "No assocs dump provided; synthesizing a flat fairshare tree with identical shares: "
+            f"{len(accounts)} accounts, {len(user_accounts)} user associations."
+        )
+
+        account_rows = pd.DataFrame({
+            "User": None, "Account": accounts, "ParentName": "root",
+            "Partition": None, "Shares": 1,
+        })
+        user_rows = pd.DataFrame({
+            "User": user_accounts.User.values, "Account": user_accounts.Account.values,
+            "ParentName": None, "Partition": None, "Shares": 1,
+        })
+
+        return pd.concat([account_rows, user_rows], ignore_index=True)
+
+    def get_qos(self, referenced_qos_names=None):
         """
         Preprocess QOS data into a dictionary.
+
+        If no QOS dump was provided, synthesize a QOS entry for every name in
+        referenced_qos_names (the QOS names referenced by the job trace and by
+        partitions in slurm.conf) with equal priority and no limits — QOS then
+        has no effect on priority ordering and imposes no holds.
         """
+        if not self.qos_dump:
+            print_and_log(logger,
+                "No QOS dump provided; synthesizing QOS with equal priority and no limits for: "
+                f"{sorted(referenced_qos_names)}"
+            )
+            return {
+                name : {
+                    "name" : name, "prio" : 1,
+                    "GrpTRES" : None, "GrpJobs" : None, "GrpSubmit" : None,
+                    "MaxTRESPU" : None, "MaxJobsPU" : None, "MaxJobs" : None,
+                    "MaxSubmitPU" : None, "MaxSubmit" : None,
+                }
+                for name in sorted(referenced_qos_names)
+            }
+
         # Read the data from sacctmgr_qos.csv
         df_qos = pd.read_csv(
             self.qos_dump,  delimiter='|', lineterminator='\n', header=0, encoding="ISO-8859-1"
@@ -561,6 +643,33 @@ class SlurmDataReader:
                            ):
         df_jobs = pd.read_csv(self.job_dump, sep='|', encoding='ISO-8859-1')
 
+        # A trace pulled from a job-history database often lacks columns that a
+        # full sacct dump has. Validate the columns the simulator cannot run
+        # without, and default the rest.
+        required_columns = [
+            "JobID", "Submit", "Start", "End", "State", "Partition",
+            "User", "Account", "ReqNodes", "AllocNodes", "Timelimit",
+        ]
+        missing_columns = [ col for col in required_columns if col not in df_jobs.columns ]
+        if missing_columns:
+            raise ValueError(
+                f"Job trace {self.job_dump} is missing required columns {missing_columns}. "
+                f"Required columns: {required_columns}"
+            )
+
+        # Optional columns (SubmitLine is handled separately below):
+        # QOS falls back to 'normal', ConsumedEnergyRaw to missing (which
+        # triggers the zero-power fallback), JobName/Reason to None.
+        if "QOS" not in df_jobs.columns:
+            df_jobs["QOS"] = "normal"
+        df_jobs["QOS"] = df_jobs["QOS"].fillna("normal")
+        if "ConsumedEnergyRaw" not in df_jobs.columns:
+            df_jobs["ConsumedEnergyRaw"] = float("nan")
+        if "JobName" not in df_jobs.columns:
+            df_jobs["JobName"] = None
+        if "Reason" not in df_jobs.columns:
+            df_jobs["Reason"] = None
+
         # Clean jobs data
         df_jobs = df_jobs.loc[
             (df_jobs.Start != "None") & (df_jobs.Start.notna()) & (df_jobs.End != "None") & (df_jobs.End != "Unknown") &
@@ -576,7 +685,9 @@ class SlurmDataReader:
         df_jobs.Submit = pd.to_datetime(df_jobs.Submit, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.Start = pd.to_datetime(df_jobs.Start, format="%Y-%m-%dT%H:%M:%S")
         df_jobs.End = pd.to_datetime(df_jobs.End, format="%Y-%m-%dT%H:%M:%S")
-        df_jobs.Elapsed = df_jobs.End - df_jobs.Start
+        # Bracket assignment: Elapsed may not pre-exist as a column (attribute
+        # assignment cannot create it, only overwrite)
+        df_jobs["Elapsed"] = df_jobs.End - df_jobs.Start
         df_jobs.Timelimit = df_jobs.Timelimit.apply(lambda row: timelimit_str_to_timedelta(row))
         
         if initialize:
